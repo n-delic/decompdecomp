@@ -445,10 +445,67 @@ def test_revision_keeps_the_complete_previous_safety_fingerprint(game,affected):
     for row in repair._rows(net,proj):
         rows.append(row if row['id'] in affected else {k:row[k] for k in
                     ('id','name','vram','rom_offset','size','target','relocs','unit','status','matched_source','meta')})
-    previous=repair._digest([dict(proj),rows,
+    previous=repair._digest([{**dict(proj),'config':json.loads(proj['config'])},rows,
         [list(r) for r in net.store.all('SELECT * FROM symbols WHERE project_id=? ORDER BY name',proj['id'])],
         [list(r) for r in net.store.all('SELECT unit,version,header FROM context_versions WHERE project_id=? ORDER BY version',proj['id'])]])
     assert repair._revision(net,proj,affected)==previous
+
+
+def bump(net,key='progress_revision'):
+    """What saved progress does about every 45 s while agents work (app/saves.py)."""
+    with net.store.tx() as db:
+        cfg=json.loads(db.execute('SELECT config FROM projects WHERE id=1').fetchone()[0]);cfg[key]=cfg.get(key,0)+1 if key=='progress_revision' else ['x']
+        db.execute('UPDATE projects SET config=? WHERE id=1',(json.dumps(cfg),))
+
+
+def test_revision_ignores_saved_progress_counters_but_not_function_rows_or_build_settings(game):
+    net,_=game;proj=net.project_row('game');before=repair._revision(net,proj,[1])
+    bump(net);bump(net,'claim_order')
+    assert repair._revision(net,net.project_row('game'),[1])==before
+    with net.store.tx() as db:db.execute("UPDATE functions SET size=12 WHERE name='normal'")
+    assert repair._revision(net,net.project_row('game'),[1])!=before
+    with net.store.tx() as db:db.execute("UPDATE functions SET size=8 WHERE name='normal'")
+    assert repair._revision(net,net.project_row('game'),[1])==before
+    with net.store.tx() as db:
+        cfg=json.loads(db.execute('SELECT config FROM projects WHERE id=1').fetchone()[0]);cfg['compiler']['flags']=['-O1']
+        db.execute('UPDATE projects SET config=? WHERE id=1',(json.dumps(cfg),))
+    assert repair._revision(net,net.project_row('game'),[1])!=before
+
+
+def test_apply_and_undo_commit_while_saved_progress_moves_during_the_match_check(game,monkeypatch):
+    """An N64 game's apply refused six times in a row: saved progress bumped its counter during the 150 s check."""
+    net,_=game
+    monkeypatch.setattr(net,'regression_test',lambda *args,**kwargs:bump(net) or [])
+    result=decide(net,'head','delay_slot')
+    assert net._function('head','game')['size']==8
+    repair.undo(net,'game',result['key'])
+    assert net._function('head','game')['size']==4
+
+
+def test_apply_reverifies_only_the_matches_that_refer_into_the_changed_extent(game,monkeypatch):
+    net,_=game;asked=[]
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET relocs=? WHERE name='intact'",(json.dumps([[0,4,0x80001004]]),))
+        db.execute("INSERT INTO functions(project_id,name,vram,rom_offset,size,n_insns,target,relocs,asm,unit,status,matched_source) "
+                   "SELECT 1,'elsewhere',vram,rom_offset,size,n_insns,target,?,asm,unit,'matched','C' FROM functions WHERE name='normal'",(json.dumps([[0,4,0x80001010]]),))
+    monkeypatch.setattr(net,'regression_test',lambda *args,only=None,**kwargs:asked.append(sorted(f['name'] for f in only)) or [])
+    result=decide(net,'head','delay_slot')
+    assert asked==[['intact']]
+    repair.undo(net,'game',result['key'])
+    assert asked[-1]==['intact']
+
+
+def test_apply_checks_again_when_a_referring_match_changes_during_its_check(game,monkeypatch):
+    net,_=game;calls=[]
+    with net.store.tx() as db:db.execute("UPDATE functions SET relocs=? WHERE name='intact'",(json.dumps([[0,4,0x80001004]]),))
+    def verify(*args,**kwargs):
+        calls.append(True)
+        if len(calls)==1:
+            with net.store.tx() as db:db.execute("UPDATE functions SET matched_source='newer match' WHERE name='intact'")
+        return []
+    monkeypatch.setattr(net,'regression_test',verify)
+    decide(net,'head','delay_slot')
+    assert len(calls)==2 and net._function('head','game')['size']==8
 
 
 def test_discovery_reuses_one_layout_and_image_without_building_discarded_previews(game,monkeypatch):
@@ -616,3 +673,16 @@ def test_byte_exact_builtin_sdk_evidence_resolves_nonreturning_assembly_extent()
     assert repair.reason(console, {**row, 'target': raw(0x00002021, 0x0c000104, 0)})
     row['meta'] = json.dumps({'verified_assembly': proof, 'boundary_tail_review': 'Independent end evidence'})
     assert repair.reason(console, row) == 'Independent end evidence'
+
+
+@pytest.mark.parametrize('archived',[False,True])
+def test_a_call_in_archived_padding_does_not_keep_pieces_apart(tmp_path,monkeypatch,archived):
+    """An N64 game's three filler words, archived as padding by a person, held a `jal` into the second piece of a
+    function, and Apply safe fixes would never join it: archived words never run."""
+    net,_=layout(tmp_path,monkeypatch,[('start',[STEP,STEP],'open'),('rest',[JR_RA,NOP],'open'),
+                                       ('filler',[jal(BASE+8),NOP],'open'),('after',[JR_RA,NOP],'open')])
+    if archived:
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET meta=? WHERE name='filler'",(json.dumps({'gone':True,'boundary_classification':'padding'}),))
+    fixed=[(f['flagged'],f['action']) for f in repair.apply_safe(net,'game')['fixed']]
+    assert (('start','join_previous') in fixed)==archived

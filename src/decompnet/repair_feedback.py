@@ -24,6 +24,9 @@ AGENT_CATEGORIES = ('types', 'casts', 'constants', 'addresses', 'signatures', 'l
                     'temporaries', 'expression_order', 'memory_access_order', 'control_flow', 'compiler_settings', 'other')
 CATEGORIES = ('unclassified', *AGENT_CATEGORIES, NO_FAILED_BASELINE)
 BASELINE_MIGRATION = 'repair-baseline-category-v1'
+# The files whose DDL `RepairFeedback.__init__` runs: a change to any of them re-runs it (schema_stamp.py).
+SCHEMA_MODULES = ('repair_feedback.py', 'repair_corpus.py', 'payload_storage.py', 'payload_sizes.py', 'payload_links.py',
+                  'large_text_storage.py', 'repair_archive.py', 'repair_profile_index.py')
 STATES = ('new', 'reviewed', 'implemented', 'dismissed')
 SCHEMA = (
     '''CREATE TABLE IF NOT EXISTS repair_attempt_settings(
@@ -173,6 +176,9 @@ class RepairFeedback:
         from . import store as storage
         if storage.ATTACH_ONLY:
             return  # a reader process (app/tool_reader.py): the app makes and upgrades these tables
+        from . import schema_stamp
+        if schema_stamp.current(self.store, 'repair-feedback', *SCHEMA_MODULES):
+            return  # already set up for this code: no write transaction, no DDL (schema_stamp.py)
         with self.store.tx() as db:
             for statement in SCHEMA:
                 db.execute(statement)
@@ -204,6 +210,7 @@ class RepairFeedback:
                        "AND (json_extract(evidence,'$.provenance.source_sha256') IS NULL OR "
                        "json_extract(evidence,'$.provenance.source_sha256')=json_extract(evidence,'$.after.source_sha256'))",
                        ('Already produced by an automatic repair; retained for regression review.',))
+            schema_stamp.stamp(db, 'repair-feedback', *SCHEMA_MODULES)
 
     def for_project(self, project):
         store = self.net.project_store(project)

@@ -652,6 +652,32 @@ def test_non_ascii_strings_detected(tmp_path):
     assert non_ascii_strings(tmp_path)
 
 
+def test_built_child_sha1_needs_rebuild_and_matching_cartridge(tmp_path):
+    from decompnet.forks.splatnested import built_child_sha1
+    child = tmp_path / 'game'
+    (child / 'build').mkdir(parents=True)
+    (tmp_path / 'build').mkdir()
+    image = child / 'game.decompressed.bin'
+    image.write_bytes(b'original')
+    outer = tmp_path / 'build' / 'rom.z64'
+    outer.write_bytes(b'cartridge')
+    outer_sha = hashlib.sha1(b'cartridge').hexdigest()
+    assert built_child_sha1(tmp_path, child, image, outer_sha) is None  # nothing rebuilt yet
+    (child / 'build' / 'game.bin').write_bytes(b'different')
+    assert built_child_sha1(tmp_path, child, image, outer_sha) is None
+    (child / 'build' / 'game.bin').write_bytes(b'original')
+    assert built_child_sha1(tmp_path, child, image, outer_sha) == hashlib.sha1(b'original').hexdigest()
+    assert built_child_sha1(tmp_path, child, image, '0' * 40) is None  # the rebuilt cartridge must match
+
+
+def test_plan_skips_top_level_custom_data_segments(tmp_path):
+    from decompnet.forks.splatrefs import plan
+    config = {'options': {}, 'segments': [[0, 'bin', 'a'], [0x10, 'rzip', 'logo'], [0x20, 'databin', 'd'],
+                                          [0x30]]}
+    with pytest.raises(Exception, match='distinct code units'):
+        plan(tmp_path, config)  # (no code at all, but the custom data segments were not refused)
+
+
 def test_assemble_skips_zero_size_unit(tmp_path):
     from decompnet.forks.splatrefs import assemble
     unit = {'name': 'buffers/empty', 'vram': 0x80000000}

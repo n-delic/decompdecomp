@@ -105,5 +105,28 @@ async function main(){
   const backBar=backLog._workBar;
   pending.resolve({state:'done',log:[],result:{fixed:[],remaining:0}});await tick();await tick();
   assert(backBar.removed&&!back.get('[data-boundary-safe]').disabled);
+  // The automatic-fixes box: saved at once, disabled while saving, put back when the server refuses.
+  for(const outcome of ['saved','error']){
+    const t=setup();await t.ctx.openBoundaryReview('head');
+    const box=t.get('[data-boundary-automatic]'),answer=deferred(),api=t.ctx.api,sent=[];
+    t.ctx.api=(url,opts)=>opts?.body?.action==='automatic'?(sent.push(opts.body.enabled),answer.promise):api(url,opts);
+    assert(box.checked,'on unless the project turned it off');
+    box.checked=false;const saving=box.onchange();await tick();
+    assert(box.disabled&&t.get('[data-boundary-automatic-status]').textContent==='Saving…');assert.deepEqual(sent,[false]);
+    if(outcome==='saved')answer.resolve({automatic:false});else answer.reject(new Error('Leave the room first.'));
+    await saving;
+    assert.equal(box.disabled,false);
+    if(outcome==='saved'){assert.equal(box.checked,false);assert(t.get('[data-boundary-automatic-status]').textContent.includes('Automatic fixes are off'));}
+    else{assert.equal(box.checked,true);assert.equal(t.get('[data-boundary-automatic-status]').textContent,'Leave the room first.');}
+  }
+  // Fixes the importer made are labelled in Repair history; ones it left alone read as suggestions.
+  const shown=setup(),api3=shown.ctx.api;
+  shown.ctx.api=(url,opts)=>url.startsWith('/api/boundary-repairs?')?Promise.resolve({automatic:false,
+    findings:[{function:'f',suggested_action:'trim_start',note:'f starts 4 bytes late',override:true}],
+    history:[{key:'k',function:'f',action:'trim_start',time:1,evidence:'Automatic: f starts 4 bytes late',automatic:true}]}):api3(url,opts);
+  await shown.ctx.openBoundaryReview('');await tick();
+  assert(shown.get('[data-boundary-history]').innerHTML.includes('Automatic · trim start'));
+  assert(shown.get('[data-boundary-audit]').innerHTML.includes('suggestion only; nothing is changed'));
+  assert.equal(shown.get('[data-boundary-automatic]').checked,false);
 }
 main().catch(error=>{console.error(error);process.exit(1);});

@@ -145,6 +145,7 @@ def register(app: App) -> None:
                 running=jobs.active((repairs.safe_job_kind(slug),))
                 return {'job':running['id'] if running else jobs.start(repairs.safe_job_kind(slug),lambda log:repairs.apply_safe(net,slug,log),project=slug,
                                                                          cancel_message='Safe boundary fixes stopped. Fixes already applied are kept and can be undone.')}
+        if action=='automatic':return repairs.set_entry_fixes(net,slug,data.get('enabled'))
         if action=='preview':return repairs.public(repairs.preview(net,slug,data.get('function'),data.get('repair'),data.get('end')))
         if action=='undo':return {'job':jobs.start('Undo boundary decision',lambda log:repairs.undo(net,slug,data.get('key'),log))}
         return {'job':jobs.start('Verify boundary repair',lambda log:repairs.apply(net,slug,data.get('function'),data.get('repair'),data.get('revision'),data.get('image'),data.get('end'),data.get('note',''),log))}
@@ -224,11 +225,8 @@ def register(app: App) -> None:
         return {"job": jobs.start("Test compiler profile as default", lambda log:(compiler_default_test.check_affected(net, slug, data.get('profile'), data.get('functions'), log) if data.get('action') == 'check-affected' else compiler_default_test.apply_matches(net, slug, data.get('profile'), data.get('functions'), log, safe_ranges=data.get('action') == 'apply-safe-range', receipt=data.get('receipt')) if data.get('action') in ('apply-matches', 'apply-safe-range') else compiler_default_test.replace_default(net, slug, data.get('profile'), log) if data.get('action') == 'replace' else compiler_default_test.run(net, slug, data.get('profile'), log, nonmatches=data.get('action') == 'nonmatches')))}
 
     def p_compiler_cleanup(slug, request, data):
-        limit = int(data.get("rare_limit", 3))
-        if not 1 <= limit <= 25:
-            raise NetworkError("Choose a rare-profile limit between 1 and 25 functions.")
         net._rom_only(slug, "compiler profile cleanup")
-        return {"job": jobs.start("compiler-cleanup", lambda log: compiler_cleanup.cleanup(net, slug, limit, log, source_profile=data.get("profile")))}
+        return {"job": jobs.start("compiler-cleanup", lambda log: compiler_cleanup.cleanup(net, slug, log, source_profile=data.get("profile")))}
 
     def p_unverified_profiles(slug, request, data):
         """Function-only compiler settings no match supports (GET: how many, any running recheck; POST: recheck

@@ -1196,6 +1196,55 @@ def test_a_makefiles_own_spelling_of_the_version_is_used(tmp_path):
     assert _makefile_version_word("all:\n\ttrue\n", "VERSION", "u") == "u"
 
 
+def test_a_zapd_assets_target_behind_a_version_conditional_runs_in_setup():
+    from decompnet.forks import project as forks_project
+
+    make = ("assets:\nifeq ($(VERSION),n64-us)\n\t$(PYTHON) tools/extract_assets.py $(EXTRACTED_DIR)/baserom\n"
+            "else\n\t$(PYTHON) tools/extract_assets.py extracted/n64-us/baserom\nendif\n\nall:\n\ttrue\n")
+    assert forks_project._setup_targets(make) == ["assets"]
+    assert forks_project._setup_targets("assets:\nifeq ($(A),b)\n\techo hi\nendif\n") == []
+
+
+def test_a_host_tool_that_links_statically_gets_a_shim_dropping_what_apples_ld_lacks(tmp_path):
+    import subprocess
+
+    from decompnet.arch import mips_tools
+
+    (tmp_path / "tools" / "n64sym").mkdir(parents=True)
+    makefile = tmp_path / "tools" / "n64sym" / "Makefile"
+    makefile.write_text("LDFLAGS=-static -s -Wl,--gc-sections,-lm,-lpthread\n")
+    assert mips_tools._host_links_statically(tmp_path)
+    makefile.write_text("LDFLAGS=-lm\n")
+    assert not mips_tools._host_links_statically(tmp_path)
+    real = tmp_path / "real"
+    real.write_text('#!/bin/sh\nfor a; do echo "[$a]"; done\n')
+    real.chmod(0o755)
+    shim = tmp_path / "g++"
+    shim.write_text(mips_tools._HOST_LINK_SHIM.format(real=real))
+    shim.chmod(0o755)
+    out = subprocess.run([str(shim), "-static", "-s", "-Wl,--gc-sections,-lm", "a b.o"], capture_output=True,
+                         text=True).stdout.split("\n")
+    assert out[:3] == ["[-s]", "[-Wl,-dead_strip,-lm]", "[a b.o]"]
+
+
+def test_the_host_shim_gives_an_assemblys_global_symbols_the_underscore_macho_wants(tmp_path):
+    import subprocess
+
+    from decompnet.arch import mips_tools
+
+    real = tmp_path / "real"
+    real.write_text('#!/bin/sh\nfor a; do case "$a" in *.s) cat "$a";; *) echo "[$a]";; esac; done\n')
+    real.chmod(0o755)
+    shim = tmp_path / "gcc"
+    shim.write_text(mips_tools._HOST_LINK_SHIM.format(real=real))
+    shim.chmod(0o755)
+    source = tmp_path / "sigs.s"
+    source.write_text('.global gSigs\n\ngSigs:\n    .incbin "x.defl"\n    .long 0\n')
+    out = subprocess.run([str(shim), "-c", str(source), "-o", "a.o"], capture_output=True, text=True).stdout
+    assert "[-c]" in out and "[a.o]" in out
+    assert ".global _gSigs" in out and "\n_gSigs:" in out and '.incbin "x.defl"' in out
+    assert source.read_text().startswith(".global gSigs")  # (the project's own file is untouched)
+
 def test_n64_copies_the_installed_ido_where_a_project_builds_its_own_and_never_links_it(tmp_path, monkeypatch):
     """Perfect Dark's Makefile builds build/recomp/5.3/cc from the IRIX binaries; a folder link let that rule write
     cc.c and a crashing cc into the installed compiler. A copy, newer than what the rule depends on, runs nothing."""

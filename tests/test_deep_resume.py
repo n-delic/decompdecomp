@@ -74,3 +74,35 @@ def test_second_search_rejudges_and_expands_a_persisted_root(monkeypatch):
     monkeypatch.setattr(search, '_score', measure)
     assert search.local_repairs(AGENT, proj, fn, 40, None, max_trials=15)[0] == 0
     assert attempted[:2] == ['retained root', 'exact child']
+
+
+def test_scopes_are_computed_before_the_writer_is_taken(monkeypatch):
+    """`keep` hashed every saved node's build inputs inside its write transaction, holding the project's single
+    writer for most of a second per call."""
+    import json
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+    state = {'open': False, 'inside': 0}
+
+    class Store:
+        row = {'feedback': json.dumps([dict(source='a', score=5, rows=[], output='o1', path='p', recovered=0, scope='s')])}
+
+        def one(self, sql, *args):
+            return self.row
+
+        @contextmanager
+        def tx(self):
+            state['open'] = True
+            try:
+                yield SimpleNamespace(execute=lambda sql, params: Store.row.update(feedback=params[4]))
+            finally:
+                state['open'] = False
+
+    def scope(net, proj, fn, source):
+        state['inside'] += state['open']
+        return 's'
+    monkeypatch.setattr(deep_resume, '_scope', scope)
+    net = SimpleNamespace(project_store=lambda pid: Store())
+    deep_resume.keep(net, {'id': 1}, {'id': 2, 'best_source': ''}, 'b', 3, [], 'o2', 'path', 1)
+    assert state['inside'] == 0
+    assert [node['source'] for node in json.loads(Store.row['feedback'])] == ['b', 'a']

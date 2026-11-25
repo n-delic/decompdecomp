@@ -1430,7 +1430,6 @@ details.more[open] > summary::before { content: "− "; }
 .compiler-function-links { display: flex; flex-wrap: wrap; gap: 6px 12px; padding: 8px 0; max-height: 240px; overflow: auto; }
 .compiler-function-links button { font-size: 12px; }
 .compiler-cleanup { border-top: 1px solid var(--line); padding-top: 16px; margin-top: 16px; }
-#compilerRareLimit { width: 64px; padding: 4px; }
 
 /* Maintenance tasks use the same disclosure shell as project settings. */
 .maintenance-body { display: grid; gap: 12px; }

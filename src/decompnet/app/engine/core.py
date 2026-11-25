@@ -194,6 +194,16 @@ class Core(Network):
         self.console(row).on_start(self, slug, log=log)
         # what the console's work did, it said in the feed ("8 pieces of functions ... joined"): in the answer too
         done = [rescored_said] if rescored else []
+        if self.is_rom(row):
+            # A start or end the bytes prove wrong, in a project imported before the importer fixed them.
+            from ..boundary_repairs import apply_entry_fixes
+            try:
+                fixed = len(apply_entry_fixes(self, slug, log)["fixed"])
+            except NetworkError as e:
+                fixed = 0
+                log(f"function boundaries were not fixed automatically: {e}")
+            if fixed:
+                done.append(f"{fixed} function boundar{'y' if fixed == 1 else 'ies'} fixed (undo in Review function boundaries)")
         done += [r["detail"] for r in self.project_store(row['id']).all("SELECT detail FROM events WHERE project_id=? AND id>? AND "
                                                      "kind='analysis' ORDER BY id", row["id"], last)]
         reconsidered = assembly_reconsideration.run(self, self.project_row(slug), log)

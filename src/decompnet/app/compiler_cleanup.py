@@ -25,10 +25,15 @@ def replace_range(config, start, end, target):
     config['compiler_ranges'] = sorted(kept, key=lambda item: item['start'])
 
 
-def cleanup(net, slug, rare_limit=3, log=print, source_profile=None):
+def cleanup(net, slug, log=print, source_profile=None):
+    """Find the fewest compiler profiles that keep every match byte-identical.
+
+    Fewest profiles is a set-cover problem, so this is a greedy search: profiles are tried for
+    elimination from the least used up. A profile goes only when *every* function that uses it
+    can move to a profile that stays, and each moved match is judged byte for byte on its own C.
+    Partly emptying a profile saves no bucket, so it is never done (except for one profile the
+    user picked, where each function moves on its own)."""
     net._rom_only(slug, 'compiler profile cleanup')
-    if not 1 <= rare_limit <= 25:
-        raise NetworkError('Choose a rare-profile limit between 1 and 25 functions.')
     check_cancel = getattr(log, 'check_cancel', lambda: None)
     # Serialize with drafts and progress imports; read-only UI remains responsive.
     with net.progress.judging(slug):
@@ -38,9 +43,11 @@ def cleanup(net, slug, rare_limit=3, log=print, source_profile=None):
         rows = net.project_store(proj['id']).all('SELECT * FROM functions WHERE project_id=? AND vram IS NOT NULL ORDER BY vram', proj['id'])
         addresses = Counter(fn['vram'] for fn in rows)
         starts = sorted(addresses)
-        counts = Counter(profile(compiler_for(config, fn['vram'], fn)) for fn in rows)
+        current = {fn['id']: profile(compiler_for(config, fn['vram'], fn)) for fn in rows}
+        counts = Counter(current.values())
         default = profile(config['compiler'])
-        if source_profile is not None:
+        partial = source_profile is not None
+        if partial:
             if not isinstance(source_profile, dict) or not isinstance(source_profile.get('toolchain'), str) or not isinstance(source_profile.get('flags'), list) or not all(isinstance(flag, str) for flag in source_profile['flags']):
                 raise NetworkError('Choose a compiler profile from the current list.')
             selected = profile(source_profile)
@@ -48,37 +55,65 @@ def cleanup(net, slug, rare_limit=3, log=print, source_profile=None):
                 raise NetworkError('That non-default compiler profile is no longer in use. Refresh the list.')
             if toolchains.installed(default[0]) is None:
                 raise NetworkError('Install the project default compiler before comparing this profile.')
-            common = [default]
+            sources = [selected]
         else:
-            selected = None
-            common = [p for p, _ in counts.most_common(3) if toolchains.installed(p[0]) is not None]
-        candidates = [fn for fn in rows if fn['status'] == 'matched' and fn['matched_source']
-                      and profile(compiler_for(config, fn['vram'], fn)) != profile(config['compiler'])
-                      and (profile(compiler_for(config, fn['vram'], fn)) == selected if selected else counts[profile(compiler_for(config, fn['vram'], fn))] <= rare_limit)]
-        changed, tested, skipped = [], 0, 0
-        if selected:
-            log(f'Checking all {len(candidates)} matched functions from the selected profile against the project default only.')
-        else:
-            log(f'Checking {len(candidates)} matched functions from profiles used by at most {rare_limit} functions. Testing up to three more-common installed profiles.')
-        for index, fn in enumerate(candidates, 1):
-            check_cancel()
-            if addresses[fn['vram']] > 1 or net.project_store(proj['id']).one('SELECT 1 FROM claims WHERE function_id=?', fn['id']):
-                skipped += 1
-                log(f'{index}/{len(candidates)}: {fn["name"]} is busy or shares an overlay address; skipped.')
-                continue
-            own = profile(compiler_for(config, fn['vram'], fn))
-            for target in common:
-                if target == own or (selected is None and counts[target] <= counts[own]):
-                    continue
+            sources = sorted((p for p in counts if p != default), key=lambda p: (counts[p], p))
+        changed, tested, skipped, proven = [], 0, 0, {}
+        skipped_ids = set()
+
+        def movable(fn):
+            return (fn['status'] == 'matched' and fn['matched_source'] and addresses[fn['vram']] == 1
+                    and not net.project_store(proj['id']).one('SELECT 1 FROM claims WHERE function_id=?', fn['id']))
+
+        def fits(fn, target):
+            nonlocal tested
+            key = (fn['id'], target)
+            if key not in proven:
                 check_cancel()
-                log(f'{index}/{len(candidates)}: {fn["name"]} — {target[0]} {" ".join(target[1])}')
-                ok, _, _ = net._judge_with(proj, fn, target[0], list(target[1]), fn['matched_source'])
+                log(f'{fn["name"]} — {target[0]} {" ".join(target[1])}')
+                proven[key] = bool(net._judge_with(proj, fn, target[0], list(target[1]), fn['matched_source'])[0])
                 tested += 1
-                if ok:
-                    end = min([fn['vram'] + max(1, fn['size'])] + [v for v in starts if v > fn['vram']])
-                    replace_range(proposed, fn['vram'], end, target)
-                    changed.append({'function': fn['name'], 'from': list(own), 'to': list(target)})
+            return proven[key]
+
+        def move(fn, target):
+            end = min([fn['vram'] + max(1, fn['size'])] + [v for v in starts if v > fn['vram']])
+            replace_range(proposed, fn['vram'], end, target)
+            changed.append({'function': fn['name'], 'from': list(current[fn['id']]), 'to': list(target)})
+            current[fn['id']] = target
+
+        log(f'Looking for the fewest compiler profiles: {len(sources)} non-default profiles to try removing, least used first.')
+        for number, source in enumerate(sources, 1):
+            check_cancel()
+            group = [fn for fn in rows if current[fn['id']] == source]
+            if not group:
+                continue
+            live = Counter(current.values())
+            targets = [default] if partial else [default] + sorted((p for p in live if p not in (source, default)), key=lambda p: (-live[p], p))
+            targets = [t for t in targets if toolchains.installed(t[0]) is not None]
+            label = f'{source[0]} {" ".join(source[1])}'
+            blocked = [fn for fn in group if not movable(fn)]
+            skipped_ids.update(fn['id'] for fn in blocked)
+            if blocked and not partial:
+                log(f'Profile {number}/{len(sources)} ({label}) stays: {len(blocked)} of its {len(group)} functions are unmatched, busy or share an overlay address.')
+                continue
+            plan = []
+            for fn in group:
+                if fn in blocked:
+                    continue
+                target = next((t for t in targets if fits(fn, t)), None)
+                if target is None and not partial:
+                    plan = None
                     break
+                if target is not None:
+                    plan.append((fn, target))
+            if plan is None:
+                log(f'Profile {number}/{len(sources)} ({label}) stays: one of its matches needs it.')
+                continue
+            for fn, target in plan:
+                move(fn, target)
+            if plan:
+                log(f'Profile {number}/{len(sources)} ({label}) removed: {len(plan)} functions moved.')
+        skipped = len(skipped_ids)
         check_cancel()
         # Redundant default overrides and adjoining identical ranges need no code change.
         compact = []
@@ -94,8 +129,8 @@ def cleanup(net, slug, rare_limit=3, log=print, source_profile=None):
             # Recheck every affected match and reject concurrent changes before the atomic commit.
             net._apply_compiler_config(proj, proposed, log=log)
             with net.project_store(proj['id']).tx() as db:
-                net._event(db, proj['id'], None, 'compiler', f'Compiler cleanup moved {len(changed)} functions to more common settings; all affected matches verified.')
+                net._event(db, proj['id'], None, 'compiler', f'Compiler cleanup moved {len(changed)} functions so fewer compiler profiles are needed; all affected matches verified.')
         after = {profile(compiler_for(proposed, fn['vram'], fn)) for fn in rows}
         log(f'Cleanup complete: {len(changed)} functions moved; {len(counts)} → {len(after)} used profiles. Other functions keep their settings.')
         return {'changed': changed, 'tested': tested, 'skipped': skipped, 'profiles_before': len(counts), 'profiles_after': len(after), 'ranges_before': len(config.get('compiler_ranges', [])),
-                'ranges_after': len(proposed.get('compiler_ranges', [])), 'unchanged': len(candidates) - len(changed) - skipped}
+                'ranges_after': len(proposed.get('compiler_ranges', [])), 'unchanged': sum(1 for fn in rows if fn['status'] == 'matched' and profile(compiler_for(config, fn['vram'], fn)) != default) - len(changed) - skipped}

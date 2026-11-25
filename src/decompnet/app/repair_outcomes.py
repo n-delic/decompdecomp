@@ -9,26 +9,37 @@ from . import purpose_work, repair_replay
 
 _SLOT = threading.BoundedSemaphore(1)
 KEY = 'automatic_repair_analysis'
+SCHEMA_MODULES = ('app/repair_outcomes.py', 'large_text_storage.py', 'payload_storage.py')
 SCHEMA = '''CREATE TABLE IF NOT EXISTS repair_outcome_analysis(
  example_id INTEGER PRIMARY KEY REFERENCES repair_examples(id) ON DELETE CASCADE,
  state TEXT NOT NULL, report TEXT NOT NULL, updated_at REAL NOT NULL)'''
 
 
 def prepare(feedback):
+    from .. import schema_stamp
+    if not schema_stamp.current(feedback.store, 'repair-outcomes', *SCHEMA_MODULES):
+        with feedback.store.tx() as db:
+            db.execute(SCHEMA)
+            from ..large_text_storage import install
+            install(db, ('repair_outcome_analysis',))
+            db.execute(QUEUE)
+            if 'verify_coverage' not in {row['name'] for row in db.execute('PRAGMA table_info(repair_analysis_queue)')}:
+                db.execute('ALTER TABLE repair_analysis_queue ADD COLUMN verify_coverage INTEGER NOT NULL DEFAULT 0')
+            db.execute('''CREATE TABLE IF NOT EXISTS repair_coverage_verdicts(
+                attempt_id INTEGER PRIMARY KEY REFERENCES attempts(id) ON DELETE CASCADE,
+                failed_attempt_id INTEGER NOT NULL, failed_source_sha256 TEXT NOT NULL,
+                family TEXT NOT NULL, verified_at REAL NOT NULL)''')
+            db.execute('CREATE INDEX IF NOT EXISTS idx_repair_analysis_queue_order ON repair_analysis_queue(created_at,example_id)')
+            schema_stamp.stamp(db, 'repair-outcomes', *SCHEMA_MODULES)
+    pending=tuple(feedback.net.__dict__.get('_repair_analysis_pending',()))
+    placeholders=','.join('?' for _ in pending) or '-1'
+    # The two state fixes below only matter when a row is in that state: look first, and take the writer only then.
+    if not (feedback.store.one('SELECT 1 FROM repair_outcome_analysis WHERE state=? AND example_id NOT IN ('+placeholders+') LIMIT 1',
+                               'running',*pending)
+            or feedback.store.one("SELECT 1 FROM repair_outcome_analysis WHERE state='interrupted' AND example_id IN "
+                                  "(SELECT example_id FROM repair_analysis_queue) LIMIT 1")):
+        return
     with feedback.store.tx() as db:
-        db.execute(SCHEMA)
-        from ..large_text_storage import install
-        install(db, ('repair_outcome_analysis',))
-        db.execute(QUEUE)
-        if 'verify_coverage' not in {row['name'] for row in db.execute('PRAGMA table_info(repair_analysis_queue)')}:
-            db.execute('ALTER TABLE repair_analysis_queue ADD COLUMN verify_coverage INTEGER NOT NULL DEFAULT 0')
-        db.execute('''CREATE TABLE IF NOT EXISTS repair_coverage_verdicts(
-            attempt_id INTEGER PRIMARY KEY REFERENCES attempts(id) ON DELETE CASCADE,
-            failed_attempt_id INTEGER NOT NULL, failed_source_sha256 TEXT NOT NULL,
-            family TEXT NOT NULL, verified_at REAL NOT NULL)''')
-        db.execute('CREATE INDEX IF NOT EXISTS idx_repair_analysis_queue_order ON repair_analysis_queue(created_at,example_id)')
-        pending=tuple(feedback.net.__dict__.get('_repair_analysis_pending',()))
-        placeholders=','.join('?' for _ in pending) or '-1'
         db.execute('UPDATE repair_outcome_analysis SET state=?,report=?,updated_at=? WHERE state=? AND example_id NOT IN ('+placeholders+')',
                    ('interrupted',json.dumps({'skipped':'Analysis interrupted. Run manual replay to retry; selected source is unchanged.'}),time.time(),'running',*pending))
         db.execute("UPDATE repair_outcome_analysis SET state='pending',report='{}' WHERE state='interrupted' AND example_id IN (SELECT example_id FROM repair_analysis_queue)")
