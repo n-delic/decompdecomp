@@ -380,12 +380,17 @@ def play(net, slug: str, log=print, *, adapter: Path | None = None) -> dict:
     if memory := (cfg.get("rom") or {}).get("memory_size"):  # the console the game was meant for (host.c console_memory)
         env["PORT_MEMSIZE"] = str(memory)
     env.pop("PORT_RT64", None)
+    env.pop("PORT_RECOMP_UI", None)
     if adapter:
         from ... import toolchains
 
         toolchains.ensure("sdl3", log=log)
         env.update(PORT_RT64=str(adapter), PORT_WINDOW="1", PORT_SDL=str(toolchains.binary("sdl3")),
                    PORT_TITLE=cfg["rom"].get("title") or slug)
+        from ...consoles.n64.port import recomp_ui_library
+
+        if menu := recomp_ui_library():  # recomp-ui's menu model, if it was built (tools/build_recomp_ui.py)
+            env["PORT_RECOMP_UI"] = str(menu)
     if (unlisted := unlisted_entries(net, slug)):
         log(f"playing has found {len(unlisted)} addresses the game runs that no function starts "
             f"({', '.join(f'{a:08X}' for a in unlisted[:4])}{'…' if len(unlisted) > 4 else ''}): Add missed functions "

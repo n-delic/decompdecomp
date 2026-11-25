@@ -152,8 +152,7 @@ def _wrap_foreign_ido(project) -> None:
     # (the project's own tools/, and those of a library it carries: lib/ultralib/tools/ido/cc)
     roots = [tools, *sorted(project.root.glob("lib/*/tools")), *sorted(project.root.glob("libs/*/tools"))]
     seen = "\n".join(str(r) for r in roots)  # (a submodule setup fetches later adds its tools: look again then)
-    if done.exists() and done.read_text(encoding="utf-8") == seen:
-        return
+    # (looked at every time: a project's own setup step can fetch its Linux compiler again over a wrapper)
     drivers = [(root, driver) for root in roots if root.is_dir() for driver in root.glob("**/cc")]
     for tools_root, driver in drivers:
         if len(driver.relative_to(tools_root).parts) > 5 or driver.is_symlink() or not driver.is_file():

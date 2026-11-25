@@ -11,7 +11,18 @@
   main { max-width: 980px; margin: 0 auto; padding: 16px; }
   canvas { display: block; margin: 12px auto; width: min(100%, calc((100vh - 140px) * 4 / 3)); aspect-ratio: 4 / 3;
            image-rendering: pixelated; background: #000; }
-  canvas:fullscreen { width: auto; height: 100vh; margin: auto; object-fit: contain; }
+  #play { position: relative; }
+  #play:fullscreen { display: flex; flex-direction: column; justify-content: center; background: #000; }
+  #play:fullscreen p { display: none; }
+  #play:fullscreen canvas { width: auto; max-width: 100%; height: calc(100vh - 8px); margin: auto; object-fit: contain; }
+  #menu { position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); min-width: min(320px, 90%); padding: 12px 18px 16px;
+          background: rgba(0, 0, 0, .88); border: 2px solid #fff; border-radius: 4px; z-index: 5; }
+  #menu[hidden] { display: none; }
+  #menu h2 { margin: 0 0 8px; font-size: 15px; letter-spacing: .08em; text-transform: uppercase; color: #fff; }
+  #menu h3 { margin: 10px 0 2px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: #8899aa; }
+  #menu .menu-row { display: flex; justify-content: space-between; gap: 24px; width: 100%; box-sizing: border-box; border: 0;
+                    background: none; color: #e0e0e0; padding: 4px 8px; font: inherit; text-align: left; }
+  #menu .menu-row.current { color: #ffe060; outline: 1px solid #ffe060; }
   p { text-align: center; margin: 6px 0; }
   .muted { color: var(--muted); }
   select { background: #222; color: var(--fg); border: 1px solid #444; border-radius: 6px; padding: 5px 8px; font: inherit; }
@@ -35,7 +46,7 @@
   </section>
   <section id="play" hidden>
     <canvas id="screen" width="320" height="240"></canvas>
-    <p class="muted" id="keys">Arrows steer · X: A · Z: B · Enter: Start · Space: Z · Q/W: L/R · I/J/K/L: C buttons · or a gamepad</p>
+    <p class="muted" id="keys">Tab or F1: settings · Arrows steer · X: A · Z: B · Enter: Start · Space: Z · Q/W: L/R · I/J/K/L: C buttons · or a gamepad</p>
     <div id="touch" role="group" aria-label="Touch controller">
       <div data-stick role="group" aria-label="Analog stick: drag to steer"><span></span></div>
       <div class="touch-actions" role="group" aria-label="Action buttons">
@@ -56,7 +67,7 @@
         <button type="button" data-button="256" aria-label="Right">→</button>
       </div>
     </div>
-    <p><button id="sound" type="button">Sound on</button> <button id="full" type="button">Full screen</button>
+    <p><button id="settings" type="button" aria-haspopup="dialog">Settings</button> <button id="sound" type="button">Sound on</button> <button id="full" type="button">Full screen</button>
       <span class="muted" id="rate"></span></p>
   </section>
   <p id="video"><label>Renderer <select id="renderer">

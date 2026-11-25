@@ -113,6 +113,7 @@ int port_sdl_input(uint16_t *buttons, int8_t *x, int8_t *y) { (void)buttons; (vo
 void port_sdl_audio(const int16_t *lr, int frames, int hz) { (void)lr; (void)frames; (void)hz; }
 #else
 #include <dlfcn.h>
+#include "recomp_ui.h"
 
 /* ---------------------------------------------------------------- SDL3's ABI, the parts used */
 
@@ -221,8 +222,15 @@ static void load_settings(void) {
     const char *kept = getenv("PORT_SETTINGS");
     snprintf(settings_path, sizeof settings_path, "%s", kept && *kept ? kept : "settings.ini");
     ps_load(settings_path);
+    const char *library = getenv("PORT_RECOMP_UI"); /* recomp-ui's menu model in place of settings.h's own (recomp_ui.h) */
+    if (library && *library && !rui_start(library)) fprintf(stderr, "settings menu: the built-in one\n");
 }
-static void menu_toggle(void) { pthread_mutex_lock(&menu_lock); port_menu.open = !port_menu.open; pthread_mutex_unlock(&menu_lock); }
+static void menu_toggle(void) {
+    pthread_mutex_lock(&menu_lock);
+    if (rui.menu) rui_toggle();
+    else port_menu.open = !port_menu.open;
+    pthread_mutex_unlock(&menu_lock);
+}
 static int texture_w, texture_h;
 static uint64_t fps_since;
 static unsigned fps_frames;
@@ -431,7 +439,7 @@ static int rt64_paint(uint8_t *rgba, uint32_t w, uint32_t h, PortRt64Rect *rect)
 static void menu_input(int nav) {
     pthread_mutex_lock(&menu_lock);
     port_menu.changed = 0;
-    int result = ps_input(nav);
+    int result = rui.menu ? rui_input(nav) : ps_input(nav);
     pthread_mutex_unlock(&menu_lock);
     if (port_menu.changed) {
         sdl.SetWindowFullscreen(window, ps_value("fullscreen") != 0);

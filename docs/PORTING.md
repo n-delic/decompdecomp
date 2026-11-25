@@ -603,9 +603,21 @@ the ROM chooser. In the RT64 Metal window (macOS) RT64 owns the picture, so the 
 (`overlay` in `rt64/adapter.h`, ABI 4, before `open`, which also makes the window's layer copyable), RT64's draw hook calls
 it once per presented frame with the drawable's size, and only the panel's rectangle is blitted, opaque, over the frame
 (so it is in `PORT_RT64_FRAMES`'s saved frames too). An adapter built before the call is refused with the usual
-"different version" message: rebuild it with `tools/build_rt64_adapter.py`. It compiles against the pinned RT64
-headers; it has not yet been run on a GPU. The web and Miyoo builds need a page of their own that reads the same rows.
+"different version" message: rebuild it with `tools/build_rt64_adapter.py`. It was built and run on a real
+game: the panel draws over RT64's frame and a changed choice is kept (the Tab key itself was not tried there). The browser build has the same menu (`web/settings.js`: Tab or F1, a gamepad's Back, or the page's Settings button; the
+rows are the window build's, in the same order, and `tests/test_n64_port_web_settings.py` fails if they drift apart). Its
+choices are kept in the browser (not Full screen, which a browser only grants on a click), the menu sits in the element
+that goes full screen so it shows there too, and Scaling applies only once a player has changed it (each renderer keeps
+its own look until then). The Miyoo build still has none: it needs the menu drawn into its SDL 1.2 surface.
 ROADMAP.md's table says so.
+
+recomp-ui's menu model is used when its library is there. `tools/build_recomp_ui.py` builds it from the pinned commit
+`16e2c867e474648e523e2cd21eca813ebe58c795` (three plain C files, the system C compiler, no ImGui or GPU) into the
+toolchains folder (or `DECOMPNET_RECOMP_UI`); with `PORT_RECOMP_UI=<library>` the window host (`window/recomp_ui.h`) turns
+settings.h's rows into recomp-ui's items and takes navigation, pages (Video, Audio, Game), the shared key names and Quit's
+second press from it, while the panel stays settings.h's own, drawing recomp-ui's rows, so the same picture shows over SDL's
+renderer and over RT64. Without the library, or if it can't open, the built-in menu runs and says so in the log. Not yet:
+recomp-ui's own ImGui look (its `render_imgui` needs a GL or RT64 ImGui frame) and bundling the library in an exported app.
 
 ### 5. Play, and check that it runs
 
