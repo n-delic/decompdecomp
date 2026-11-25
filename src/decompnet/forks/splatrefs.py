@@ -30,7 +30,7 @@ MAX_UNITS = 2000
 TIMEOUT = 180
 SYMBOL = re.compile(r"[A-Za-z_.$][\w.$]*")
 ADDRESS_COMMENT = re.compile(r"/\* [0-9A-Fa-f]+ ([0-9A-Fa-f]{8})")
-ADDRESS_NAME = re.compile(r"(?:\.L|D_|func_|jtbl_)([0-9A-Fa-f]{8})(?:_[A-Za-z0-9_.$]+)?")
+ADDRESS_NAME = re.compile(r"(?:\.L|D_|func_|jtbl_)([0-9A-Fa-f]{4,8})(?:_[A-Za-z0-9_.$]+)?")
 
 
 def inside(root: Path, value: str) -> Path:
@@ -238,6 +238,23 @@ def verified_rebuild(project, config_path: Path, config: dict, image_path: Path,
     return True
 
 
+DICT_SECTIONS = ('bss', '.bss', 'data', '.data', 'rodata', '.rodata', 'rdata', '.rdata')
+
+
+def resolve_auto_offsets(entries: list) -> list:
+    """Give each `auto` subsegment start the offset splat gives it: the end of the entry before it, which runs to the
+    next entry that names an offset, so the auto entry is empty and starts where that next entry does."""
+    resolved = list(entries)
+    for index, entry in enumerate(resolved):
+        if isinstance(entry, list) and entry and entry[0] == 'auto':
+            following = next((e[0] for e in resolved[index + 1:]
+                              if isinstance(e, list) and e and isinstance(e[0], int)), None)
+            if following is None:
+                raise ForkError("automatic objdiff setup needs explicit numeric subsegment offsets")
+            resolved[index] = [following, *entry[1:]]
+    return resolved
+
+
 def plan(root: Path, config: dict, *, independent: bool = False) -> list[dict]:
     """Accept linear code mappings; C units have candidates, assembly units remain source-less targets."""
     options = config.get('options', {})
@@ -269,9 +286,10 @@ def plan(root: Path, config: dict, *, independent: bool = False) -> list[dict]:
         entries = segment.get('subsegments', [])
         if not isinstance(entries, list):
             raise ForkError("automatic objdiff setup needs a list of explicit splat subsegments")
+        entries = resolve_auto_offsets(entries)
         for index, entry in enumerate(entries):
-            if isinstance(entry, dict) and entry.get('type') in ('bss', '.bss'):
-                continue
+            if isinstance(entry, dict) and entry.get('type') in DICT_SECTIONS:
+                continue  # (written with its own start/vram: its unit's address comes from `sections` below)
             if not isinstance(entry, list) or len(entry) < 2:
                 raise ForkError("automatic objdiff setup does not support this splat subsegment layout yet")
             offset, kind = entry[:2]
@@ -317,10 +335,11 @@ def plan(root: Path, config: dict, *, independent: bool = False) -> list[dict]:
                     'delta': segment['start'] - segment['vram']}
             mapped_sections = {}
             for sibling in entries:
-                if isinstance(sibling, dict) and sibling.get('type') in ('bss', '.bss'):
+                if isinstance(sibling, dict) and sibling.get('type') in DICT_SECTIONS:
                     sibling_name = (Path(str(segment.get('dir', ''))) / str(sibling.get('name', ''))).as_posix()
                     if sibling_name == name and isinstance(sibling.get('vram'), int):
-                        mapped_sections['.bss'] = sibling['vram']
+                        section = str(sibling['type']).lstrip('.')
+                        mapped_sections['.' + {'rdata': 'rodata'}.get(section, section)] = sibling['vram']
                     continue
                 if not isinstance(sibling, list) or len(sibling) < 3 or not isinstance(sibling[0], int):
                     continue
@@ -363,13 +382,17 @@ def verify(elf_path: Path, image: bytes, unit: dict) -> None:
             start = section['sh_addr'] + unit['delta']
             end = start + section['sh_size']
             if start < 0 or end > len(image) or section.data() != image[start:end]:
-                raise ForkError("ROM-derived objdiff reference bytes did not verify; configure this project manually")
+                raise ForkError(f"ROM-derived objdiff reference bytes of {unit.get('name', 'a unit')} ({section.name}) did not "
+                                "verify; configure this project manually")
 
 
 def assemble(root: Path, work: Path, unit: dict, definitions: dict, image: bytes, assembler: str,
              linker: str, flags: tuple, log) -> Path:
     name = unit['name']
-    parts = [work / 'asm' / (name + '.s')]
+    text = work / 'asm' / (name + '.s')
+    if not text.is_file() and (work / 'src' / (name + '.s')).is_file():
+        text = work / 'src' / (name + '.s')  # (hasm_in_src_path: hand-written assembly is written beside the sources)
+    parts = [text]
     sections = {'.text': unit['vram']}
     for section in ('data', 'rodata', 'bss'):
         path = work / 'asm/data' / (name + '.' + section + '.s')
@@ -560,6 +583,13 @@ def generate(project, config_path: Path, config: dict, console, log=print) -> bo
                     ld_script_path=str(work / 'reference.ld'), elf_path=str(work / 'reference.elf'),
                     undefined_funcs_auto_path=str(work / 'undefined_funcs.txt'),
                     undefined_syms_auto_path=str(work / 'undefined_syms.txt'))
+        if opts.get('generate_asm_macros_files') is False and opts.get('asm_inc_header') == '':
+            # (a project whose own assembly includes its macros by the preprocessor: the reference assembly
+            # is assembled directly, so it brings splat's macros and includes them itself)
+            opts['generate_asm_macros_files'] = True
+            opts['asm_inc_header'] = '.include "macro.inc"\n\n'
+        if opts.get('add_set_gp_64') is False:
+            opts['add_set_gp_64'] = True  # (the project assembles with -mips3; GNU as would split `sd` into two `sw`)
         # Splat also emits headers and optional partial-link files. A reference split must not rewrite
         # the project's headers, cache, or linker metadata while another build uses them.
         for key, value in {'ld_symbol_header_path': 'include/ld_symbols.h',
@@ -572,6 +602,8 @@ def generate(project, config_path: Path, config: dict, console, log=print) -> bo
             if not isinstance(segment, dict):
                 continue
             for entry in segment.get('subsegments', []):
+                if isinstance(entry, dict) and entry.get('type') in ('.data', '.rodata', '.rdata'):
+                    entry['type'] = 'rodata' if entry['type'] == '.rdata' else entry['type'][1:]
                 if not isinstance(entry, list):
                     continue
                 if entry[1] == 'c':
