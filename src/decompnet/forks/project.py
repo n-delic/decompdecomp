@@ -425,7 +425,15 @@ class ForkProject:
                 pass
         default = re.search(r"^VERSION\s*[:?]?=\s*([A-Za-z0-9._-]+)\s*$", text, re.M)
         ver = version or (default.group(1) if default else None)
-        found = re.search(r"((?:[\w-]+/|\$\(\w+\)/)*)baserom(\.\$\((?:VERSION|REGION)\))?\.z64", text)
+        found = re.search(r"((?:[\w-]+/|\$\(\w+\)/)*)baserom(\.\$\((?:VERSION|REGION)\))?\.z64", text) or re.search(
+            r"((?:[\w-]+/)*)baserom\.([a-z]{1,4})\.z64", text)
+        if found and found.re.groups == 2 and found.group(2) and found.group(2) != "z64" and "(" not in found.group(2) \
+                and found.re.pattern.endswith(r"\.z64") and "VERSION" not in found.re.pattern:
+            rel = self._inside(f"{found.group(1)}baserom.{found.group(2)}.z64") or f"{found.group(1)}baserom.{found.group(2)}.z64"
+            return {"what": f"your original game ROM ({rel})", "path": rel, "sha1": None, "auto": True,
+                    "help": "Supply an original cartridge ROM in .z64, .v64 or .n64 byte order; decompdecomp saves a "
+                            ".z64 copy where the project's Makefile reads it, and the project's own check says "
+                            "whether it is the right release."}
         if not found:
             return self._readme_rom()
         rel = f"{found.group(1)}baserom.{ver}.z64" if found.group(2) else f"{found.group(1)}baserom.z64"
@@ -490,6 +498,9 @@ class ForkProject:
             if not isinstance(paths, dict) or not name:
                 continue
             target = paths.get("target") or paths.get("baserom")
+            if isinstance(target, str) and re.search(r"decomp|uncompress", Path(target).name, re.I) and isinstance(
+                    paths.get("compressed_target"), str):
+                target, entry = paths["compressed_target"], {**entry, "sha1": None}  # (the cartridge's, whose hash is not this one)
             rel = self._inside(target) if isinstance(target, str) else None
             if not rel or not rel.lower().endswith((".z64", ".n64", ".v64")):
                 continue
@@ -806,7 +817,8 @@ class ForkProject:
             # Nested configs resolve their base against their own directory, not the checkout root.
             path = self._inside(str(config_path.parent / base / target)) if (
                 isinstance(target, str) and isinstance(base, str)) else None
-            if path is None or path.startswith("build/"):  # (a generated image: the original is named elsewhere)
+            if path is None or path.startswith("build/") or re.search(r"decomp|uncompress", Path(path).name, re.I):
+                # (a generated or decompressed image: the original cartridge ROM is named elsewhere)
                 return self._makefile_rom(version) or manual
             return {"what": f"your copy of the game ({Path(path).name})", "path": path,
                     "sha1": sha1, "auto": True,
@@ -1017,6 +1029,12 @@ class ForkProject:
         cargo = Path.home() / ".cargo" / "bin"  # (what `cargo install` put there: pigment64, crunch64's CLI, ...)
         env["PATH"] = os.pathsep.join([*(str(d) for d in [*project_python, *_tool_dirs(), *project_tools]),
                                        env.get("PATH", ""), *([str(cargo)] if cargo.is_dir() else [])])
+        if sys.platform == "darwin":  # Homebrew's libraries (fmt, libpng, ...) for the host tools a project builds
+            for prefix in ("/opt/homebrew", "/usr/local"):
+                if (Path(prefix) / "lib").is_dir() and (Path(prefix) / "include").is_dir():
+                    env["LIBRARY_PATH"] = os.pathsep.join(filter(None, [env.get("LIBRARY_PATH"), f"{prefix}/lib"]))
+                    env["CPATH"] = os.pathsep.join(filter(None, [env.get("CPATH"), f"{prefix}/include"]))
+                    break
         env["NINJA_STATUS"] = "[%f/%t] "  # (ninja's own: its progress lines are what a run of units is read by)
         # found on that PATH (decompdecomp's own ninja): Linux looks a command up there itself, Windows only in this
         # process's PATH, where decompdecomp's environment isn't when it's installed
@@ -1277,6 +1295,10 @@ class ForkProject:
                 except OSError:
                     shutil.copyfile(self._rom_placed, self.root / missing.group(1))
                 log(f"the project reads the game as {missing.group(1)}: saved it under that name too")
+                ok, tail = self.run(cmd, log=log)
+            if not ok and re.search(r"cannot execute binary file|Exec format error|Permission denied", tail):
+                # a program the step itself fetched (a submodule's committed Linux compiler): the console's hook
+                # looks at the tree again before every command, so the step runs once more
                 ok, tail = self.run(cmd, log=log)
             for _ in range(6):  # (each run names the next missing package)
                 if ok or not self._install_missing_tools(tail, log):

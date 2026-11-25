@@ -12,6 +12,43 @@ from .. import toolchains
 
 _LOCK = threading.Lock()
 _PREFIXES = ("mips-linux-gnu-", "mips64-linux-gnu-", "mips64-elf-")
+_ASSEMBLER_DRIVER = '''#!{python}
+import os, subprocess, sys, tempfile
+args, out, sources, cpp, asm = sys.argv[1:], None, [], [], []
+i = 0
+while i < len(args):
+    a = args[i]
+    if a == "-o":
+        out = args[i + 1]; i += 1
+    elif a in ("-x",):
+        i += 1
+    elif a in ("-I", "-MF", "-MT", "-MQ", "-include", "-isystem", "-iquote", "-D", "-U"):
+        cpp += [a, args[i + 1]]; i += 1
+        if a == "-I":
+            asm += ["-I", args[i]]
+    elif a == "-G":
+        asm += [a, args[i + 1]]; i += 1
+    elif a.startswith(("-D", "-U", "-I", "-MD", "-MMD", "-MP", "-nostdinc", "-include")):
+        cpp.append(a)
+        if a.startswith("-I"):  # (the assembler reads .include files too)
+            asm.append(a)
+    elif a.startswith(("-march=", "-mabi=", "-mtune=", "-mips", "-EB", "-EL")):
+        asm.append(a)
+    elif a.startswith("-"):
+        pass
+    else:
+        sources.append(a)
+    i += 1
+if not out or len(sources) != 1:
+    sys.exit("mips gcc shim: needs -o and one source")
+with tempfile.NamedTemporaryFile("w", suffix=".s", delete=False) as t:
+    done = subprocess.run(["{cpp}", "-x", "assembler-with-cpp", *cpp, sources[0]], stdout=t)
+if done.returncode:
+    sys.exit(done.returncode)
+code = subprocess.run(["{assembler}", *asm, "-o", out, t.name]).returncode
+os.unlink(t.name)
+sys.exit(code)
+'''
 
 
 def build_paths(project) -> list[Path]:
@@ -59,6 +96,15 @@ def build_paths(project) -> list[Path]:
                 if not shim.exists():
                     shim.write_text(f'#!/bin/sh\nexec "{host_cpp}" "$@"\n', encoding="utf-8")
                     shim.chmod(0o755)
+        # `mips-linux-gnu-gcc -x assembler-with-cpp -c x.s`: the gcc driver's one job in these builds, which binutils
+        # alone can't do: preprocess with the host's cpp, then assemble with the pinned `as`
+        if host_cpp:
+            for prefix in _PREFIXES:
+                driver = folder / (prefix + "gcc")
+                if not driver.exists():
+                    driver.write_text(_ASSEMBLER_DRIVER.format(python=sys.executable, cpp=str(host_cpp),
+                                                               assembler=str(folder / (prefix + "as"))), encoding="utf-8")
+                    driver.chmod(0o755)
         # GNU coreutils' nproc (a Mac has sysctl instead), which Makefiles use to pick their -j
         if not shutil.which("nproc"):
             tool = folder / "nproc"

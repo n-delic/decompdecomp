@@ -74,10 +74,16 @@ def _wrap_foreign_ido(project) -> None:
         return
     done = project.root / ".decomp-wtf" / "build-tools" / ".ido-wrapped"
     tools = project.root / "tools"
-    if done.exists() or not tools.is_dir():
+    if not tools.is_dir():
         return
-    for driver in tools.glob("**/cc"):
-        if len(driver.relative_to(tools).parts) > 5 or driver.is_symlink() or not driver.is_file():
+    # (the project's own tools/, and those of a library it carries: lib/ultralib/tools/ido/cc)
+    roots = [tools, *sorted(project.root.glob("lib/*/tools")), *sorted(project.root.glob("libs/*/tools"))]
+    seen = "\n".join(str(r) for r in roots)  # (a submodule setup fetches later adds its tools: look again then)
+    if done.exists() and done.read_text(encoding="utf-8") == seen:
+        return
+    drivers = [(root, driver) for root in roots if root.is_dir() for driver in root.glob("**/cc")]
+    for tools_root, driver in drivers:
+        if len(driver.relative_to(tools_root).parts) > 5 or driver.is_symlink() or not driver.is_file():
             continue
         try:
             with open(driver, "rb") as f:
@@ -94,7 +100,7 @@ def _wrap_foreign_ido(project) -> None:
             continue
         if magic != b"\x7fELF":
             continue
-        version = re.search(r"(?<!\d)(5)[._](3)(?!\d)|(?<!\d)(7)[._](1)(?!\d)", str(driver.relative_to(tools)))
+        version = re.search(r"(?<!\d)(5)[._](3)(?!\d)|(?<!\d)(7)[._](1)(?!\d)", str(driver.relative_to(tools_root)))
         if version:
             tid = "ido-" + ("5.3" if version[1] else "7.1")
         else:  # tools/ido/cc: the README or Makefile says which
@@ -142,7 +148,7 @@ def _wrap_foreign_ido(project) -> None:
             tool.write_text(f'#!/bin/sh\nexec "{host}" "$@"\n', encoding="utf-8")
             tool.chmod(0o755)
     done.parent.mkdir(parents=True, exist_ok=True)
-    done.write_text("", encoding="utf-8")
+    done.write_text(seen, encoding="utf-8")
 
 
 def command(project, argv: list[str]) -> list[str]:
@@ -210,4 +216,12 @@ def _redirect(project, argv: list[str]) -> list[str]:
         alias.symlink_to(source, target_is_directory=True)
     if not alias.is_symlink() or alias.resolve() != source.resolve():
         return argv
+    if name == "CC":
+        # (a command-line CC would reach the project's sub-makes too, which build their host tools with it: the
+        # compiler's own folder is linked where the Makefile looks instead)
+        folder = (project.root / path).parent
+        if not folder.exists() and not folder.is_symlink():
+            folder.parent.mkdir(parents=True, exist_ok=True)
+            folder.symlink_to(source, target_is_directory=True)
+            return argv
     return [*argv, name + "=" + (alias / "cc").relative_to(project.root).as_posix()]
