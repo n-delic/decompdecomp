@@ -525,6 +525,7 @@ def test_a_stopped_vm_or_a_missing_image_is_left_to_setup(vm, monkeypatch, liste
 
 
 def test_a_new_vm_is_sized_from_this_computer(vm, monkeypatch):
+    monkeypatch.setattr(linuxvm.os, 'getloadavg', lambda: (0.0, 0.0, 0.0))
     monkeypatch.setattr(linuxvm.os, 'cpu_count', lambda: 10)
     monkeypatch.setattr(linuxvm.subprocess, 'run', lambda *a, **k: subprocess.CompletedProcess(a, 0, str(32 << 30).encode(), b''))
     assert linuxvm.wanted_size() == (5, 7)
@@ -539,6 +540,20 @@ def test_a_new_vm_is_sized_from_this_computer(vm, monkeypatch):
     linuxvm.setup(log=lambda *_: None)
     start = calls[0]
     assert start[start.index('--cpus') + 1] == '5' and start[start.index('--memory') + 1] == '7'
+
+
+def test_a_busy_computer_gets_a_smaller_vm(vm, monkeypatch):
+    monkeypatch.setattr(linuxvm.os, 'cpu_count', lambda: 18)
+    monkeypatch.setattr(linuxvm.os, 'getloadavg', lambda: (14.2, 10.0, 8.0))
+    def run(argv, **_):
+        out = (str(128 << 30) if argv[0] == 'sysctl' else
+               'Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free: 100000.\n'
+               'Pages inactive: 200000.\nPages speculative: 10000.\n')  # about 4.7 GB to spare
+        return subprocess.CompletedProcess(argv, 0, out.encode(), b'')
+    monkeypatch.setattr(linuxvm.subprocess, 'run', run)
+    assert linuxvm.wanted_size() == (3, 3)  # 3.8 cores idle, and 2 GB (half of 4) is under the 3 GB floor
+    monkeypatch.setattr(linuxvm.os, 'getloadavg', lambda: (17.9, 0.0, 0.0))
+    assert linuxvm.wanted_size()[0] == 2  # never under 2 CPUs
 
 
 def test_setup_says_how_to_grow_a_small_vm_but_never_restarts_it(vm, monkeypatch):

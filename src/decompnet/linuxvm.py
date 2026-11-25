@@ -57,15 +57,37 @@ def vm_cpus() -> int | None:
         return None
 
 
+def _available_gb() -> int | None:
+    """GB of memory this Mac could give a program now (free, inactive and speculative pages), or None when vm_stat
+    doesn't say."""
+    try:
+        text = subprocess.run(['vm_stat'], capture_output=True, timeout=5).stdout.decode(errors='replace')
+        size = int(re.search(r'page size of (\d+) bytes', text)[1])
+        pages = sum(int(re.search(rf'Pages {kind}:\s+(\d+)', text)[1]) for kind in ('free', 'inactive', 'speculative'))
+    except (OSError, TypeError, ValueError, subprocess.TimeoutExpired):
+        return None
+    return (pages * size) >> 30
+
+
 def wanted_size() -> tuple[int, int]:
     """CPUs and GB of memory for a new VM: half this Mac's cores (2 to 8), a GB per job and two to spare, at most a
-    quarter of its memory. Setup gave every Mac 2 CPUs and 3 GB, which held PS2 compiles to 1 to 1.7 a second."""
-    cpus = max(2, min(8, (os.cpu_count() or 4) // 2))
+    quarter of its memory. Setup gave every Mac 2 CPUs and 3 GB, which held PS2 compiles to 1 to 1.7 a second.
+    That is for an idle Mac: the VM is sized when it starts, so a Mac already busy gets less. The cores its load leaves
+    free cap the CPUs, and half the memory it has free caps the memory (never under 2 CPUs and 3 GB)."""
+    total = os.cpu_count() or 4
+    cpus = max(2, min(8, total // 2))
     try:
         memory = int(subprocess.run(['sysctl', '-n', 'hw.memsize'], capture_output=True, timeout=5).stdout) >> 30
     except (OSError, ValueError, subprocess.TimeoutExpired):
         memory = 8
-    return cpus, max(3, min(cpus + 2, memory // 4))
+    try:
+        cpus = max(2, min(cpus, int(total - os.getloadavg()[0])))
+    except OSError:
+        pass
+    memory = min(cpus + 2, memory // 4)
+    if (free := _available_gb()) is not None:
+        memory = min(memory, free // 2)
+    return cpus, max(3, memory)
 
 
 def profile() -> str:
