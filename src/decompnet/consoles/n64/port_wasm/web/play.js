@@ -3,6 +3,7 @@
 import { start, supported } from "./runtime.js";
 import { GpuRenderer, gpuSupported } from "./gl.js";
 import { touchController } from "./touch.js";
+import { menuModel, mountMenu } from "./settings.js";
 
 const $ = (id) => document.getElementById(id);
 const status = (text) => { $("status").textContent = text; };
@@ -49,19 +50,23 @@ const KEYS = { ArrowUp: 0x0800, ArrowDown: 0x0400, ArrowLeft: 0x0200, ArrowRight
 const PAD = { 0: 0x8000, 2: 0x4000, 1: 0x4000, 3: 0x4000, 9: 0x1000, 4: 0x0020, 5: 0x0010, 6: 0x2000, 7: 0x2000,
   12: 0x0800, 13: 0x0400, 14: 0x0200, 15: 0x0100 };
 const down = new Set();
+let menu = null; // the settings menu, made below (it needs the page's controls)
 const touch = touchController($("touch"));
 // Keep controls available after rotation and when a touch device also has a mouse or trackpad.
 if (navigator.maxTouchPoints > 0) document.documentElement.classList.add("touch-device");
-addEventListener("keydown", (e) => { if (e.code in KEYS && !$("play").hidden) { e.preventDefault(); down.add(e.code); } });
+addEventListener("keydown", (e) => { if (e.code in KEYS && !$("play").hidden && !(menu && menu.model.open)) { e.preventDefault(); down.add(e.code); } });
 addEventListener("keyup", (e) => { if (e.code in KEYS) { e.preventDefault(); down.delete(e.code); } });
 addEventListener("blur", () => down.clear());
 function input() {
+  const pads = navigator.getGamepads ? [...navigator.getGamepads()] : [];
+  if (menu) menu.ui.pads(pads);
+  if (menu && menu.model.open) return 0; // the menu has the keys: the game gets none
   const fingers = touch.read();
   let b = fingers.buttons;
   for (const k of down) b |= KEYS[k];
   let x = fingers.x || (down.has("ArrowRight") ? 80 : 0) - (down.has("ArrowLeft") ? 80 : 0);
   let y = fingers.y || (down.has("ArrowUp") ? 80 : 0) - (down.has("ArrowDown") ? 80 : 0);
-  for (const gp of (navigator.getGamepads ? navigator.getGamepads() : [])) {
+  for (const gp of pads) {
     if (!gp) continue;
     gp.buttons.forEach((v, i) => { if ((v.pressed || v.value > 0.5) && PAD[i]) b |= PAD[i]; });
     const [ax = 0, ay = 0, cx = 0, cy = 0] = gp.axes;
@@ -130,6 +135,7 @@ function useRenderer(renderer, scale, smooth) {
   $("smooth").checked = smooth;
   $("scale-choice").hidden = $("smooth-choice").hidden = renderer !== "webgl";
   try { localStorage.setItem(VIDEO, JSON.stringify(video)); } catch {}
+  if (menu) menu.applyScaling();
 }
 $("renderer").onchange = (e) => useRenderer(e.target.value, video.scale, video.smooth);
 $("scale").onchange = (e) => useRenderer(video.renderer, Number(e.target.value), video.smooth);
@@ -145,19 +151,63 @@ function frame(rgb, w, h) {
   counted();
 }
 let audio = null, next = 0;
-$("sound").onclick = (e) => { if (!audio) { audio = new AudioContext(); e.target.textContent = "Sound playing"; } };
+$("sound").onclick = (e) => {
+  if (audio) return;
+  audio = new AudioContext();
+  const gain = audio.createGain();
+  gain.connect(audio.destination);
+  menu.attachGain(gain);
+  e.target.textContent = "Sound playing";
+};
 function sound(lr, frames, hz) {
   if (!audio || !frames) return;
   const buf = audio.createBuffer(2, frames, hz), L = buf.getChannelData(0), R = buf.getChannelData(1);
   for (let i = 0; i < frames; i++) { L[i] = lr[i * 2] / 32768; R[i] = lr[i * 2 + 1] / 32768; }
   const src = audio.createBufferSource();
   src.buffer = buf;
-  src.connect(audio.destination);
+  src.connect(menu.gain());
   if (next < audio.currentTime + 0.02 || next > audio.currentTime + 0.5) next = audio.currentTime + 0.08;
   src.start(next);
   next += frames / hz;
 }
-$("full").onclick = () => $("screen").requestFullscreen && $("screen").requestFullscreen();
+$("full").onclick = () => menu.apply("fullscreen", document.fullscreenElement === $("play") ? "OFF" : "ON");
+$("settings").onclick = () => menu.ui.toggle();
+
+/* ---------------------------------------------------------------- the settings menu (settings.js: the window build's rows) */
+const SETTINGS = `${STORE}-settings`;
+menu = (() => {
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(SETTINGS) || "{}"); } catch {}
+  const model = menuModel(saved);
+  let gain = null, touched = Object.keys(saved).includes("smooth");
+  const applyScaling = () => { // untouched, each renderer keeps its own look (software: sharp pixels; WebGL: smooth)
+    if (touched) $("screen").style.imageRendering = model.get("smooth") === "SMOOTH" ? "auto" : "pixelated";
+  };
+  const api = {
+    model, gain: () => gain,
+    applyScaling,
+    volume() { return Number(model.get("volume")) / 100; },
+    apply(key, text, initial) {
+      if (key === "smooth") { if (!initial) touched = true; applyScaling(); }
+      else if (key === "fps") $("rate").hidden = text !== "ON";
+      else if (key === "volume" && gain) gain.gain.value = Number(text) / 100;
+      else if (key === "fullscreen" && !initial) {
+        const full = document.fullscreenElement === $("play");
+        if (text === "ON" && !full) $("play").requestFullscreen?.().catch(() => api.ui.sync("fullscreen", "OFF"));
+        if (text === "OFF" && full) document.exitFullscreen();
+      }
+    },
+    attachGain(node) { gain = node; gain.gain.value = api.volume(); },
+  };
+  api.ui = mountMenu($("play"), model, {
+    apply: api.apply,
+    remember: (record) => { try { localStorage.setItem(SETTINGS, JSON.stringify(record)); } catch {} },
+    toggled: (open) => { if (open) down.clear(); },
+  });
+  // the browser's own Escape or the page's Full screen button: the row follows what is really so
+  addEventListener("fullscreenchange", () => api.ui.sync("fullscreen", document.fullscreenElement === $("play") ? "ON" : "OFF"));
+  return api;
+})();
 
 /* ---------------------------------------------------------------- the game's save (its EEPROM), per ROM */
 let saveKey = "";
