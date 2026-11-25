@@ -976,3 +976,9 @@ draws aligned (each call gets the console's next seed), but a draw that depends 
 test reads while the opponent's list is built are the ones the first `checkNearPoint` of that frame has just written. The port's order has not been traced: an lldb run with breakpoints on the generated functions
 (`w2c_game_checkNearPoint0x2E1`, `w2c_game_draw_object_dl0x2E1`, a callback writing the retrace count) set both but logged no hits from a live run (the process launched from lldb's batch mode did not report exiting), which is the thing to
 fix first. With that, the order and the retrace of each call in the port set against the console's lines above would say which call is early.
+
+**Delivering the RSP/RDP interrupts at the next OS message call (tried, reverted).** The order trace (console: a frame's five graphics tasks, an audio task, then the line-point update;
+port: the update between the fourth and fifth task) suggested the interrupts, held to the host's tick, let the logic thread run in the gap the console's scheduler handler would have filled.
+Raising them at the next `osSendMesg`/`osRecvMesg` of any thread (host.c `rcp_at_next_call`) changed the game's pacing altogether instead: with the console's trace, task 600 came at retrace 169 (the console's: 539),
+about three graphics tasks a retrace, and the line points never changed in the log's span. So the game's own sequence (what it waits for between tasks) depends on the interrupts' timing more than this change allows for;
+the console's ordering is still unexplained, and the port's `PORT_ORDER_LOG` (`ORDER task n vi v`, `ORDER change old -> new`) against the emulator's watch on the word plus a break on `osSpTaskStartGo` (0x8008DF0C) is the way to test the next idea.
