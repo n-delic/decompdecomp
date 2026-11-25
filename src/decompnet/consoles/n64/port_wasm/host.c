@@ -935,25 +935,16 @@ void port_audio_task(uint32_t task); /* audio.c */
 static uint64_t monotonic_us(void);
 static pthread_mutex_t rcp_lock = PTHREAD_MUTEX_INITIALIZER;
 static unsigned char rcp_events[64];
-static unsigned long rcp_due_vi[64]; /* the retrace each held event may be raised at (PORT_RCP_RETRACES) */
 static unsigned rcp_count;
 static uint64_t rcp_due_us;
 #define RCP_DELAY_US 400
 #endif
-/* PORT_RCP_RETRACES=n: hold each task's SP and DP interrupts n retraces after the task was started, as a console whose RSP and RDP take
-   that long to finish a heavy frame does (the emulator's logic ran a frame behind the port's at the same graphics task when they came at once,
-   docs/PORTING.md). 0, the default, raises them when every game thread waits, as before. */
-static unsigned long rcp_delay_vi(void) {
-    static long n = -1;
-    if (n < 0) n = getenv("PORT_RCP_RETRACES") ? atol(getenv("PORT_RCP_RETRACES")) : 0;
-    return (unsigned long)n;
-}
 static void rcp_raise(int event) {
 #ifdef PORT_WEB
     post_event(event);
 #else
     pthread_mutex_lock(&rcp_lock);
-    if (rcp_count < sizeof rcp_events) { rcp_due_vi[rcp_count] = vi_count + rcp_delay_vi(); rcp_events[rcp_count++] = (unsigned char)event; }
+    if (rcp_count < sizeof rcp_events) rcp_events[rcp_count++] = (unsigned char)event;
     rcp_due_us = monotonic_us() + RCP_DELAY_US;
     pthread_mutex_unlock(&rcp_lock);
 #endif
@@ -961,14 +952,12 @@ static void rcp_raise(int event) {
 static void dp_deliver(int force) {
 #ifndef PORT_WEB
     unsigned char out[sizeof rcp_events];
-    unsigned n = 0, keep = 0;
+    unsigned n;
     pthread_mutex_lock(&rcp_lock);
     if (!rcp_count || (!force && monotonic_us() < rcp_due_us)) { pthread_mutex_unlock(&rcp_lock); return; }
-    for (unsigned i = 0; i < rcp_count; i++) { /* in order: an event waits for the ones before it */
-        if (!keep && rcp_due_vi[i] <= vi_count) out[n++] = rcp_events[i];
-        else { rcp_events[keep] = rcp_events[i]; rcp_due_vi[keep++] = rcp_due_vi[i]; }
-    }
-    rcp_count = keep;
+    n = rcp_count;
+    memcpy(out, rcp_events, n);
+    rcp_count = 0;
     pthread_mutex_unlock(&rcp_lock);
     for (unsigned i = 0; i < n; i++) post_event(out[i]);
 #else
@@ -2174,10 +2163,9 @@ static void vtrace_load(const char *path) {
 }
 #endif
 /* The audio interface can drain several buffers between VI interrupts. Give the game a chance to refill them. */
-/* PORT_VTIME: run until every game thread is waiting (three samples in a row), or `wall_us` of wall time has passed (a thread that spins).
-   Returns whether the threads went idle. The virtual clock is not touched. */
-static int vtime_idle(uint64_t wall_us) {
-        uint64_t limit = monotonic_us() + wall_us;
+static void wait_retrace(void) {
+    if (vtime) { /* PORT_VTIME: when every game thread is waiting (or after 3 s of wall time, for one that spins) */
+        uint64_t limit = monotonic_us() + 3000000;
         int idle = 0;
         while (idle < 3 && monotonic_us() < limit) {
             pthread_mutex_lock(&lock);
@@ -2198,11 +2186,6 @@ static int vtime_idle(uint64_t wall_us) {
             if (none) dp_deliver(1); /* the RCP finishes while the CPU has nothing to do */
             usleep(none ? 100 : 50);
         }
-    return idle >= 3;
-}
-static void wait_retrace(void) {
-    if (vtime) { /* PORT_VTIME: when every game thread is waiting (or after 3 s of wall time, for one that spins) */
-        int idle = vtime_idle(3000000) ? 3 : 0;
         if (idle < 3) {
             vtime_forced++;
             if (vtime_forced <= 3 || vtime_forced % 100 == 0) {
@@ -2415,33 +2398,11 @@ int main(int argc, char **argv) {
     pthread_mutex_unlock(&lock);
     /* the VI retrace: 50 a second for PAL, 60 for NTSC */
     for (int frame = 0; seconds <= 0 || (vtime ? (int)(vi_count) : frame) < seconds * 1000000 / retrace_us(); frame++) {
-        /* PORT_VTIME_TRACE: the console was at retrace vtrace[n] when it started graphics task n, and no later until the game had: a game
-           that works for a few milliseconds between two tasks sees no retrace in them. The port's threads, once idle, would fire
-           retraces at once (virtual time) and the game's logic, counted in retraces, ran a frame ahead of the console's at the same task
-           (the track's line points changed at tasks 604, 609, 614 in the port and 603, 608, 613 on the console). Once the retrace the
-           next task started at has come, none follows until the game has started it (200 ms of wall time at most; PORT_VTIME_HOLD=0: not at all). */
-        static int hold = -1;
-        if (hold < 0) hold = !getenv("PORT_VTIME_HOLD") || atoi(getenv("PORT_VTIME_HOLD")) != 0;
-        if (hold && vtime && vtrace) {
-            volatile unsigned long *started = &gfx_tasks;
-            unsigned long was = *started;
-            uint64_t from = monotonic_us();
-            while (was + 1 < vtrace_n && vi_count >= vtrace[was + 1] && vtrace[was + 1] && *started == was && monotonic_us() - from < 200000)
-                usleep(100);
-        }
         wait_retrace();
         retrace();
         /* the retraces the console had while it worked on a frame (PORT_VTIME_TRACE), fired as the game goes idle:
            they queue for it as they did there */
-        /* each catch-up retrace gets the game's threads run to idle (20 ms of wall time at most) before the next, without the virtual clock moving
-           again: fired back to back a frame's retraces queue together on the game's VI queue, and the logic they pace runs in bursts the
-           console's did not. PORT_VTIME_BURST=1: back to back. */
-        static int burst = -1;
-        if (burst < 0) burst = getenv("PORT_VTIME_BURST") && atoi(getenv("PORT_VTIME_BURST")) != 0;
-        while (vtime && vi_count < vi_target) {
-            if (!burst) vtime_idle(20000);
-            retrace();
-        }
+        while (vtime && vi_count < vi_target) retrace();
         if (vtime && vi_target) vnext_us = ((uint64_t)vi_count + 1) * (unsigned)retrace_us();
         port_live_pump();
         if (getenv("PORT_SAMPLE") && frame % 10 == 5) sample();

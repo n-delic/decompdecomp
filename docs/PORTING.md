@@ -941,3 +941,10 @@ inside `osSpTaskStartGo` had: both change how many virtual clock periods pass pe
 game's timers see a different time. A version that gives the threads time between retraces without advancing the clock again is untried. The message log
 also shows the port's queues sit at other addresses than the console's for the dynamically allocated ones (only the static queues at 0x800B4xxx match), so the two logs
 compare by the static queues and the order of operations on them.
+
+**Four host timing changes for the logic lead, none of which helped, are removed.** The delay of the RSP/RDP interrupts (`PORT_RCP_RETRACES`), the hold of retraces at the console's count
+(`PORT_VTIME_HOLD`) and pacing the catch-up retraces with a brief wait for the game's threads to idle without moving the clock (`PORT_VTIME_BURST`) each left the race window as it was (the
+line points still change at the port's tasks 604, 609, 614, 619 and the console's 603, 608, 613, 618; the opponent's frames 12-18% different), and two earlier tries (raising the retraces from inside
+`osSpTaskStartGo`, `wait_retrace` before each catch-up retrace) stalled the game. host.c is back to the code before them. The logic lead is not a matter of when the host raises
+retraces or the RSP/RDP interrupts; what remains untried is the order of the game's own threads (the message logs: the port's `PORT_MSGLOG`, the emulator's breaks on osSendMesg/osRecvMesg at 0x8008D4A0 and 0x8008D090, compared by
+the static queues at 0x800B4xxx) and whether the console's game does work the port's skips between retraces.
