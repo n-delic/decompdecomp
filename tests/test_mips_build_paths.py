@@ -352,7 +352,7 @@ def test_the_assembler_shim_predefines_what_the_cross_gcc_does(tmp_path):
     cpp.write_text('#!/bin/sh\necho "$@" > "$CPP_ARGS"\n')
     cpp.chmod(0o755)
     assembler = tmp_path / "as"
-    assembler.write_text("#!/bin/sh\nexit 0\n")
+    assembler.write_text('#!/bin/sh\nwhile [ "$1" != "-o" ]; do shift; done\n: > "$2"\n')
     assembler.chmod(0o755)
     driver = tmp_path / "gcc"
     driver.write_text(mips_tools._ASSEMBLER_DRIVER.format(python=sys.executable, cpp=cpp, assembler=assembler))
@@ -363,6 +363,42 @@ def test_the_assembler_shim_predefines_what_the_cross_gcc_does(tmp_path):
     seen = record.read_text().split()
     assert {"-Dmips=1", "-D_MIPSEB", "-D_LANGUAGE_ASSEMBLY"} <= set(seen)
     assert "-D_MIPSEL" not in seen
+
+
+def test_the_cross_cpp_shim_drops_mips_compile_flags_the_host_cpp_rejects(tmp_path, monkeypatch):
+    import subprocess
+
+    tools, _ = pinned(tmp_path, monkeypatch)
+    host = tmp_path / "hostcpp"
+    host.write_text('#!/bin/sh\necho "$@"\n')
+    host.chmod(0o755)
+    monkeypatch.setattr(mips_tools.shutil, "which", lambda name, *a, **k: str(host) if name == "cpp" else None)
+    real_glob = mips_tools.Path.glob
+    monkeypatch.setattr(mips_tools.Path, "glob",
+                        lambda self, pattern: iter(()) if pattern.startswith("cpp-") else real_glob(self, pattern))
+    folder = mips_tools.build_paths(SimpleNamespace(root=tmp_path / "project"))[0]
+    shown = subprocess.run([str(folder / "mips-linux-gnu-cpp"), "-G0", "-mips3", "-mgp32", "-EB", "-I", "inc", "-m32",
+                            "-MD", "-DX=1", "a.c"], capture_output=True, text=True).stdout.split()
+    assert shown[-6:] == ["-I", "inc", "-m32", "-MD", "-DX=1", "a.c"]
+    assert "-D_MIPSEB" in shown and not {"-G0", "-mips3", "-mgp32", "-EB"} & set(shown)
+
+
+def test_a_bare_ar_archives_elf_objects_with_the_pinned_ar_on_a_mac(tmp_path, monkeypatch):
+    import subprocess
+
+    tools, _ = pinned(tmp_path, monkeypatch)
+    gnu = tools / "mips-ps2-decompals-ar"
+    gnu.write_text('#!/bin/sh\necho pinned "$@"\n')
+    gnu.chmod(0o755)
+    monkeypatch.setattr(mips_tools.sys, "platform", "darwin")
+    folder = mips_tools.build_paths(SimpleNamespace(root=tmp_path / "project"))[0]
+    elf, other = tmp_path / "a.o", tmp_path / "b.o"
+    elf.write_bytes(b"\x7fELF" + bytes(8))
+    other.write_bytes(b"\xcf\xfa\xed\xfe" + bytes(8))
+    shown = subprocess.run([str(folder / "ar"), "rcs", "x.a", str(elf)], capture_output=True, text=True).stdout
+    assert shown.startswith("pinned rcs")
+    host = subprocess.run([str(folder / "ar"), "rcs", str(tmp_path / "x.a"), str(other)], capture_output=True, text=True)
+    assert "pinned" not in host.stdout
 
 
 def test_the_sha1sum_shim_accepts_one_space_between_hash_and_name(tmp_path):
@@ -779,3 +815,50 @@ def test_gcc_kmc_and_egcs_folders_named_by_detected_os_are_linked_on_a_mac(tmp_p
     assert (root / "tools/gcc_kmc/mac/2.7.2").resolve() == kmc.resolve()
     assert (root / "tools/gcc_egcs/mac/1.1.2-4").resolve() == egcs.resolve()
     assert (root / "tools/gcc_kmc/macos/2.7.2").resolve() == kmc.resolve()
+
+
+def test_objcopy_is_wrapped_for_the_traditional_o32_format_names(tmp_path, monkeypatch):
+    tools, _ = pinned(tmp_path, monkeypatch)
+    objcopy = tools / "mips-ps2-decompals-objcopy"
+    objcopy.write_text('#!/bin/sh\necho "$@"\n')
+    objcopy.chmod(0o755)
+    folder = mips_tools.build_paths(SimpleNamespace(root=tmp_path / "project"))[0]
+    import subprocess
+
+    shown = subprocess.run([str(folder / "mips-linux-gnu-objcopy"), "-I", "binary", "-O", "elf32-tradbigmips", "a", "b"],
+                           capture_output=True, text=True).stdout
+    assert shown.split() == ["-I", "binary", "-O", "elf32-bigmips", "a", "b"]
+
+
+def test_the_assembler_shim_leaves_section_symbols_unnamed(tmp_path):
+    """asm-processor merges symbols by name: a named `.text` in the assembled object clashes with the compiler's."""
+    import struct
+    import subprocess
+    import sys
+
+    def elf_with_named_section_symbol() -> bytes:
+        strtab = b"\0.text\0"
+        symtab = struct.pack(">IIIBBH", 0, 0, 0, 0, 0, 0) + struct.pack(">IIIBBH", 1, 0, 0, 3, 0, 1)
+        header = bytearray(52)
+        header[:7] = b"\x7fELF\x01\x02\x01"
+        body = strtab + symtab
+        shoff = 52 + len(body)
+        struct.pack_into(">IHH", header, 32, shoff, 0, 0)
+        struct.pack_into(">HH", header, 46, 40, 3)
+        sections = bytes(40) + struct.pack(">10I", 0, 2, 0, 0, 52 + len(strtab), len(symtab), 0, 0, 4, 16) + bytes(40)
+        return bytes(header) + body + sections
+
+    cpp = tmp_path / "cpp"
+    cpp.write_text('#!/bin/sh\nfor a; do f=$a; done\ncat "$f"\n')
+    cpp.chmod(0o755)
+    assembler = tmp_path / "as"
+    assembler.write_text(f'#!/bin/sh\nwhile [ "$1" != "-o" ]; do shift; done\ncat "{tmp_path}/model.o" > "$2"\n')
+    assembler.chmod(0o755)
+    (tmp_path / "model.o").write_bytes(elf_with_named_section_symbol())
+    (tmp_path / "x.s").write_text("nop\n")
+    driver = tmp_path / "gcc"
+    driver.write_text(mips_tools._ASSEMBLER_DRIVER.format(python=sys.executable, cpp=cpp, assembler=assembler))
+    subprocess.run([sys.executable, str(driver), "-c", "-o", str(tmp_path / "x.o"), str(tmp_path / "x.s")], check=True)
+    made = (tmp_path / "x.o").read_bytes()
+    first_symbol = 52 + len(b"\0.text\0") + 16
+    assert struct.unpack_from(">I", made, first_symbol)[0] == 0

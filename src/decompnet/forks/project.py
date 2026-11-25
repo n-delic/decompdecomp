@@ -413,7 +413,8 @@ class ForkProject:
         return console.id if console.id in {c.id for c in consoles.CONSOLES} else ""
 
     def _splat_yaml(self) -> Path | None:
-        for p in sorted(self.root.glob("*.yaml")) + sorted(self.root.glob("config/*.yaml")) + sorted(self.root.glob("config/**/*.yaml")):
+        for p in sorted(self.root.glob("*.yaml")) + sorted(self.root.glob("config/*.yaml")) + sorted(self.root.glob("config/**/*.yaml")) \
+                + sorted(self.root.glob("versions/*/*.yaml")):
             try:
                 text = p.read_text(errors="replace", encoding="utf-8")
             except OSError:
@@ -1484,7 +1485,8 @@ class ForkProject:
         path = self._splat_yaml()
         if version:
             path = self._splat_version_configs().get(version) or next(
-                (p for p in self.root.glob("*.yaml") if p.name.endswith(f".{version}.yaml")), path)
+                (p for p in [*self.root.glob("*.yaml"), *self.root.glob(f"versions/{version}/*.yaml")]
+                 if p.name.endswith(f".{version}.yaml") or p.parent.name == version), path)
         if path is None:
             return False
         import yaml
