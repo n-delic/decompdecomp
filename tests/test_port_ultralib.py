@@ -188,6 +188,45 @@ def test_a_function_ultralib_defines_static_is_found_and_exported_when_one_file_
     assert "static int helper" in text and "alSeqOther" not in text.replace("int alSeqOther(int *p);", "")
 
 
+def test_static_twins_with_one_body_resolve_and_different_ones_do_not(tmp_path, monkeypatch):
+    """env.c and n_env.c both define `_getRate`: the same helper, whichever audio library a game links. csplayer.c's
+    `_getVol` is another function with the same name: a unit can't tell which a game's copy is."""
+    folder = tmp_path / "ultralib"
+    audio = folder / "src" / "audio"
+    audio.mkdir(parents=True)
+    (folder / "include").mkdir()
+    (audio / "env.c").write_text("static int _getRate(int x) { return x * 2; }\nstatic int _getVol(int x) { return x; }\n")
+    (audio / "n_env.c").write_text("/* n_ copy */\nstatic int _getRate(int x)\n{\n    return x * 2; /* same */\n}\n")
+    (audio / "csplayer.c").write_text("static int _getVol(int x) { return x + 1; }\n")
+    ultralib.static_index.cache_clear()
+    index = ultralib.static_index(str(folder))
+    assert index["_getRate"] in (audio / "env.c", audio / "n_env.c") and "_getVol" not in index
+
+
+def test_a_symbol_a_define_gives_a_function_has_its_source_and_f3dex2_flags(tmp_path, monkeypatch):
+    """`fsin` is `__sinf` (a #define in sinf.c), `spInit` is `spX2Init` for F3DEX2 (sp.h): the game's symbol is not the
+    name the C defines, so the lookup follows the object-like macros, and the F3DEX2 names are built with
+    F3DEX_GBI_2 as spriteex2.c does."""
+    folder = tmp_path / "ultralib"
+    (folder / "src" / "gu").mkdir(parents=True)
+    (folder / "src" / "sp").mkdir()
+    (folder / "include" / "PR").mkdir(parents=True)
+    (folder / "include" / "PR" / "sp.h").write_text("#if defined(F3DEX_GBI_2)\n#define\tspInit\t\tspX2Init\n#endif\n")
+    (folder / "src" / "sp" / "sprite.c").write_text('#include <PR/sp.h>\nvoid spInit(int *g) { *g = 1; }\nvoid spOther(void) { }\n')
+    (folder / "src" / "gu" / "sinf.c").write_text("#define fsin __sinf\nstatic const int P[] = {1};\nfloat fsin(float x) { return x; }\n")
+    for cached in (ultralib.index, ultralib.static_index, ultralib.macros, ultralib.alias_index):
+        cached.cache_clear()
+    monkeypatch.setattr(ultralib, "root", lambda: folder)
+    monkeypatch.setattr(ultralib, "_builds", lambda: {"f" * 40: ["2.0I/libgultra"]})
+    hint = {"corpora": ["built in / decompals/ultralib e24c836796df"], "fingerprint": "f" * 40}
+    assert ultralib.source("__sinf", hint) == (folder / "src/gu/sinf.c", "2.0I/libgultra")
+    assert ultralib.source("spX2Init", hint)[0] == folder / "src/sp/sprite.c"
+    text = ultralib.extract(folder / "src/sp/sprite.c", "spX2Init")
+    assert "void spInit(int *g)" in text and "spOther(void) { }" not in text  # (the other function stays out)
+    assert "-DF3DEX_GBI_2" in ultralib.flags(folder, folder / "src/sp/sprite.c", "2.0I/libgultra", "spX2Init")
+    assert "-DF3DEX_GBI_2" not in ultralib.flags(folder, folder / "src/sp/sprite.c", "2.0I/libgultra", "spXInit")
+
+
 def test_the_build_adds_callees_nothing_else_provides(tree, tmp_path):
     text = ultralib.extract(ultralib.index(str(tree))["guToy"], "guToy")
     units = {"guToy.c": (text, ["-DX"])}
