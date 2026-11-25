@@ -230,12 +230,15 @@ def _wrap_foreign_ido(project) -> None:
     # A project's own copy of the KMC-style GCC 2.7.2 (tools/gcc_2.7.2/{gcc,cc1,as,...}, Linux programs): the
     # installed one stands in for each program it has under that name.
     # (or tools/gcc itself, beside its cc1: a project that keeps the compiler's programs directly in tools/)
-    sn = {d.parent for d in (*tools.glob("*/gcc"), *tools.glob("*/*/gcc")) if _is_sn64_folder(d.parent)}
+    # (the project's own tools/, and those of a library it carries, lib/ultralib/tools/gcc)
+    def found(*patterns):
+        return [d for root in roots if root.is_dir() for pattern in patterns for d in root.glob(pattern)]
+
+    sn = {d.parent for d in found("*/gcc", "*/*/gcc") if _is_sn64_folder(d.parent)}
     _wrap_sn64_gcc(sn)
-    plain = {d.parent for d in (*tools.glob("gcc"), *tools.glob("*/gcc")) if (d.parent / "cc1").is_file()
+    plain = {d.parent for d in found("gcc", "*/gcc") if (d.parent / "cc1").is_file()
              and d.is_file() and not d.is_symlink() and _is_gcc_272(d) and d.parent not in sn}
-    for folder in ({d.parent for d in tools.glob("*gcc*2.7.2*/gcc")} | {d.parent for d in tools.glob("*/*gcc*2.7.2*/gcc")}
-                   | plain) - sn:
+    for folder in ({d.parent for d in found("*gcc*2.7.2*/gcc", "*/*gcc*2.7.2*/gcc")} | plain) - sn:
         if toolchains.installed("gcc-2.7.2-kmc") is None:
             break
         installed = toolchains.require("gcc-2.7.2-kmc")

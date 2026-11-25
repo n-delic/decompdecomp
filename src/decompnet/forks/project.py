@@ -189,6 +189,17 @@ def _tool_dirs() -> list[Path]:
     return [Path(sys.executable).parent, *([bundled] if bundled.is_dir() else [])]
 
 
+def _real_default_goal(makefile: str) -> list[str]:
+    """`make` with no target runs the Makefile's first rule, which in some projects is `clean` (written before
+    `all`) or `help`: those name the target that builds instead. Nothing when the default already builds."""
+    if re.search(r"^\.DEFAULT_GOAL\s*[:?]?=", makefile, re.M):
+        return []
+    first = next((m[1] for m in re.finditer(r"^([A-Za-z][\w-]*)\s*:(?!=)", makefile, re.M)), None)
+    if first not in ("clean", "distclean", "help"):
+        return []
+    return next(([t] for t in ("all", "build", "rom") if re.search(rf"^{t}\s*:", makefile, re.M)), [])
+
+
 def _version_var(makefile: str) -> str | None:
     """The variable a Makefile picks the game's version by, when it has a default for it (`VERSION ?= us`, or Perfect
     Dark's `ROMID ?= ntsc-final`): `make <var>=<version>` builds another."""
@@ -1176,7 +1187,7 @@ class ForkProject:
             steps = [["make", *chosen, t] for t in _setup_targets(text)]
             if not steps and re.search(r"^split\s*:", text, re.M):  # (splat's output: *_auto.txt the link reads)
                 steps = [["make", *chosen, "split"]]
-            return steps + [["make", *chosen, f"-j{os.cpu_count() or 4}"]]
+            return steps + [["make", *chosen, f"-j{os.cpu_count() or 4}", *_real_default_goal(text)]]
         if kind == "splat":
             make = (self.root / "Makefile").read_text(errors="replace", encoding="utf-8")
             chosen = [f"VERSION={version}"] if version and self.splat_baseroms() else []
@@ -1195,7 +1206,7 @@ class ForkProject:
                 # the same, for a project that names no splat of its own: the one decompdecomp runs from
                 steps = [["python", "-m", "splat", "split", config.name]]
             jobs = min(os.cpu_count() or 4, 4) if self._docker_only_macos() else os.cpu_count() or 4
-            return steps + [["make", *chosen, f"-j{jobs}"]]
+            return steps + [["make", *chosen, f"-j{jobs}", *_real_default_goal(make)]]
         if kind == "objdiff":
             cfg = self.objdiff_config()
             return [[cfg.get("custom_make") or "make", *cfg.get("custom_args", [])]]
