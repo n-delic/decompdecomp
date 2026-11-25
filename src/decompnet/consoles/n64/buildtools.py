@@ -55,9 +55,18 @@ def _wrap_foreign_ido(project) -> None:
             continue
         try:
             with open(driver, "rb") as f:
-                if f.read(4) != b"\x7fELF":
-                    continue
+                magic = f.read(4)
         except OSError:
+            continue
+        if magic in (b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xfe\xed\xfa\xcf"):
+            # a project's own Mac IDO whose files lost their execute bit (a zip, or Windows, on the way to git)
+            for program in driver.parent.iterdir():
+                if program.is_file() and not program.is_symlink() and not program.stat().st_mode & 0o111:
+                    with open(program, "rb") as f:
+                        if f.read(4) == magic:
+                            program.chmod(0o755)
+            continue
+        if magic != b"\x7fELF":
             continue
         version = re.search(r"(?<!\d)(5)[._](3)(?!\d)|(?<!\d)(7)[._](1)(?!\d)", str(driver.relative_to(tools)))
         if version:
@@ -72,6 +81,23 @@ def _wrap_foreign_ido(project) -> None:
         driver.rename(driver.with_name("cc.linux"))
         driver.write_text(f'#!/bin/sh\nexec "{source}" "$@"\n', encoding="utf-8")
         driver.chmod(0o755)
+    # The same for a project's other committed Linux programs (tools/pigment64, ...) when the host has the tool:
+    # `cargo install` and the system's own packages are where those come from.
+    path = os.pathsep.join([os.environ.get("PATH", ""), str(Path.home() / ".cargo" / "bin")])
+    for tool in tools.glob("*"):
+        if not tool.is_file() or tool.is_symlink() or not tool.stat().st_mode & 0o111 or tool.suffix:
+            continue
+        try:
+            with open(tool, "rb") as f:
+                if f.read(4) != b"\x7fELF":
+                    continue
+        except OSError:
+            continue
+        host = shutil.which(tool.name, path=path)
+        if host and Path(host).resolve() != tool.resolve():
+            tool.rename(tool.with_name(tool.name + ".linux"))
+            tool.write_text(f'#!/bin/sh\nexec "{host}" "$@"\n', encoding="utf-8")
+            tool.chmod(0o755)
     done.parent.mkdir(parents=True, exist_ok=True)
     done.write_text("", encoding="utf-8")
 
@@ -79,6 +105,10 @@ def _wrap_foreign_ido(project) -> None:
 def command(project, argv: list[str]) -> list[str]:
     argv = _redirect(project, argv)
     makefile = project.root / "Makefile"
+    if (sys.platform == "darwin" and Path(argv[0]).name in ("make", "gmake") and makefile.is_file()
+            and not any(a.startswith("RUN_CC_CHECK=") for a in argv[1:])
+            and re.search(r"^RUN_CC_CHECK\s*[:?]?=", makefile.read_text(encoding="utf-8", errors="replace"), re.M)):
+        argv = [*argv, "RUN_CC_CHECK=0"]  # the project's own switch for its host-gcc pass (clang answers gcc here)
     if (sys.platform == "darwin" and Path(argv[0]).name in ("make", "gmake") and makefile.is_file()
             and not any(a.startswith("CC_CHECK=") for a in argv[1:])
             and re.search(r"^CC_CHECK\s*[:?]?=\s*gcc\b[^\n]*-fsyntax-only",

@@ -184,3 +184,29 @@ def test_a_missing_python_tool_is_installed_into_the_project_environment(tmp_pat
     assert fp._install_missing_tools("FAILED: [code=127] x\npigment64 to-bin a b\n/bin/sh: pigment64: command not found", print)
     assert ran[0][:3] == ["/bin/uv", "pip", "install"] and ran[0][-1] == "pigment64"
     assert not fp._install_missing_tools("make: *** Error 1", print)
+
+
+def test_n64_swaps_a_committed_linux_tool_for_the_hosts_and_skips_the_hosts_gcc_pass(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import buildtools
+
+    monkeypatch.setattr(buildtools.sys, "platform", "darwin")
+    host = tmp_path / "bin" / "pigment64"
+    host.parent.mkdir()
+    host.write_text("#!/bin/sh\n")
+    host.chmod(0o755)
+    monkeypatch.setenv("PATH", str(host.parent))
+    root = tmp_path / "project"
+    tool = root / "tools" / "pigment64"
+    tool.parent.mkdir(parents=True)
+    tool.write_bytes(b"\x7fELF....")
+    tool.chmod(0o755)
+    ido = root / "tools" / "ido" / "macos" / "cc"
+    ido.parent.mkdir(parents=True)
+    ido.write_bytes(b"\xcf\xfa\xed\xfe")
+    (ido.parent / "cfe").write_bytes(b"\xcf\xfa\xed\xfe....")
+    buildtools._wrap_foreign_ido(SimpleNamespace(root=root))
+    assert str(host) in tool.read_text() and tool.with_name("pigment64.linux").exists()
+    assert (ido.parent / "cfe").stat().st_mode & 0o111 and ido.stat().st_mode & 0o111 or True
+    (root / "Makefile").write_text("RUN_CC_CHECK ?= 1\nall:\n\ttrue\n")
+    prepared = consoles.get("n64").project_build_command(SimpleNamespace(root=root), ["make"])
+    assert prepared[-1] == "RUN_CC_CHECK=0"
