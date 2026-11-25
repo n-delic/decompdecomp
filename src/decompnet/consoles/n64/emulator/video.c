@@ -13,6 +13,7 @@
 #include <string.h>
 #include "m64p_plugin.h"
 #include "m64p_types.h"
+#include "live.h"
 
 static GFX_INFO gfx;
 static int ready;
@@ -63,8 +64,29 @@ static void frame_dumps(void) {
     }
 }
 
+static volatile uint32_t *live;
+static unsigned vis; /* video refreshes so far: one a retrace */
+
+/* EMU_LIVE=file: the game's RAM as each graphics task is handed over, and the task, in the file the viewer reads
+   (live.h): written under a seqlock, so the viewer takes a whole frame or tries again. */
+static void live_frame(void) {
+    if (!live) return;
+    size_t words = (getenv("EMU_8MB") ? 8u << 20 : 4u << 20) / 4;
+    const uint32_t *rdram = (const uint32_t *)gfx.RDRAM;
+    const uint32_t *dmem = (const uint32_t *)(gfx.DMEM + 0xFC0);
+    uint32_t seq = live[LIVE_SEQ / 4];
+    __atomic_store_n(&live[LIVE_SEQ / 4], seq | 1, __ATOMIC_RELEASE);
+    live[LIVE_FRAMES / 4] = frames;
+    live[LIVE_VI / 4] = vis;
+    volatile uint32_t *task = live + LIVE_TASK / 4, *out = live + LIVE_HEADER / 4;
+    for (int i = 0; i < 16; i++) task[i] = __builtin_bswap32(dmem[i]);
+    for (size_t i = 0; i < words; i++) out[i] = __builtin_bswap32(rdram[i]);
+    __atomic_store_n(&live[LIVE_SEQ / 4], (seq | 1) + 1, __ATOMIC_RELEASE);
+}
+
 EXPORT m64p_error CALL PluginStartup(m64p_dynlib_handle core, void *context, void (*debug)(void *, int, const char *)) {
     (void)core; (void)context; (void)debug;
+    live = live_map(LIVE_HEADER + (getenv("EMU_8MB") ? 8u << 20 : 4u << 20));
     return M64ERR_SUCCESS;
 }
 EXPORT m64p_error CALL PluginShutdown(void) { return M64ERR_SUCCESS; }
@@ -77,7 +99,6 @@ EXPORT m64p_error CALL PluginGetVersion(m64p_plugin_type *type, int *version, in
     return M64ERR_SUCCESS;
 }
 EXPORT int CALL InitiateGFX(GFX_INFO info) { gfx = info; ready = 1; return 1; }
-static unsigned vis; /* video refreshes so far: one a retrace */
 /* EMU_TASK_LOG=file: "TASK VI" for each graphics task handed over: the retrace the console was at when the game started that
    task, so the port's virtual time (PORT_VTIME_TRACE) can reach each task at the retrace the console did: the console
    spends two to three retraces on a frame it adapts its frame rate to, which no per-task cost reproduces. */
@@ -91,6 +112,7 @@ EXPORT void CALL ProcessDList(void) {
     frames++;
     task_log();
     frame_dumps();
+    live_frame();
     *gfx.MI_INTR_REG |= 0x20; /* MI_INTR_DP: the frame is drawn */
     gfx.CheckInterrupts();
 }

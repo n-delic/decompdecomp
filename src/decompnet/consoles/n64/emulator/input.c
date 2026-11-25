@@ -9,6 +9,7 @@
 #include <string.h>
 #include "m64p_plugin.h"
 #include "m64p_types.h"
+#include "live.h"
 
 static unsigned int (*vi_count)(void);
 static CONTROL *controls;
@@ -33,6 +34,9 @@ EXPORT void CALL InitiateControllers(CONTROL_INFO info) {
 }
 EXPORT void CALL GetKeys(int control, BUTTONS *keys) {
     keys->Value = 0;
+    static volatile uint32_t *live; static int live_tried; /* EMU_LIVE: the viewer's pad (live.h), not a script */
+    if (!live_tried) { live_tried = 1; live = live_map(LIVE_HEADER); }
+    if (live) { if (control == 0) keys->Value = live[LIVE_INPUT / 4]; return; }
     const char *p = getenv("EMU_INPUT");
     if (control != 0 || !p) return;
     static const struct { const char *name; int bit; } names[] = {

@@ -262,7 +262,7 @@ int main(int argc, char **argv) {
         set_callbacks(dbg_init, dbg_update, dbg_vi);
     }
     set_vi_hook(on_vi);
-    int limiter = 0; /* as fast as the host allows: nothing here is watched in real time */
+    int limiter = getenv("EMU_LIVE") != NULL; /* live (a person plays it beside the port): real time; otherwise as fast as the host allows */
     do_command(M64CMD_CORE_STATE_SET, M64CORE_SPEED_LIMITER, &limiter);
     m64p_error err = do_command(M64CMD_EXECUTE, 0, NULL);
     fprintf(stderr, "stopped %u\n", vi_count());

@@ -41,7 +41,7 @@ class EmulatorError(RuntimeError):
     pass
 
 
-OWN = ("frontend.c", "input.c", "video.c")  # decompdecomp's own programs, built beside the pinned core
+OWN = ("frontend.c", "input.c", "video.c", "live.h")  # decompdecomp's own programs, built beside the pinned core
 
 
 def _stamp() -> str:

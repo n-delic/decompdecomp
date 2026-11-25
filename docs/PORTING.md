@@ -632,6 +632,16 @@ uv run python tools/n64_frame_compare.py baserom.z64 --port port/wasm/build/game
 ```
 
 Both frames come from the same renderer, so a difference is the game running differently, not the drawing.
+
+**Side by side, live.** To play both at once, `python -m decompnet.port.wasm.side_by_side ROM --program port/wasm/build/game`
+(or `--port-url` for a port Play already started) opens one page: the port on the left, the console on the right, and
+one keyboard or gamepad for both. The console is mupenRE run in real time (`consoles/n64/emulator/live.py`, `EMU_LIVE`):
+the video plugin writes the console's RAM into a shared file (`live.h`: a seqlock, the task, RAM) as the game hands over each
+graphics task, the input plugin reads the pad from the same file, and the viewer draws each frame with the port's renderer
+(carrying what earlier frames drew, as Check pictures does). Each half shows its own frame count: the two aren't kept in step
+(the port never drops a frame or waits for a load), so they drift; measured on a menu screen, the console half drew about 13
+frames a second while the game ran at 60. Not done yet: lockstep by retrace, a live RAM-difference
+overlay, sound from the console, and a button in the app (ROADMAP.md).
 `tools/n64_vi_compare.py ROM --port BUILD --input @script` checks the VI's blanking against the console's: the
 emulator's video plugin logs the VI's registers (`EMU_VI_LOG`; osViBlack blanks by writing 0 to the horizontal video
 register, the status stays), the port's `PORT_SWAP_LOG` says when it blanked, and the two lists of blanks must agree in
