@@ -443,9 +443,28 @@ void w2c_env_osCreateMesgQueue(struct w2c_env *e, u32 mq, u32 buf, u32 count) {
 }
 static int has_room(uint32_t mq) { return (int32_t)be32(mq + Q_VALID) < (int32_t)be32(mq + Q_COUNT); }
 static int has_mesg(uint32_t mq) { return (int32_t)be32(mq + Q_VALID) > 0; }
+static void dp_deliver(int force);
+static int rcp_pending(void);
+static void *rcp_starter; /* the thread that last started a graphics or audio task: the one its interrupts are for */
+/* The thread that started a task, when it next has to wait, first gets that task's RSP and RDP interrupts (PORT_RCP_AT_BLOCK=0: not). On the
+   console the task's few hundred microseconds end before a lower-priority thread has run for long, and the starter, a scheduler at priority 113
+   or 115 against the game's main thread at 5 (read from the emulator's running thread at each osSpTaskStartGo and each line-point update), runs again
+   before the logic does. Held to the host's tick, the logic ran between a frame's fourth and fifth task. Only the starter's wait delivers them. */
+static int rcp_at_block(void) {
+    static int on = -1;
+    if (on < 0) on = !getenv("PORT_RCP_AT_BLOCK") || atoi(getenv("PORT_RCP_AT_BLOCK")) != 0;
+    return on;
+}
 static int block_on(uint32_t mq, uint32_t flag, int (*ready)(uint32_t)) {
     while (!ready(mq)) {
         if (flag != OS_MESG_BLOCK || !self) return -1;
+        if (rcp_at_block() && (void *)self == rcp_starter && rcp_pending()) {
+            rcp_starter = NULL;
+            pthread_mutex_unlock(&lock);
+            dp_deliver(1);
+            pthread_mutex_lock(&lock);
+            continue;
+        }
         if (verbose > 1 || self->waits++ < 3) {
             LOG("thread %d waits on queue %08X", self->number, mq);
             if (verbose > 1) port_trace();
@@ -939,6 +958,14 @@ static unsigned char rcp_events[64];
 static unsigned rcp_count;
 static uint64_t rcp_due_us;
 #define RCP_DELAY_US 400
+static int rcp_pending(void) {
+    pthread_mutex_lock(&rcp_lock);
+    int n = rcp_count > 0;
+    pthread_mutex_unlock(&rcp_lock);
+    return n;
+}
+#else
+static int rcp_pending(void) { return 0; }
 #endif
 static void rcp_raise(int event) {
 #ifdef PORT_WEB
@@ -1020,6 +1047,7 @@ void w2c_env_osSpTaskStartGo(struct w2c_env *e, u32 task) {
         for (int i = 0; i < 24; i++) fprintf(stderr, "%08X%c", be32(0x80000000u + dl + 4 * i), i % 2 ? '\n' : ' ');
     }
     wbe32(SP_STATUS, 1); /* done: halted again */
+    rcp_starter = (void *)self;
     rcp_raise(EV_SP);
     if (type == 1) rcp_raise(EV_DP);
 }
