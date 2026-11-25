@@ -10,7 +10,7 @@
                                              path dir/<address>_<n>
      stopped <vi>                            the run ended
 
-   usage: frontend core rsp input video rom
+   usage: frontend core rsp input video rom [audio]
    EMU_VIS=n           stop after n vertical interrupts
    EMU_DUMP=vi:path,…  RDRAM dumps, each at exactly that VI (from the core's VI hook, in the emulation thread)
    EMU_WATCH=addr:len,…  write breakpoints (physical addresses, hex)
@@ -225,7 +225,7 @@ static void plugin(const char *path, m64p_dynlib_handle core, m64p_plugin_type t
 }
 
 int main(int argc, char **argv) {
-    if (argc != 6) { fprintf(stderr, "usage: frontend core rsp input video rom\n"); return 2; }
+    if (argc != 6 && argc != 7) { fprintf(stderr, "usage: frontend core rsp input video rom [audio]\n"); return 2; }
     void *core = dlopen(argv[1], RTLD_NOW | RTLD_GLOBAL);
     if (!core) { fprintf(stderr, "error %s\n", dlerror()); return 1; }
     ptr_CoreStartup startup = (ptr_CoreStartup)dlsym(core, "CoreStartup");
@@ -273,6 +273,7 @@ int main(int argc, char **argv) {
     if (do_command(M64CMD_ROM_OPEN, (int)size, rom) != M64ERR_SUCCESS) { fprintf(stderr, "error the core refused the ROM\n"); return 1; }
     setenv("EMU_VIDEO_PLUGIN", argv[4], 1); /* where the input plugin finds the frame count (EMU_INPUT_CLOCK) */
     plugin(argv[4], core, M64PLUGIN_GFX); /* the core wants video, audio, input, then the RSP */
+    if (argc == 7) plugin(argv[6], core, M64PLUGIN_AUDIO); /* live: the sound goes to the viewer (audio.c) */
     plugin(argv[3], core, M64PLUGIN_INPUT);
     plugin(argv[2], core, M64PLUGIN_RSP);
     if (debugger) {

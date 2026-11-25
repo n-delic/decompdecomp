@@ -55,10 +55,15 @@ def test_the_pad_is_written_for_the_input_plugin(tmp_path):
     shared.close()
 
 
-def test_an_image_is_picked_and_turned_into_the_pages_bytes():
-    small, big = (2, 2, [(1, 2, 3)] * 4), (4, 3, [(9, 8, 7)] * 12)
-    assert sbs.pick_image({1: small, 2: big}) == big and sbs.pick_image({}) is None
-    assert sbs.to_rgb([(1, 2, 3), (4, 5, 6)]) == bytes([1, 2, 3, 4, 5, 6])
+def test_a_picture_is_converted_a_plane_at_a_time_exactly_as_the_slow_way_does():
+    import random
+
+    from decompnet.port import frame_compare as fc
+    rng = random.Random(7)
+    mem = bytes(rng.randrange(256) for _ in range(4 * 64 * 8))
+    for siz in (2, 3):
+        slow = fc.rgb(mem, 16, 32, siz, 5)
+        assert fc.rgb_bytes(mem, 16, 32, siz, 5) == bytes(c for p in slow for c in p)
 
 
 class FakePort(http.server.BaseHTTPRequestHandler):
@@ -258,3 +263,46 @@ def test_the_port_and_emulator_have_the_same_memory(tmp_path, monkeypatch):
     assert seen["PORT_MEMSIZE"] == "4" and seen["PORT_LOCKSTEP"] == "1" and seen["PORT_VTIME"] == "1"
     sbs.start_port(tmp_path / "game", tmp_path / "rom.z64", tmp_path, expansion_pak=True)
     assert seen["PORT_MEMSIZE"] == "8"
+
+
+def test_the_shared_files_layout_matches_the_c_header_and_nothing_overlaps():
+    """live.h (the plugins') and live.py (the viewer's) describe one file: the same numbers, and no two fields on the
+    same bytes (the retrace block's counters once sat inside the task's 64 bytes, which the video plugin overwrote)."""
+    import re
+
+    header = (Path(live.__file__).with_name("live.h")).read_text()
+    c: dict[str, int] = {}
+    for m in re.finditer(r"#define LIVE_(\w+) +([^\n/]+)", header):  # (in order: a define may use the ones before it)
+        c[m.group(1)] = eval(re.sub(r"(\d)u\b", r"\1", re.sub(r"\bLIVE_(\w+)", r"c['\1']", m.group(2))), {"c": c})
+    for name in ("SEQ", "FRAMES", "VI", "GATE", "TASK", "VISEQ", "VIVI", "AUDIO_HZ", "AUDIO_END", "INPUT"):
+        assert c[name] == getattr(live, name), name
+    for name in ("HEADER", "VIRAM", "AUDIO", "TOTAL", "RING"):
+        assert c[name] == getattr(live, name), name
+    spans = {"SEQ": 4, "FRAMES": 4, "VI": 4, "GATE": 4, "TASK": 64, "VISEQ": 4, "VIVI": 4, "AUDIO_HZ": 4,
+             "AUDIO_END": 4, "INPUT": 4}
+    used = sorted((getattr(live, n), getattr(live, n) + size, n) for n, size in spans.items())
+    for (_, end, a), (start, _, b) in zip(used, used[1:]):
+        assert end <= start, f"{a} and {b} overlap"
+    assert used[-1][1] <= live.HEADER
+
+
+def test_the_consoles_sound_is_served_in_the_ports_format_from_the_ring(tmp_path):
+    shared = live.Shared(tmp_path / "live.bin")
+    assert shared.audio(-1)[16:] == b"" and struct.unpack("<I", shared.audio(-1)[:4])[0] == 22050  # nothing yet
+    ring = [(i + 1) & 0xFFFF | (-(i + 1) & 0xFFFF) << 16 for i in range(10)]  # left 1..10, right -1..-10
+    for i, word in enumerate(ring):
+        shared.map[live.AUDIO + 4 * i:live.AUDIO + 4 * i + 4] = word.to_bytes(4, live.sys_order)
+    shared.map[live.AUDIO_HZ:live.AUDIO_HZ + 4] = (32000).to_bytes(4, live.sys_order)
+    shared.map[live.AUDIO_END:live.AUDIO_END + 4] = (10).to_bytes(4, live.sys_order)
+    hz, first, _ = struct.unpack("<IQI", shared.audio(0)[:16])
+    samples = struct.unpack("<20h", shared.audio(0)[16:])
+    assert (hz, first) == (32000, 0) and samples[:4] == (1, -1, 2, -2) and len(samples) == 20
+    assert len(shared.audio(4)[16:]) == 6 * 4  # only what's new
+    # the ring has wrapped: the newest frames are read across its end
+    end = live.RING + 3
+    shared.map[live.AUDIO_END:live.AUDIO_END + 4] = end.to_bytes(4, live.sys_order)
+    shared.map[live.AUDIO + 4 * (live.RING - 1):live.AUDIO + 4 * live.RING] = (7).to_bytes(4, live.sys_order)
+    tail = shared.audio(end - 4)
+    assert struct.unpack("<IQI", tail[:16])[1] == end - 4 and len(tail[16:]) == 16
+    assert struct.unpack("<2h", tail[16:20])[0] == 7  # frame end-4 is the ring's last word
+    shared.close()

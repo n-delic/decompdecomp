@@ -47,6 +47,7 @@ h2{margin:0 0 6px;font-size:14px;font-weight:600}p{text-align:center;margin:6px}
 </style></head><body><div class=row>
 <div class=side><h2>Port</h2><canvas id=p width=320 height=240></canvas><p id=ps></p></div>
 <div class=side><h2>Console (mupenRE)</h2><canvas id=e width=320 height=240></canvas><p id=es></p></div></div>
+<p>Sound: <select id=snd><option value=''>off</option><option value=/port/audio>port</option><option value=/emu/audio>console</option></select></p>
 <p id=hud hidden><button id=run>Pause</button> <button id=step>Step</button> <span id=vi></span></p>
 <pre id=diff hidden style="margin:6px auto;max-width:900px;text-align:left;color:#9c9;font:12px ui-monospace,monospace"></pre>
 <p>Arrows steer &middot; X: A &middot; Z: B &middot; Enter: Start &middot; Space: Z &middot; Q/W: L/R &middot; I/J/K/L: C buttons &middot; or a gamepad. Both sides get the same pad.</p>
@@ -74,6 +75,16 @@ if(canvas.width!=w||canvas.height!=h){canvas.width=w;canvas.height=h;}const im=g
 for(let i=0,j=12;i<w*h;i++,j+=3){p[i*4]=b[j];p[i*4+1]=b[j+1];p[i*4+2]=b[j+2];p[i*4+3]=255;}g.putImageData(im,0,0);shown++;
 const now=performance.now();if(now-t0>1000){label.textContent='frame '+last+' · '+Math.round(shown*1000/(now-t0))+' a second';shown=0;t0=now;}}}
 catch(e){await new Promise(r=>setTimeout(r,500));}requestAnimationFrame(loop);}loop();}
+let ac=null,next=0,heard=-1,src='';
+document.getElementById('snd').onchange=e=>{src=e.target.value;heard=-1;next=0;if(src&&!ac)ac=new AudioContext();};
+async function sound(){try{if(src){const mine=src;const r=await fetch(mine+'?after='+heard);const b=await r.arrayBuffer();
+if(mine===src&&b.byteLength>16){const d=new DataView(b),hz=d.getUint32(0,true),first=Number(d.getBigUint64(4,true)),n=(b.byteLength-16)>>2;
+if(heard>=0&&first>heard){next=0;}heard=first+n;const buf=ac.createBuffer(2,n,hz),L=buf.getChannelData(0),R=buf.getChannelData(1);
+for(let i=0;i<n;i++){L[i]=d.getInt16(16+i*4,true)/32768;R[i]=d.getInt16(18+i*4,true)/32768;}
+const o=ac.createBufferSource();o.buffer=buf;o.connect(ac.destination);
+if(next<ac.currentTime+0.02||next>ac.currentTime+0.5)next=ac.currentTime+0.08;o.start(next);next+=n/hz;}}}
+catch(e){}setTimeout(sound,40);}
+sound();
 let running=true;
 async function status(){try{const r=await fetch('/state');const d=await r.json();
 if(d.lockstep){document.getElementById('hud').hidden=false;document.getElementById('diff').hidden=false;
@@ -92,21 +103,6 @@ def _free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
-
-
-def to_rgb(pixels: list) -> bytes:
-    """Pixels as (r, g, b) tuples to the live page's frame bytes."""
-    return bytes(c for p in pixels for c in p)
-
-
-def pick_image(images: dict) -> tuple[int, int, list] | None:
-    """The picture the console shows from what a frame drew: the largest colour image (a frame draws the screen's,
-    sometimes also a smaller buffer it renders to first)."""
-    best = None
-    for width, lines, pixels in images.values():
-        if best is None or width * lines >= best[0] * best[1]:
-            best = (width, lines, pixels)
-    return best
 
 
 class ConsoleView:
@@ -132,26 +128,42 @@ class ConsoleView:
         while not self.stop:
             snap = self.shared.snapshot()
             if snap is None or snap[0] == last:
-                time.sleep(0.005)
+                time.sleep(0.003)
                 continue
             frames, _vi, task, ram = snap
             last = frames
-            dump.write_bytes(ram)
-            dump.with_name(dump.name + ".task").write_bytes(task)
             try:
-                drawn = self.fc.frames(self.program, dump, self.work, carry=self.carry, renderer=self.renderer)
+                picture = self._draw(dump, ram, task)
             except Exception:  # noqa: BLE001  a frame that can't be drawn (a list half built) is skipped, as in Check pictures
                 continue
-            image = pick_image(drawn)
-            if image is None:
+            if picture is None:
                 continue
-            width, lines, pixels = image
-            rgb = to_rgb(pixels)
+            width, lines, rgb = picture
             with self.lock:
                 self.number += 1
                 self.game_frames = frames
                 self.frame = struct.pack("<III", width, lines, self.number) + rgb
                 self.lock.notify_all()
+
+    def _draw(self, dump: Path, ram: bytes, task: bytes):
+        """One frame: the RAM with the task the RSP was given placed where the renderer finds it and what earlier frames
+        drew put back (Check pictures' carry), in one file, drawn by the one renderer process."""
+        fc = self.fc
+        mem = bytearray(ram.ljust(fc.RAM, b"\0"))
+        words = list(struct.unpack(">16I", task))
+        for i in (2, 4, 6, 8, 10, 12):  # physical pointers: the renderer reads them as the game's
+            if words[i] and words[i] < 0x80000000:
+                words[i] |= 0x80000000
+        mem[fc.TASK_AT & 0x7FFFFF:(fc.TASK_AT & 0x7FFFFF) + 64] = struct.pack(">16I", *words)
+        for addr, raw in self.carry.items():
+            at = addr & 0x7FFFFF
+            mem[at:at + len(raw)] = raw
+        dump.write_bytes(mem)
+        kept: dict[int, bytes] = {}
+        picture = self.renderer.draw_picture(dump, fc.TASK_AT, kept)
+        for addr, raw in kept.items():  # a task that draws fewer lines than an earlier one leaves the rest as it was
+            self.carry[addr] = raw + self.carry.get(addr, b"")[len(raw):]
+        return picture
 
     def wait(self, after: int, timeout: float = 1.0) -> bytes | None:
         """The newest frame if it isn't number `after`, waiting up to `timeout` for one."""
@@ -388,6 +400,14 @@ class Session:
                     self._send(PAGE.encode(), "text/html; charset=utf-8")
                 elif url.path == "/emu/frame":
                     self._send(session.console.wait(after) or b"")
+                elif url.path == "/emu/audio":
+                    self._send(session.shared.audio(after))
+                elif url.path == "/port/audio":
+                    try:
+                        with urllib.request.urlopen(f"{session.port_url}/audio?after={after}", timeout=5) as r:
+                            self._send(r.read())
+                    except OSError:
+                        self._send(b"")
                 elif url.path == "/state":
                     state = session.lockstep.state() if session.lockstep else {"lockstep": False}
                     self._send(json.dumps(state).encode(), "application/json")

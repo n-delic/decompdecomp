@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import mmap
 import os
+import struct
 import subprocess
 import sys
 import tempfile
@@ -23,8 +24,10 @@ from . import SO, EmulatorError, current, installed
 HEADER = 256
 RAM_MAX = 8 << 20
 VIRAM = HEADER + RAM_MAX
-TOTAL = VIRAM + RAM_MAX
-SEQ, FRAMES, VI, GATE, TASK, VISEQ, VIVI, INPUT = 0, 4, 8, 12, 16, 32, 36, 128
+AUDIO = VIRAM + RAM_MAX
+RING = 1 << 17  # stereo frames
+TOTAL = AUDIO + 4 * RING
+SEQ, FRAMES, VI, GATE, TASK, VISEQ, VIVI, AUDIO_HZ, AUDIO_END, INPUT = 0, 4, 8, 12, 16, 80, 84, 88, 92, 128  # (the task is 64 bytes at 16)
 FREE = 0xFFFFFFFF  # the gate of a run that isn't in lockstep
 sys_order = sys.byteorder  # the header's words are the host's
 
@@ -65,6 +68,27 @@ class Shared:
                 return frames, vi, task, ram
         return None
 
+    def audio(self, after: int) -> bytes:
+        """The console's sound since frame `after` (-1: just the latest tenth of a second), in the page's format: the rate
+        (u32), the number of the first frame (u64), 4 spare bytes, then 16-bit little-endian stereo frames, as the port's
+        own live view serves its sound (live.c /audio)."""
+        hz = self._word(AUDIO_HZ) or 22050
+        end = self._word(AUDIO_END)
+        start = max(0, end - RING // 2)
+        if after < 0:
+            start = max(0, end - hz // 10)
+        elif after > start:
+            start = min(after, end)
+        frames = end - start
+        first, last = start % RING, end % RING
+        if frames == 0:
+            data = b""
+        elif first < last:
+            data = bytes(self.map[AUDIO + 4 * first:AUDIO + 4 * last])
+        else:
+            data = bytes(self.map[AUDIO + 4 * first:AUDIO + 4 * RING]) + bytes(self.map[AUDIO:AUDIO + 4 * last])
+        return struct.pack("<IQI", hz, start, 0) + data
+
     def set_gate(self, vi: int) -> None:
         """Lockstep: the emulator may complete every retrace up to `vi`."""
         self.map[GATE:GATE + 4] = (vi & 0xFFFFFFFF).to_bytes(4, sys_order)
@@ -104,7 +128,7 @@ def start(rom: Path, shared: Shared, *, expansion_pak: bool = False) -> subproce
     tmp = tempfile.TemporaryDirectory(prefix="decomp-emulator-")
     env["EMU_CONFIG"] = tmp.name
     argv = [folder / "mupenre-frontend", folder / f"libmupen64plus.{SO}", folder / f"rsp-hle.{SO}",
-            folder / f"input.{SO}", folder / f"video.{SO}", Path(rom).resolve()]
+            folder / f"input.{SO}", folder / f"video.{SO}", Path(rom).resolve(), folder / f"audio.{SO}"]
     proc = subprocess.Popen(limits.capped([str(a) for a in argv]), cwd=tmp.name, env=env, stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL)
     proc._config_dir = tmp  # kept until the process object goes

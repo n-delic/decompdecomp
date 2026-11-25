@@ -653,8 +653,12 @@ In the app it is the Porting tab's **Play beside the console** button, next to P
 it builds and starts the port as Play does, in lockstep, starts the emulator and opens the page in the game's window. The
 differing addresses carry the project's names (`gScore+0x4`: its symbols and functions, `play.project_symbols`; on the command
 line `--symbols FILE`), and both sides get the same console memory (the emulator the Expansion Pak when the port has its 8 MB, so
-`osMemSize` is no longer a difference). Stop ends both. Not done yet: sound from the console and a faster draw of the
-console's frames (ROADMAP.md).
+`osMemSize` is no longer a difference). Stop ends both. The page's **Sound** menu plays the port's sound or the console's
+(an audio plugin, `emulator/audio.c`, copies each buffer the game gives the audio interface into a ring in the shared file; the
+viewer serves it in the format the port's own live view uses). The console's frames are drawn one converted picture at a time
+(`Renderer.draw_picture`, planes instead of pixels): about 23 a second where it was 16, the rest being the software renderer
+itself. Not yet checked: that both sides number retraces alike on more than one game (`--emulator-offset` corrects it)
+(ROADMAP.md).
 `tools/n64_vi_compare.py ROM --port BUILD --input @script` checks the VI's blanking against the console's: the
 emulator's video plugin logs the VI's registers (`EMU_VI_LOG`; osViBlack blanks by writing 0 to the horizontal video
 register, the status stays), the port's `PORT_SWAP_LOG` says when it blanked, and the two lists of blanks must agree in

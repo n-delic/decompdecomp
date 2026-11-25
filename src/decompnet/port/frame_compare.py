@@ -118,8 +118,8 @@ class Renderer:
             except subprocess.TimeoutExpired:
                 self.proc.kill()
 
-    def draw(self, dump: Path, task: int, kept: dict[int, bytes] | None = None):
-        """The images one task draws, as the module's `draw`, from the state the tasks before it left."""
+    def _run(self, dump: Path, task: int):
+        """One task drawn: its recorded commands and the RAM after, or None when it fails to draw."""
         try:
             self.proc.stdin.write(f"{dump} {task:x}\n")
             self.proc.stdin.flush()
@@ -131,30 +131,60 @@ class Renderer:
         try:
             if answer != "ok" or not cmds.exists() or not after.exists():
                 return None
-            return _images(cmds.read_bytes(), after.read_bytes(), kept)
+            return cmds.read_bytes(), after.read_bytes()
         finally:
             for f in self.dir.glob(f"{self.count:06d}.*"):
                 f.unlink(missing_ok=True)  # 8 MB each: only the pictures are kept
 
+    def draw(self, dump: Path, task: int, kept: dict[int, bytes] | None = None):
+        """The images one task draws, as the module's `draw`, from the state the tasks before it left."""
+        done = self._run(dump, task)
+        return None if done is None else _images(*done, kept)
 
-def _images(data: bytes, mem: bytes, kept: dict[int, bytes] | None) -> dict[int, tuple[int, int, list]]:
-    drawn = {}
+    def draw_picture(self, dump: Path, task: int, kept: dict[int, bytes] | None = None):
+        """The largest picture one task draws, as (width, lines, RGB bytes), or None when it fails to draw or draws none:
+        the live viewer's, which converts one image instead of every one."""
+        done = self._run(dump, task)
+        if done is None:
+            return None
+        data, mem = done
+        best = None
+        for addr, width, siz, lines in _colour_images(data, mem, kept):
+            if best is None or width * lines >= best[1] * best[3]:
+                best = (addr, width, siz, lines)
+        if best is None:
+            return None
+        addr, width, siz, lines = best
+        return width, lines, rgb_bytes(mem, addr, width, siz, lines)
+
+
+def _colour_images(data: bytes, mem: bytes, kept: dict[int, bytes] | None) -> list[tuple[int, int, int, int]]:
+    """The colour images a task drew to as (address, width, pixel size, lines), whole inside `mem`; `kept` takes their
+    bytes and the depth buffers' as drawn (for the next task to start from)."""
+    drawn = []
     depth = {w[1] & 0xFFFFFF for w in commands(data) if w[0] >> 24 & 0x3F == 0x3E}  # z images: cleared as colour
-    for addr, width, siz, lines in images(data):
+    found = images(data)
+    for addr, width, siz, lines in found:
         if addr in depth:
             continue
-        if addr + width * lines * (4 if siz == 3 else 2) <= len(mem):
-            drawn[addr] = (width, lines, rgb(mem, addr, width, siz, lines))
+        size = width * lines * (4 if siz == 3 else 2)
+        if addr + size <= len(mem):
+            drawn.append((addr, width, siz, lines))
             if kept is not None:
-                kept[addr] = mem[addr:addr + width * lines * (4 if siz == 3 else 2)]
+                kept[addr] = mem[addr:addr + size]
     if kept is not None:
         # the depth buffer too: the emulator writes no depth either, and what is drawn tests against it (a menu's frame
         # was sky only on the console, the road and cars failing a depth test against noise)
-        shape = next(((w, h) for _, w, _, h in images(data)), None)
+        shape = next(((w, h) for _, w, _, h in found), None)
         for addr in depth - {0}:
             if shape and addr + shape[0] * shape[1] * 2 <= len(mem):
                 kept[addr] = mem[addr:addr + shape[0] * shape[1] * 2]
     return drawn
+
+
+def _images(data: bytes, mem: bytes, kept: dict[int, bytes] | None) -> dict[int, tuple[int, int, list]]:
+    return {addr: (width, lines, rgb(mem, addr, width, siz, lines))
+            for addr, width, siz, lines in _colour_images(data, mem, kept)}
 
 
 def draw(program: Path, dump: Path, task: int, work: Path,
@@ -278,6 +308,30 @@ def rgb(mem: bytes, addr: int, width: int, siz: int, lines: int) -> list[tuple[i
             v = mem[addr + i * 2] << 8 | mem[addr + i * 2 + 1]
             out.append(((v >> 11 & 31) << 3, (v >> 6 & 31) << 3, (v >> 1 & 31) << 3))
     return out
+
+
+def _plane(table) -> bytes:
+    return bytes(table(i) for i in range(256))
+
+
+_R = _plane(lambda h: h >> 3 << 3)                    # a 5551 pixel's high byte: red
+_G_HIGH, _G_LOW = _plane(lambda h: (h & 7) << 5), _plane(lambda lo: lo >> 6 << 3)  # green is split over both bytes
+_B = _plane(lambda lo: (lo >> 1 & 31) << 3)           # the low byte: blue
+
+
+def rgb_bytes(mem: bytes, addr: int, width: int, siz: int, lines: int) -> bytes:
+    """`rgb`'s picture as flat R,G,B bytes, made a plane at a time (a frame of it was most of the live viewer's time)."""
+    n = width * lines
+    out = bytearray(3 * n)
+    if siz == 3:
+        raw = mem[addr:addr + 4 * n]
+        out[0::3], out[1::3], out[2::3] = raw[0::4], raw[1::4], raw[2::4]
+    else:
+        raw = mem[addr:addr + 2 * n]
+        high, low = raw[0::2], raw[1::2]
+        green = int.from_bytes(high.translate(_G_HIGH), "big") | int.from_bytes(low.translate(_G_LOW), "big")
+        out[0::3], out[1::3], out[2::3] = high.translate(_R), green.to_bytes(n, "big"), low.translate(_B)
+    return bytes(out)
 
 
 def png(path: Path, pixels: list[tuple[int, int, int]], width: int, height: int) -> None:

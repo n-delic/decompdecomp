@@ -9,7 +9,7 @@ execution breakpoint on its Euler-angle helper found the yaw the console compute
 
 Its sources are pinned in toolchains.toml ([mupenre]) and built here (`build`, called by toolchains.install) with
 the pinned CMake and the host's C/C++ compiler: SDL2 and libpng (static), the core with its debugger, the HLE RSP,
-and decompdecomp's own frontend and plugins in this folder (frontend.c, input.c, video.c). What the frontend needs
+and decompdecomp's own frontend and plugins in this folder (frontend.c, input.c, video.c, audio.c). What the frontend needs
 from the core (its VI counter and hook, DecompGetViCount and DecompSetViHook; C++17 and arm64 builds) is in the
 pinned commits themselves (RetroReversing/mupen64plus-core#2, RetroReversing/libRetroReversing#44).
 
@@ -41,7 +41,7 @@ class EmulatorError(RuntimeError):
     pass
 
 
-OWN = ("frontend.c", "input.c", "video.c", "live.h")  # decompdecomp's own programs, built beside the pinned core
+OWN = ("frontend.c", "input.c", "video.c", "audio.c", "live.h")  # decompdecomp's own programs, built beside the pinned core
 
 
 def _stamp() -> str:
@@ -60,6 +60,7 @@ def _programs(dest: Path, run=None) -> None:
     plugin = ["cc", "-O2", "-fPIC", "-shared", "-I", api]
     run([*plugin, "-o", dest / f"input.{SO}", HERE / "input.c"], dest, "input plugin")
     run([*plugin, "-o", dest / f"video.{SO}", HERE / "video.c"], dest, "video plugin")
+    run([*plugin, "-o", dest / f"audio.{SO}", HERE / "audio.c"], dest, "audio plugin")
     run(["cc", "-O2", "-I", api, "-o", dest / "mupenre-frontend", HERE / "frontend.c",
          *([] if sys.platform == "darwin" else ["-ldl"])], dest, "frontend")
     (dest / "programs.sha256").write_text(_stamp())
