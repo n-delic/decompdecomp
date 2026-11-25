@@ -287,7 +287,7 @@ def resolve_auto_offsets(entries: list) -> list:
     return resolved
 
 
-def plan(root: Path, config: dict, *, independent: bool = False) -> list[dict]:
+def plan(root: Path, config: dict, *, independent: bool = False, prefer: tuple[str, ...] = ()) -> list[dict]:
     """Accept linear code mappings; C units have candidates, assembly units remain source-less targets."""
     options = config.get('options', {})
     source_root = options.get('src_path', 'src')
@@ -331,11 +331,11 @@ def plan(root: Path, config: dict, *, independent: bool = False) -> list[dict]:
                 raise ForkError("automatic objdiff setup needs explicit numeric subsegment offsets")
             if independent and kind == 'pad':
                 continue
-            if kind not in ('c', 'asm', 'hasm', 'data', 'rodata', 'bss', '.data', '.rodata', '.bss', 'bin',
+            if kind not in ('c', 'cpp', 'asm', 'hasm', 'data', 'rodata', 'bss', '.data', '.rodata', '.bss', 'bin',
                             'rdata', '.rdata', 'ctors', '.ctors', 'dtors', '.dtors', 'textbin', 'databin', 'rodatabin'):  # (rdata: splat's other spelling of rodata; the
                 # constructor and destructor tables are data no unit's functions are counted from)
                 raise ForkError(f"automatic objdiff setup does not support splat subsegment {kind!r} yet")
-            if kind not in ('c', 'asm', 'hasm'):
+            if kind not in ('c', 'cpp', 'asm', 'hasm'):
                 continue
             following = entries[index + 1] if index + 1 < len(entries) else None
             if isinstance(following, list) and following and following[0] == offset:
@@ -352,23 +352,28 @@ def plan(root: Path, config: dict, *, independent: bool = False) -> list[dict]:
             if Path(name).is_absolute() or '..' in Path(name).parts or '\\' in name or ':' in name:
                 raise ForkError("automatic objdiff setup needs relative unit names without parent paths")
             source = base = None
-            if kind == 'c':
+            if kind in ('c', 'cpp'):
+                extension = '.c' if kind == 'c' else '.cpp'
                 bare = str(entry[2]) if len(entry) > 2 else name
                 if (not outside_src and segment.get('dir') and bare != name
-                        and not (root / source_root / (name + '.c')).is_file()
-                        and (root / source_root / (bare + '.c')).is_file()):
+                        and not (root / source_root / (name + extension)).is_file()
+                        and (root / source_root / (bare + extension)).is_file()):
                     name = bare  # (the names already carry their folder: src/code0/main under dir code0)
-                source = inside(root, name + '.c' if outside_src else str(Path(source_root) / (name + '.c')))
+                source = inside(root, name + extension if outside_src else str(Path(source_root) / (name + extension)))
                 relative = source.relative_to(root)
                 candidates = [inside(root, str(Path(build_root) / relative.with_suffix('.o'))),
                               inside(root, str(Path(build_root) / (str(relative) + '.o')))]
                 built = [path for path in candidates if path.is_file()]
                 if not built:  # (a per-version build folder: build/us/src/code0/main.c.o)
-                    built = [path for path in (*(root / build_root).glob(f'*/{relative.with_suffix(".o").as_posix()}'),
-                                               *(root / build_root).glob(f'*/{relative.as_posix()}.o'))
-                             if path.is_file()]
+                    folders = {root / build_root, root / 'build'}
+                    built = sorted({path for folder in folders for path in (
+                        *folder.glob(f'*/{relative.with_suffix(".o").as_posix()}'),
+                        *folder.glob(f'*/{relative.as_posix()}.o')) if path.is_file()})
                 if not source.is_file() or not built:
                     raise ForkError("automatic objdiff setup needs the project's C objects built first; follow its README")
+                if len(built) > 1 and prefer:  # (a build folder per release: the one the project verifies this ROM in)
+                    built = [path for path in built if any(path.relative_to(root).as_posix().startswith(p + '/')
+                                                           for p in prefer)] or built
                 if len(built) != 1:
                     raise ForkError(f"ambiguous built objects for {relative}; remove stale build outputs or configure objdiff manually")
                 base = built[0]
@@ -529,6 +534,21 @@ def reference_symbols(work: Path) -> dict[str, int]:
     return definitions
 
 
+def verified_build_folders(root: Path, sha1: str) -> tuple[str, ...]:
+    """The build folders a checksum file of the project names for this ROM (`<sha1>  build/ntsc/game.z64`)."""
+    found = []
+    for path in sorted(root.glob('*.sha1')) + sorted(root.glob('*/*.sha1')):
+        try:
+            text = path.read_text(encoding='utf-8', errors='replace')
+        except OSError:
+            continue
+        for named in re.findall(rf'{re.escape(sha1.lower())}\s+\*?(\S+)', text.lower()):
+            parent = Path(named).parent.as_posix()
+            if parent not in ('', '.') and not parent.startswith(('..', '/')):
+                found.append(parent)
+    return tuple(found)
+
+
 def built_image_sha1(root: Path, image_path: Path) -> str | None:
     """The SHA-1 of the splat target when the config names none and the target is an image the project derives from
     the game (an expanded or decompressed copy under build/): the Makefile's own literal `SHA1 := <hash>` of the
@@ -566,7 +586,7 @@ def generate(project, config_path: Path, config: dict, console, log=print) -> bo
     if original_base != root:
         raise ForkError("automatic objdiff setup needs the splat base_path to identify this checkout's root")
     try:
-        units = plan(root, config)
+        units = plan(root, config, prefer=verified_build_folders(root, sha1))
     except ForkError as error:
         if ("compressed or overlay code segments" not in str(error)
                 and "subsegment 'pad'" not in str(error)
@@ -578,7 +598,7 @@ def generate(project, config_path: Path, config: dict, console, log=print) -> bo
         except ForkError as rebuilt:
             if 'numeric start and vram' in str(error) or 'exactly one ELF' not in str(rebuilt):
                 raise
-            units = plan(root, config, independent=True)
+            units = plan(root, config, independent=True, prefer=verified_build_folders(root, sha1))
     configured_elf = inside(root, options.get('elf_path', 'build/project.elf'))
     candidates = ([configured_elf] if configured_elf.is_file()
                   else list(inside(root, 'build').rglob('*.elf')) or sorted(root.glob('*.elf')))  # (a link in the root)
@@ -590,14 +610,26 @@ def generate(project, config_path: Path, config: dict, console, log=print) -> bo
         candidates = matching
     elif len(candidates) == 1:
         log('The source rebuild is incomplete; deriving and verifying references independently from the original image.')
-    elif all(unit['source'] is None for unit in units) and not candidates:
-        log('Deriving assembly-only references directly from the original image; no C candidates are marked matched.')
+    elif not candidates:
+        # (no linked ELF: the project's build does not link yet, or links nothing; every reference is still derived
+        # from the original image and verified against it, and each compiled object stays the unit's candidate)
+        log('Deriving references directly from the original image; no linked build is needed for them.')
     else:
         raise ForkError("automatic objdiff setup needs one linked ELF beside a rebuilt image with the original SHA-1")
     try:
         definitions = symbols(candidates[0]) if candidates else {}
     except ELFError:
         raise ForkError('automatic objdiff setup needs a readable linked ELF for unresolved symbols') from None
+    if not candidates:  # (no linked ELF to read names from: the project's own symbol lists give the addresses)
+        listed = options.get('symbol_addrs_path') or []
+        files = [inside(original_base, v) for v in (listed if isinstance(listed, list) else [listed])]
+        files += [root / name for name in ('undefined_syms.txt', 'undefined_syms_auto.txt', 'undefined_funcs.txt',
+                                          'undefined_funcs_auto.txt')]
+        for path in files:
+            if path.is_file():
+                for symbol, value in re.findall(r'^\s*([A-Za-z_.$][\w.$]*)\s*=\s*(0x[0-9A-Fa-f]+)\s*;',
+                                                path.read_text(encoding='utf-8', errors='replace'), re.M):
+                    definitions.setdefault(symbol, int(value, 16))
     tid, assembler_name, linker_name = console.reference_tools
     directory = toolchains.require(tid)
     def executable(name):
@@ -652,7 +684,7 @@ def generate(project, config_path: Path, config: dict, console, log=print) -> bo
                     entry['type'] = 'rodata' if entry['type'] == '.rdata' else entry['type'][1:]
                 if not isinstance(entry, list):
                     continue
-                if entry[1] == 'c':
+                if entry[1] in ('c', 'cpp'):
                     entry[1] = 'asm'
                 elif entry[1] in ('.data', '.rodata', '.bss'):
                     entry[1] = entry[1][1:]
@@ -681,7 +713,7 @@ def generate(project, config_path: Path, config: dict, console, log=print) -> bo
                     entry['symbol_mappings'] = mappings
             entries.append(entry)
         pending = work / 'objdiff.json'
-        pending.write_text(json.dumps({'custom_make': 'make', 'build_target': False, 'build_base': True,
+        pending.write_text(json.dumps({'custom_make': 'ninja' if not (root / 'Makefile').exists() and (root / 'build.ninja').exists() else 'make', 'build_target': False, 'build_base': True,
                                        'units': entries,
                                        'coverage_notes': ([] if matching else [
                                            'The source rebuild has not passed the whole-image checksum. Function '
