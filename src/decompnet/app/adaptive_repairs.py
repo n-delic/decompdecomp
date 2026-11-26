@@ -146,22 +146,47 @@ def _typical(rows):
     return statistics.median(times) if times else None
 
 
+def _credited(rows):
+    """Each repair that was tried as part of a combination (`a+b`), with those trials added to its own counts."""
+    own = {row['family']: row for row in rows}
+    totals = {}
+    for row in rows:
+        if '+' not in row['family']:
+            continue
+        for part in set(row['family'].split('+')):
+            total = totals.get(part)
+            if total is None:
+                total = totals[part] = {**dict.fromkeys(POLICY_COLUMNS, 0), **own.get(part, {}), 'family': part}
+            for column in POLICY_COLUMNS:
+                total[column] += row[column]
+    return list(totals.values())
+
+
+def _weights(rows, ceiling):
+    """{family: factor} for the rows with enough evidence. A combination's trials are recorded under its joined name,
+    which no queue ranks, so its wins credited neither repair (a dev database held 700,000 such trials and 32 matches).
+    They count for each part here, upward only: a miss by a pair says too little against either repair to demote it."""
+    typical = _typical(rows)
+    result = {}
+    for row in rows:
+        if (factor := _weight(row, typical, ceiling)) is not None:
+            result[row['family']] = factor
+    for row in _credited(rows):
+        factor = _weight(row, typical, ceiling)
+        if factor is not None and factor > result.get(row['family'], 1):
+            result[row['family']] = factor
+    return result
+
+
 def factors(net, key, focus):
     prepare(net)
-    result = {}
-    rows = policy_rows(net, key, focus)
-    typical = _typical(rows)
-    for row in rows:
-        if (factor := _weight(row, typical, MAX_FACTOR)) is not None:
-            result[row['family']] = factor
+    result = _weights(policy_rows(net, key, focus), MAX_FACTOR)
     if '@' not in focus:
         # A family this mismatch kind hasn't measured borrows what it earned on the profile's other kinds, upward only:
         # evidence from another kind may bring a family forward, never demote one here (that takes this kind's own trials).
-        pooled = pooled_rows(net, key, focus)
-        pooled_typical = _typical(pooled)
-        for row in pooled:
-            if row['family'] not in result and (factor := _weight(row, pooled_typical, POOLED_MAX_FACTOR)) and factor > 1:
-                result[row['family']] = min(factor, POOLED_MAX_FACTOR)
+        for family, factor in _weights(pooled_rows(net, key, focus), POOLED_MAX_FACTOR).items():
+            if family not in result and factor > 1:
+                result[family] = min(factor, POOLED_MAX_FACTOR)
     from . import repair_promotion
     return repair_promotion.cap(net,key,result)
 
