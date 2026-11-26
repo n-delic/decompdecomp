@@ -466,6 +466,11 @@ class AutopilotMixin:
                 for family,source in captured_variants(draft,fn['name'],'mips' if (seeds.m2c_target(toolchain) or '').startswith('mips') else '',target_asm,ctx['header'],known_callees):
                     if family in ('overlay_callee_alias','argument_home_slot','untouched_argument_forwarding'):
                         candidates.append((family,f"{note}{seeds.with_m2c_macros(source)}\n"))
+                from .. import cheap_draft_repairs
+                if cheap_draft_repairs.enabled(self.cfg(proj)):
+                    # the families that matched drafts in seconds of search, now before an agent's turns (app/cheap_draft_repairs.py)
+                    for family, source in cheap_draft_repairs.variants(draft, fn['name'], proj['arch'], target_asm, ctx['header'], own.get('flags', [])):
+                        candidates.append((family, f"{note}{seeds.with_m2c_macros(source)}\n"))
                 for canonical in (False,True):
                     if array := m2cfix.stack_array(draft,fn['name'],canonical):
                         family = 'stack_array_indexed' if canonical else 'stack_array'
