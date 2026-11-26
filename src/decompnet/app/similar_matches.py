@@ -331,6 +331,21 @@ def donor_types(header_a: str, header_b: str, names: dict, syms_b) -> str:
     return '\n'.join(items) + '\n' if items else ''
 
 
+TRANSFERS = ('transfer', 'parameter transfer', 'typed transfer', 'fields')
+
+
+def field_variants(source: str, header: str, report: dict, b, big: bool) -> list[str]:
+    """`source` with the struct fields its compiled body (`report`) puts at other offsets than the target moved there."""
+    from decomprepair import field_offsets
+    if not report or not report.get('candidate_target'):
+        return []
+    compiled = bytes.fromhex(report['candidate_target'])
+    relocated = ({int(r[0]) for r in json.loads(report.get('candidate_relocs') or '[]')}
+                 | {offset for offset, _, _ in relocations(b)})
+    offsets = field_offsets.pairs(compiled, b['target'] or b'', relocated, big)
+    return field_offsets.from_pairs(source, header, offsets) if offsets else []
+
+
 def destination_supported(net, proj):
     # Project mode still needs object-relocation alignment and per-file source adaptation.
     slug = proj['slug']
@@ -747,10 +762,16 @@ def run(twins, slug: str, job, *, function_ids=None) -> int:
                     if outcome == 'miss' and plain.get('score') is None and (
                             types := donor_types(header_a, header_b, names, syms_b)):
                         variants.insert(position + 1, (types + variant, settings, 'typed transfer'))
+                # Built in the target's shape but off in where struct fields are: the other game's struct has
+                # them elsewhere (a field inserted before them), and no number in the C says it. The donor's struct
+                # laid out again, or the uses written at the target's offsets (decomprepair.field_offsets).
+                if kind in TRANSFERS and outcome == 'miss' and kind != 'fields':
+                    for moved in field_variants(variant, header_b, feedback, b, big)[:2]:
+                        variants.insert(position + 1, (moved, settings, 'fields'))
                 # Easy transfers get the first pass through the budget. Then repair the closest compiled misses.
                 close = re.fullmatch(r'score (\d+)', why or '')
                 percent = feedback.get('percent', 100 * (1 - int(close[1]) / max(1, (b['n_insns'] or 0) * 100)) if close else 0)
-                if kind in ('transfer', 'parameter transfer', 'typed transfer') and outcome == 'miss' and close and percent >= REPAIR_PERCENT:
+                if kind in TRANSFERS and outcome == 'miss' and close and percent >= REPAIR_PERCENT:
                     pair = (a['id'], b['id'])
                     if pair not in repairs or int(close[1]) < repairs[pair][0]:
                         repairs[pair] = (int(close[1]), a, b, other, score, prelude, variant, settings, names, header_b, dict(feedback))

@@ -776,3 +776,23 @@ def test_similarity_links_to_complete_large_matched_source_without_truncation(pa
     from decompnet.app.agent_tokens import function_view
     assert source in function_view(pair, None, 'destination', 'old', section='matched')
     assert hashlib.sha256(source.encode()).hexdigest() in result
+
+
+def test_a_donor_whose_struct_fields_sit_elsewhere_is_tried_with_them_moved(pair, monkeypatch):
+    def body(offset):
+        return (0x84820000 | offset).to_bytes(4, 'big') + code(60)[4:]  # lh $v0, offset($a0), then the same
+    donor = ('typedef struct Actor { s16 kind; s16 hp; f32 x; } Actor;\n'
+             'int old(Actor *a) { return a->hp + 60; }')
+    with pair.store.tx() as db:
+        db.execute("UPDATE functions SET target=?,matched_source=? WHERE id=1", (body(2), donor))
+        db.execute("UPDATE functions SET target=? WHERE id=2", (body(6),))
+    seen = []
+    def attempt(agent, proj, a, b, source, feedback=None, **kw):
+        seen.append(source)
+        if feedback is not None:  # compiled in the target's shape, the field still at the donor's offset
+            feedback.update({'score': 200, 'candidate_target': body(2).hex(), 'candidate_relocs': '[]'})
+        return 'miss', 'score 200'
+    monkeypatch.setattr(pair.twins, '_attempt_twin', attempt)
+    sm.run(pair.twins, 'destination', Job())
+    assert any('char _pad0[0x4];' in source and 'int new(Actor *a)' in source for source in seen)
+    assert any('(*(s16 *)((char *)a + 0x6))' in source for source in seen)
