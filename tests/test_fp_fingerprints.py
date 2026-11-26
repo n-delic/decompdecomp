@@ -204,3 +204,17 @@ def test_a_double_constant_in_an_even_register_is_read_too():
     odd = code(lwc1(0), 0xD4010000 | 4 << 21, fop(0x21, 0, 0), fop(0x3C, 0, 0, 1, fmt=17))  # ldc1 $f1: only -mfp64
     assert fp_fingerprints.parity(odd) == 'odd'
     assert fp_fingerprints.probe(dict(SN64), odd) is None and fp_fingerprints.probe(dict(SN32), odd) == SN64['flags']
+
+
+def test_a_brief_says_the_other_float_profile_before_any_c_is_written():
+    from decompnet.app.profile_probe import float_profile_hint
+    hint = float_profile_hint('mips', SN64, EVEN)
+    assert '-mfp32' in hint and 'compiler_experiments' in hint
+    assert float_profile_hint('mips', SN32, EVEN) == ''  # already built that way
+    assert '-mfp64' in float_profile_hint('mips', SN32, ODD)
+    assert float_profile_hint('mips', SN64, LONE) == ''  # one register says nothing
+    # not a MIPS GCC with an explicit float-register flag: nothing to say
+    assert float_profile_hint('ppc', SN64, EVEN) == ''
+    assert float_profile_hint('mips', {'toolchain': 'ido-7.1', 'flags': ['-O2', '-mfp64']}, EVEN) == ''
+    assert float_profile_hint('mips', {'toolchain': 'sn-n64-281', 'flags': ['-O2']}, EVEN) == ''
+    assert float_profile_hint('mips', {**SN64, 'cmd': 'cc'}, EVEN) == ''

@@ -88,4 +88,4 @@ def test_many_shifted_branches_do_not_outweigh_a_real_difference():
 
 
 def test_the_score_version_moved():
-    assert scoring.SCORE_VERSION == 3
+    assert scoring.SCORE_VERSION == 4

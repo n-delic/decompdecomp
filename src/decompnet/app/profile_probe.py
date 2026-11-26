@@ -113,6 +113,24 @@ def mips_gcc(facts) -> list[dict]:
     return out
 
 
+def float_profile_hint(arch, own, code, big_endian=True) -> str:
+    """One line for an open function's brief when its target was built with the other floating-point register file than
+    its profile names, or ''. An N64 game's functions sat under `-mfp64` for days while agents rewrote source for
+    register rows only `-mfp32` gives, and many matched on that flag alone: the target says so before the first compile.
+    It reads code and flags only and changes no setting."""
+    from . import fp_fingerprints
+    flags = list(own.get('flags') or ())
+    if arch != 'mips' or own.get('cmd') or not code or not own.get('toolchain') or own['toolchain'].startswith('ido-') \
+            or not explicit_fp(flags):
+        return ''
+    why = fp_fingerprints.why(flags, bytes(code), (), big_endian)
+    if why is None:
+        return ''
+    return (f"Compiler check (do this before rewriting source): the target suggests {' '.join(fp_fingerprints.flipped(flags))} "
+            f"rather than this function's flags, because {why}. Judge your C under those flags with compiler_experiments; "
+            "an exact result there is applied for this function only.")
+
+
 def neighbour(facts) -> list[dict]:
     """The profile most of the nearest matched functions were built with, when it is not this function's own: the
     address stretch a library or a module sits in (the matched audio code around an open function)."""
