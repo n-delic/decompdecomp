@@ -12,7 +12,8 @@ turns both on, `-O1` neither. So, from the profile's own flags:
 
 - one or both passes turned off with `-fno-...`: the same profile with that flag dropped (`-fno-schedule-insns2`
   alone first, then every scheduling flag);
-- neither flag, `-O2` or higher: the profile with `-fno-schedule-insns2`, then with `-fno-schedule-insns`;
+- neither flag, `-O2` or higher: the profile with `-fno-schedule-insns2`, then with `-fno-schedule-insns`, then
+  with both (a function matched only with both passes off: either one alone scored worse than the saved C);
 - neither flag, `-O1` or lower: the profile with `-fschedule-insns2`, then with both passes on.
 
 That is at most `MAX_VARIANTS` judge compiles per function, tried only when the saved best's diff is order and
@@ -28,7 +29,7 @@ from collections import Counter
 PASSES = ('-fschedule-insns', '-fschedule-insns2')
 OFF = ('-fno-schedule-insns', '-fno-schedule-insns2')
 SCHEDULING = frozenset(PASSES + OFF)
-MAX_VARIANTS = 2
+MAX_VARIANTS = 3
 _REGISTER = re.compile(r'\$(?:f\d+|[vatsk]\d|zero|at|fp)\b')  # (not $sp, $gp or $ra: an offset from them is a meaning)
 _NOTE = re.compile(r'\s*;.*$')  # what the judge adds to a row (`; target's D_00412340 = 0.5f`)
 _BRANCH = re.compile(r'^(?:b\w*|j|jal)\b', re.I)
@@ -66,7 +67,7 @@ def variants(flags) -> list[list[str]]:
             out.append(kept)
     elif not present:
         if (_level(flags) or 0) >= 2:
-            out += [[*flags, '-fno-schedule-insns2'], [*flags, '-fno-schedule-insns']]
+            out += [[*flags, '-fno-schedule-insns2'], [*flags, '-fno-schedule-insns'], [*flags, *OFF]]
         elif flags:
             out += [[*flags, '-fschedule-insns2'], [*flags, '-fschedule-insns', '-fschedule-insns2']]
     return out[:MAX_VARIANTS]

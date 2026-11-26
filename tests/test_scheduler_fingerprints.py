@@ -31,7 +31,8 @@ def test_variants_turn_the_scheduling_passes_the_other_way():
     assert v(['-O2', '-fno-schedule-insns', '-fno-schedule-insns2']) == [
         ['-O2', '-fno-schedule-insns'], ['-O2']]
     assert v(['-O2', '-fno-schedule-insns']) == [['-O2']]
-    assert v(['-O2']) == [['-O2', '-fno-schedule-insns2'], ['-O2', '-fno-schedule-insns']]
+    assert v(['-O2']) == [['-O2', '-fno-schedule-insns2'], ['-O2', '-fno-schedule-insns'],
+                         ['-O2', '-fno-schedule-insns', '-fno-schedule-insns2']]
     assert v(['-O1']) == [['-O1', '-fschedule-insns2'], ['-O1', '-fschedule-insns', '-fschedule-insns2']]
     assert v(['-O2', '-fschedule-insns2']) == []  # (a pass the project turns on by name: nothing to say)
     assert all(len(v(f)) <= scheduler_fingerprints.MAX_VARIANTS for f in (['-O2'], ['-O1'], SN_OFF['flags']))
