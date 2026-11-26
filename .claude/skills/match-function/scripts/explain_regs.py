@@ -38,7 +38,7 @@ def explain(judge, source):
     """(score, the report text, the worker's allocation reply)."""
     result, rows = judge.rows(source)
     reply = judge.ask({"op": "allocation", "slug": judge.slug, "name": judge.name, "source": source,
-                       "rows": [list(row) for row in rows]})
+                       "rows": [list(row) for row in rows], "flags": getattr(judge, "extra_flags", [])})
     return result, reply.get("text") or "", reply
 
 
@@ -49,10 +49,11 @@ def main(argv=None):
     ap.add_argument("--function", required=True)
     ap.add_argument("--dumps", action="store_true", help="also print greg's conflict and preference lines")
     ap.add_argument("--home")
+    ap.add_argument("--flags", metavar="'-mfp32 ...'", help="extra compiler flags added to the function's own, as fast_judge.py --flags takes them (default $DD_EXTRA_FLAGS): the dumps are of that compile")
     a = ap.parse_args(argv)
     claimlost.warn()
     source = preprocess.strip_comments(Path(a.source).read_text())
-    judge = fast_judge.Judge(a.slug, a.function, home=a.home)
+    judge = fast_judge.Judge(a.slug, a.function, home=a.home, extra_flags=a.flags.split() if a.flags is not None else None)
     try:
         result, text, reply = explain(judge, source)
         print(f"score {result}" if result is not None else "score: did not compile")

@@ -40,11 +40,16 @@ def run(net, agent, slug, function, revision, passes=None):
     return render(result, passes, revision) + source_line(result.get('toolchain') or profile.get('toolchain'))
 
 
-def diagnose(net, proj, fn, source, passes, excerpt_chars=compiler_diagnostics.EXCERPT_CHARS, extra_flags=(), keep_files=False):
+def diagnose(net, proj, fn, source, passes, excerpt_chars=compiler_diagnostics.EXCERPT_CHARS, extra_flags=(), keep_files=False,
+             profile_flags=()):
     """The isolated diagnostic compile of `source` under the function's own profile (the tool's and the skill's
-    passes.py share it): (result, profile)."""
+    passes.py share it): (result, profile). `profile_flags` are added to the profile's flags for the baseline and the
+    dump compile alike (the skill's `--flags`, as fast_judge.py takes them: `-mfp32` probes a function whose profile is
+    `-mfp64` without changing it), where `extra_flags` go on the dump compile only."""
     header = net._context(proj['id'], fn['unit'])['header']
     profile = compiler_for(net.cfg(proj), fn['vram'], fn)
+    if profile_flags:
+        profile = dict(profile, flags=[*(profile.get('flags') or []), *profile_flags])
     result = compiler_diagnostics.diagnose(profile, header, source, fn['name'], root=proj['root'], excerpts=passes,
                                            excerpt_chars=excerpt_chars, extra_flags=extra_flags, keep_files=keep_files)
     if result.get('skipped'):
@@ -117,14 +122,16 @@ def loop_decisions(result):
     return lines[:LOOP_NOTE_LINES] + ([f'... {len(lines) - LOOP_NOTE_LINES} more in the loop dump'] if len(lines) > LOOP_NOTE_LINES else [])
 
 
-def report(net, proj, fn, source, passes=SKILL_PASSES, sched_verbose=False, files=None):
+def report(net, proj, fn, source, passes=SKILL_PASSES, sched_verbose=False, files=None, profile_flags=()):
     """What the skill's passes.py prints: the allocation priority table, register preferences, scheduling orders and
     where the compiler's source is. Diagnostic only, like the tool: nothing is recorded or judged. `sched_verbose`
     makes sure the first scheduler's dump is taken and prints its notes (the launch priorities). `files`, a dict, is
     filled with every file the diagnostic compile left (the preprocessed C, the final assembly, each pass dump)."""
     if sched_verbose and 'sched' not in passes:
         passes = (*passes, 'sched')
-    result, profile = diagnose(net, proj, fn, source, passes, SKILL_EXCERPT_CHARS, **({'keep_files': True} if files is not None else {}))
+    result, profile = diagnose(net, proj, fn, source, passes, SKILL_EXCERPT_CHARS,
+                               **({'keep_files': True} if files is not None else {}),
+                               **({'profile_flags': tuple(profile_flags)} if profile_flags else {}))
     if files is not None:
         files.update(result.get('files') or {})
     out = [render(result, (), 'candidate', rows=None)]

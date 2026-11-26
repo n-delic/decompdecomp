@@ -243,3 +243,60 @@ def test_a_real_sn_compile_answers_the_allocation_request_handoff_and_explain_re
     source = "int f1(int a, int b) { int i, s = 0; for (i = 0; i < a; i++) { s += b * i; } return s; }"
     reply = hosted_judge.allocation_report(net, {"slug": "game", "name": "f1", "source": source, "rows": []})
     assert "error" not in reply and "Register " in reply["lreg"] and reply["allocation"]  # -g (refused or not) costs nothing
+
+
+def test_the_requests_flags_reach_the_diagnostic_compile_as_profile_flags(tmp_path, monkeypatch):
+    """#match-function: two functions probed under -mfp32 with fast_judge.py --flags were dumped under their -mfp64
+    profile by passes.py and explain_regs.py: every float register the dumps named was another compile's."""
+    net = project(tmp_path)
+    seen = []
+    monkeypatch.setattr(compiler_passes, "diagnose",
+                        lambda *a, **k: (seen.append(k.get("profile_flags")) or result() | {"toolchain": "gcc-2.7.2-kmc"}, {}))
+    hosted_judge.passes_report(net, {"slug": "game", "name": "f1", "source": "int f1(void){return 0;}", "flags": ["-mfp32"]})
+    hosted_judge.allocation_report(net, {"slug": "game", "name": "f1", "source": "int f1(void){return 0;}", "flags": "-mfp32"})
+    hosted_judge.passes_report(net, {"slug": "game", "name": "f1", "source": "int f1(void){return 0;}"})
+    assert seen[0] == ("-mfp32",) and seen[1] == ("-mfp32",) and not seen[-1]
+    bad = hosted_judge.passes_report(net, {"slug": "game", "name": "f1", "source": "int f1(void){return 0;}", "flags": ["x; rm"]})
+    assert "flags must be" in bad["error"]
+
+
+FLAG_STUB = textwrap.dedent("""\
+    #!{python}
+    import json, sys
+    for line in sys.stdin:
+        r = json.loads(line)
+        out = ({{"name": "f", "vram": 1, "target": "00", "header": "", "compiler": {{"toolchain": "t", "flags": ["-mfp64"]}}}}
+               if r["op"] == "function" else {{"text": "flags " + " ".join(r.get("flags") or [])}})
+        print(json.dumps(out), flush=True)
+""")
+
+
+def test_passes_py_sends_the_flags_it_scores_with(tmp_path, monkeypatch, capsys):
+    stub = tmp_path / "decomp"
+    stub.write_text(FLAG_STUB.format(python=sys.executable))
+    stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("DECOMP_BIN", str(stub))
+    monkeypatch.delenv("DD_EXTRA_FLAGS", raising=False)
+    sys.path.insert(0, str(SCRIPTS))
+    spec = importlib.util.spec_from_file_location("skill_passes_flags", SCRIPTS / "passes.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    (tmp_path / "c.c").write_text("int f(void){return 0;}")
+    module.main([str(tmp_path / "c.c"), "--slug", "g", "--function", "f", "--flags=-mfp32"])
+    assert capsys.readouterr().out.strip() == "flags -mfp32"
+    monkeypatch.setenv("DD_EXTRA_FLAGS", "-mfp32")
+    module.main([str(tmp_path / "c.c"), "--slug", "g", "--function", "f"])
+    assert capsys.readouterr().out.strip() == "flags -mfp32"
+
+
+@pytest.mark.skipif(not toolchains.installed(SN) or not toolchains.installed("wibo") or not toolchains.installed("psyq-obj-parser"),
+                    reason="the SN64 compiler, wibo or the converter isn't installed")
+def test_a_real_sn_compile_dumps_the_profile_with_the_requests_flags(tmp_path):
+    net = project(tmp_path)
+    flags = [f for f in toolchains.get(SN).flags if f not in ("-mfp32", "-mfp64")] + ["-mfp64"]
+    config = {"kind": "rom", "platform": "n64", "compiler": {"toolchain": SN, "flags": flags}}
+    with net.store.tx() as db:
+        db.execute("UPDATE projects SET config=?", (json.dumps(config),))
+    source = "float f1(float a, float b) { return a * b + a; }"
+    reply = hosted_judge.passes_report(net, {"slug": "game", "name": "f1", "source": source, "save": True, "flags": ["-mfp32"]})
+    assert "-mfp64 -mfp32 -da" in reply["text"] and "Warning: the dump flags changed" not in reply["text"]

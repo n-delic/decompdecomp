@@ -117,6 +117,9 @@ Do not grind these; say so in the note and release.
   with other dump flags (`-dl -dg -dS -dR -dL -ds`). The gcc-2.8.1-pm native cc1 is still a stand-in for 2.8.1 only apart
   from byte compares and branch delay-slot fills; it is NOT a stand-in for 2.7.2.
 - `grid.py` has no `--flags` option: patch a copy.
+- **Probing another profile (`fast_judge.py --flags=-mfp32`, `prove_chain.py --fp-flip`)? Dump that compile too:**
+  `passes.py`, `explain_regs.py`, `dumps.py` and `alloc_roles.py` take the same `--flags` (and `$DD_EXTRA_FLAGS`). Without it they
+  dump the function's own profile, and under `-mfp64` every float register they name is another compile's.
 - A long store list (over 8) needs a move-one-line hill climb, not a full grid.
 - `report_repair` categories: `mcp.py <holder> report_repair --help` prints the valid ones.
 

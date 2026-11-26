@@ -53,10 +53,12 @@ def main(argv=None):
                     help="also print the first scheduler's notes (launch priorities, the set-count rule)")
     ap.add_argument("--save", metavar="DIR", help="also write the preprocessed C, the final assembly and each pass dump here")
     ap.add_argument("--home")
+    ap.add_argument("--flags", metavar="'-mfp32 ...'", help="extra compiler flags added to the function's own, as fast_judge.py --flags takes them (default $DD_EXTRA_FLAGS): the dumps are of that compile")
     a = ap.parse_args(argv)
-    judge = fast_judge.Judge(a.slug, a.function, home=a.home)
+    judge = fast_judge.Judge(a.slug, a.function, home=a.home, extra_flags=a.flags.split() if a.flags is not None else None)
     try:
-        request = {"op": "passes", "slug": a.slug, "name": a.function, "source": preprocess.strip_comments(Path(a.source).read_text())}
+        request = {"op": "passes", "slug": a.slug, "name": a.function, "source": preprocess.strip_comments(Path(a.source).read_text()),
+                   "flags": judge.extra_flags}
         if a.sched_verbose:
             request["sched_verbose"] = True
         if a.passes:

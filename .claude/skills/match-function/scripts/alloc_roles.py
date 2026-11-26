@@ -170,7 +170,8 @@ def compile_dumps(judge, source, folder):
     if not words:
         return '', '', ''
     fill = {'IN.i': str(src), 'OUT.s': str(out)}
-    subprocess.run([fill.get(w, w) for w in words] + ['-dp', '-dl', '-dg'], cwd=folder, capture_output=True, timeout=300)
+    extra = list(getattr(judge, 'extra_flags', []))  # the flags the judge scored with (--flags), so the dumps are that compile's
+    subprocess.run([fill.get(w, w) for w in words] + extra + ['-dp', '-dl', '-dg'], cwd=folder, capture_output=True, timeout=300)
     dump = lambda ext: next((p.read_text() for p in Path(folder).glob(f'*.{ext}')), '')  # noqa: E731
     return out.read_text() if out.exists() else '', dump('lreg'), dump('greg')
 
@@ -182,10 +183,12 @@ def main(argv=None):
     ap.add_argument('--function', required=True)
     ap.add_argument('--whatif', type=int, default=0, help='greedy rounds of priority what-ifs')
     ap.add_argument('--all', action='store_true', help='list every allocno, not only the misplaced ones')
+    ap.add_argument('--flags', metavar="'-mfp32 ...'", help="extra compiler flags added to the function's own, as "
+                    "fast_judge.py --flags takes them (default $DD_EXTRA_FLAGS): the dumps are of that compile")
     args = ap.parse_args(argv)
     claimlost.warn()
     source = Path(args.source).read_text()
-    judge = fast_judge.Judge(args.slug, args.function)
+    judge = fast_judge.Judge(args.slug, args.function, extra_flags=args.flags.split() if args.flags is not None else None)
     score, rows = judge.rows(source)
     with tempfile.TemporaryDirectory() as folder:
         asm, lreg, greg = compile_dumps(judge, source, folder)

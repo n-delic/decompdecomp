@@ -30,7 +30,8 @@ def report(judge, source, sched_verbose=False):
     greg = [line for line in (reply.get("greg") or "").splitlines() if line.startswith(GREG_LINES)]
     if greg:
         out += ["", "## greg: conflicts and preferences", *greg]
-    request = {"op": "passes", "slug": judge.slug, "name": judge.name, "source": source, "passes": ["sched", "sched2"]}
+    request = {"op": "passes", "slug": judge.slug, "name": judge.name, "source": source, "passes": ["sched", "sched2"],
+               "flags": getattr(judge, "extra_flags", [])}
     if sched_verbose:
         request["sched_verbose"] = True
     out += ["", "## scheduling (passes.py sched, sched2)", judge.ask(request).get("text") or ""]
@@ -44,9 +45,10 @@ def main(argv=None):
     ap.add_argument("--function", required=True)
     ap.add_argument("--sched-verbose", action="store_true", help="also the first scheduler's launch-priority notes")
     ap.add_argument("--home")
+    ap.add_argument("--flags", metavar="'-mfp32 ...'", help="extra compiler flags added to the function's own, as fast_judge.py --flags takes them (default $DD_EXTRA_FLAGS): the dumps are of that compile")
     a = ap.parse_args(argv)
     claimlost.warn()
-    judge = fast_judge.Judge(a.slug, a.function, home=a.home)
+    judge = fast_judge.Judge(a.slug, a.function, home=a.home, extra_flags=a.flags.split() if a.flags is not None else None)
     try:
         print(report(judge, preprocess.strip_comments(Path(a.source).read_text()), a.sched_verbose))
     finally:

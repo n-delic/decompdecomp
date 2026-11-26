@@ -76,10 +76,12 @@ class Judge:
             self.tables = [(low, list(targets)) for low, targets in info.get("tables") or []]
             self.callees, self.entry_scope = info.get("callees") or "", info.get("entry_scope") or None
             self.words = {str(k): int(v) for k, v in (info.get("words") or {}).items()}  # float constants' words
+        # the flags added to the function's own (--flags, else $DD_EXTRA_FLAGS): the diagnostics (passes.py,
+        # explain_regs.py, dumps.py, alloc_roles.py) send them too, so a probe's dumps are of the compile it scored
+        self.extra_flags = list(extra_flags if extra_flags is not None else os.environ.get("DD_EXTRA_FLAGS", "").split())
         self.compiler = {"toolchain": toolchain, "flags": list(flags if flags is not None else
                                                               ("-G0", "-mips3", "-mgp32", "-mfp32", "-O2"))
-                                                          + list(extra_flags if extra_flags is not None
-                                                                 else os.environ.get("DD_EXTRA_FLAGS", "").split())}
+                                                          + self.extra_flags}
         self.request = {"op": "judge", "slug": slug, "function": {"name": name, "vram": vram, "target": target_hex},
                         "compiler": self.compiler}
 
