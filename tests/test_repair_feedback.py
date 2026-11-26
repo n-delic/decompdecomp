@@ -242,6 +242,10 @@ def test_agents_classify_captured_repairs_before_claiming_more_work(setup, monke
         assert row['category'] == 'unclassified'
         with pytest.raises(NetworkError, match='report_repair'):
             call('claim_function')
+        for placeholder in (0, row['id'] + 1):  # not a case: nothing is filed, and the answer names the real one
+            with pytest.raises(NetworkError, match=f"case_id={row['id']}"):
+                call('report_repair', function='target', case_id=placeholder, category='types')
+        assert net.repair_feedback.listing('demo')['examples'][0]['category'] == 'unclassified'
         assert 'classified as other' in call('report_repair', function='target', case_id=row['id'],
                                             category='other', suggested_category='Load scheduling')
     assert call('claim_function') == 'next claim'

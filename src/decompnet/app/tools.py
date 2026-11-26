@@ -747,7 +747,7 @@ HANDLERS: dict[str, Callable[..., str]] = {
     "search_repair_examples": repair_search.search,
     "get_repair_examples": repair_search.details,
     "upvote_repair_example": repair_search.upvote,
-    "report_repair": lambda net, agent, slug, function, change='', category='other', automation='', case_id=0, suggested_category='':
+    "report_repair": lambda net, agent, slug, function, change='', category='other', automation='', case_id=None, suggested_category='':
         net.repair_feedback.report(agent, slug, function, change, category, automation, case_id, suggested_category),
     "last_diff": agent_tokens.diff_page,
     "report_candidate_issue": lambda net, agent, slug, function, revision, issue, reason, alternative_revision="":
@@ -1503,7 +1503,7 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
 
     @tool
     async def report_repair(ctx: Context, function: str, change: str = '', category: str = 'other',
-                            automation: str = '', case_id: int = 0, suggested_category: str = '') -> str:
+                            automation: str = '', case_id: int | None = None, suggested_category: str = '') -> str:
         """Classify your verified repair. Pass case_id from the match result and a category. For other, optionally
         suggest a short new category. Change and automation notes are optional."""
         return await run(ctx, 'report_repair', function=function, change=change, category=category,

@@ -2,12 +2,14 @@
 wrong flags. Each variant is judged like an attempt and recorded nowhere."""
 
 import hashlib
+import itertools
 import json
 from types import SimpleNamespace
 
 import pytest
 
-from decompnet.app.engine import RomNetwork
+from decompnet import consoles
+from decompnet.app.engine import RomNetwork, compilers
 
 from .test_app_engine import CLAMP
 from .test_rom import ROM, built  # noqa: F401  (fixture that builds the demo ROM)
@@ -61,7 +63,24 @@ def test_gcc_debug_search_replaces_the_debug_level(toolchain, debug):
     for flags in (plain, [*plain, "-g"], [*plain, "-g3"]):
         assert flags in variants
     assert all(sum(f.startswith("-g") for f in flags) <= 1 for flags in variants)
-    assert len(variants) <= 12
+    assert len(variants) <= compilers.MAX_FLAG_VARIANTS
+
+
+@pytest.mark.parametrize("toolchain,platform", [
+    ("gcc-2.7.2-kmc", "n64"), ("gcc-2.7.2-psx", "ps"), ("ee-gcc-2.95.3", "ps2"), ("ps3dev-gcc", "ps3"),
+    ("ido-7.1", "n64"), ("mwcps2-3.0.1", "ps2"), ("pspsnc-1.2.7503", "psp")])
+def test_the_cap_never_cuts_a_variant(monkeypatch, toolchain, platform):
+    """A new entry used to push the last ones off the list without a word: the cap holds the longest list a family
+    makes, whatever the function's own flags are."""
+    net = RomNetwork(":memory:", ".")
+    more = consoles.get(platform).flag_extras
+    bases = [[flag for flag in combination if flag] for combination in itertools.product(
+        ("-G0", "-G4"), ("", "-O1", "-O2"), ("", "-g", "-g2"),
+        ("", "-fschedule-insns", "-fno-schedule-insns"), ("", "-fno-strength-reduce"))]
+    capped = [net.flag_variants(toolchain, base, more) for base in bases]
+    monkeypatch.setattr(compilers, "MAX_FLAG_VARIANTS", 1000)
+    for base, variants in zip(bases, capped):
+        assert variants == net.flag_variants(toolchain, base, more), base
 
 
 @pytest.mark.parametrize("debug", ["-g", "-g3"])

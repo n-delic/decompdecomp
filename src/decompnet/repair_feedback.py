@@ -386,7 +386,7 @@ class RepairFeedback:
         except Exception as error:
             logging.getLogger('decompdecomp').warning('Repair analysis scheduling failed: %s',error)
 
-    def report(self, agent, slug, function, change='', category='other', automation='', case_id=0, suggested_category=''):
+    def report(self, agent, slug, function, change='', category='other', automation='', case_id=None, suggested_category=''):
         fn = self.net._function(function, slug)
         if category not in AGENT_CATEGORIES:
             raise NetworkError('Choose a repair category: ' + ', '.join(AGENT_CATEGORIES))
@@ -396,14 +396,20 @@ class RepairFeedback:
         if owner is not self:
             return owner.report(agent, slug, function, change, category, automation, case_id, suggested_category)
         with self.store.tx() as db:
-            row = db.execute('SELECT id FROM main.repair_examples WHERE project_id=? AND function_id=? AND agent_id=? '
-                             'AND (?=0 OR id=?) ORDER BY id DESC LIMIT 1',
-                             (fn['project_id'], fn['id'], agent.id, case_id, case_id)).fetchone()
-            if not row:
+            mine = [r['id'] for r in db.execute(
+                'SELECT id FROM main.repair_examples WHERE project_id=? AND function_id=? AND agent_id=? '
+                'ORDER BY id DESC', (fn['project_id'], fn['id'], agent.id))]
+            if not mine:
                 raise NetworkError('No captured matching repair by you exists for this function. Match it first.')
+            # No case_id is the latest case; a given one is never replaced by another (a placeholder 0 was filed
+            # under a real case).
+            if case_id is not None and case_id not in mine:
+                raise NetworkError(f"case_id {case_id} isn't a repair case of yours for {fn['name']}. Nothing was "
+                                   f"filed: call report_repair again with case_id={mine[0]}, from the match result.")
+            row = {'id': mine[0] if case_id is None else case_id}
             db.execute("UPDATE repair_examples SET explanation=COALESCE(NULLIF(?,''),explanation),category=?,"
                        "automation=COALESCE(NULLIF(?,''),automation),suggested_category=CASE WHEN ?!='other' THEN '' "
-                       "ELSE COALESCE(NULLIF(?,''),suggested_category) END,status='new' WHERE id=? AND (?=0 OR status='new')",
+                       "ELSE COALESCE(NULLIF(?,''),suggested_category) END,status='new' WHERE id=? AND (? IS NULL OR status='new')",
                        (change.strip()[:3000], category, automation.strip()[:3000], category,
                         _suggestion(category, suggested_category), row['id'], case_id))
             if not db.execute('SELECT changes()').fetchone()[0]:
