@@ -1020,7 +1020,7 @@ class Progress:
 
     def _project_lock(self, slug: str):
         with self.lock:
-            if slug not in self.project_locks:self.project_locks[slug] = ProjectLock()
+            if slug not in self.project_locks:self.project_locks[slug] = ProjectLock(slug)
             return self.project_locks[slug]
 
     def _baseline(self, project_id: int) -> _Baseline | None:
