@@ -387,7 +387,8 @@ class AutopilotMixin:
             input_key = draft_reports.key(plan, ctx['header'], data_asm, fn)
             previous = draft_reports.read(self, fid, project_id=proj['id'])
             external_inputs = own.get('cmd') or own.get('ro_paths') or any(flag.startswith(('-I','-include','-imacros')) for flag in own.get('flags',[]))
-            if not retry_draft and not external_inputs and previous.get('key') == input_key and previous.get('complete'):
+            if (not retry_draft and not external_inputs and previous.get('key') == input_key and previous.get('complete')
+                    and draft_reports.tried_everything(previous)):
                 return 'skip'
             target_asm = self._asm_text(fn, proj)
             # Eligibility is known before any generation. Reuse this exact captured
@@ -398,14 +399,15 @@ class AutopilotMixin:
                 # Reuse that receipt instead of immediately repeating failed m2c.
                 previous = draft_reports.read(self, fid, project_id=proj['id'])
             data_key = hashlib.sha256((data_asm or '').encode()).hexdigest()
-            report = {'key': input_key, 'seed_key':plan, 'data_key':data_key, 'compiled': False, 'scored': False, 'matched': False, 'trials': 0, 'failures': []}
+            report = {'key': input_key, 'seed_key':plan, 'data_key':data_key, 'repairs': draft_reports.repairs(), 'compiled': False, 'scored': False, 'matched': False, 'trials': 0, 'failures': []}
             from .briefs import DRAFT_NOTE
             prefix = DRAFT_NOTE+'\n'
             seed_row = self.project_store(proj['id']).one('SELECT seed_key FROM functions WHERE id=?',fid)
             if (seed and seed.startswith(prefix) and seed_row and seed_row['seed_key'] == plan
                     and previous.get('data_key',data_key) == data_key):
                 draft = seed[len(prefix):].removeprefix(seeds.M2C_MACROS+'\n')
-            elif not retry_draft and previous.get('seed_key') == plan and previous.get('failures'):
+            elif (not retry_draft and previous.get('seed_key') == plan and previous.get('failures')
+                    and previous.get('repairs') == draft_reports.repairs()):
                 report['failures'] = previous['failures']
                 draft = None
             else:

@@ -362,8 +362,10 @@ class BriefMixin:
         return text
 
     def stale_drafts(self, proj) -> list[int]:
-        """Open functions whose machine draft is missing or was made from something that changed since, smallest
-        first (claims go smallest first too). The names in each function's assembly are parsed once per size of it
+        """Open functions whose machine draft is missing, was made from something that changed since, or never compiled
+        with the repairs there are now. Those with no compiling C yet come first (after a draft revision a whole game
+        is stale, and a game with 1,000 open functions waited days for the ones that didn't compile), then the
+        smallest first (claims go smallest first too). The names in each function's assembly are parsed once per size of it
         (a split changes it): on GTA San Andreas, reading all 69 MB of its open functions' assembly takes 1.2 s.
         A game started from scratch in project mode: the fork engine's (Ghidra's drafts, PC)."""
         if self.fork_slug(proj["slug"]):
@@ -371,8 +373,9 @@ class BriefMixin:
         names = self._asm_names.setdefault(proj["id"], {})
         # Return-contract evidence needs the name and assembly too; partial rows stopped
         # the whole background drafter before any stale seed could be regenerated.
-        rows = self.project_store(proj['id']).all("SELECT id, name, size, unit, vram, rom_offset, asm, meta, seed, seed_key FROM functions WHERE project_id=? "
-                              "AND status='open' ORDER BY n_insns, vram", proj["id"])
+        rows = self.project_store(proj['id']).all("SELECT id, name, size, unit, vram, rom_offset, asm, meta, seed, seed_key, "
+                              "best_score IS NULL AS unscored FROM functions WHERE project_id=? "
+                              "AND status='open' ORDER BY unscored DESC, n_insns, vram", proj["id"])
         from ..boundary_repairs import blocked
         held = blocked(self,proj)
         rows = [r for r in rows if r["id"] not in held]
@@ -383,8 +386,17 @@ class BriefMixin:
         contexts: dict[str, object] = {}
         for unit in {r["unit"] for r in rows}:
             contexts[unit] = self._context(proj["id"], unit)
+        from .. import draft_reports
+        # in a room the host's copy judges drafts (drafts.py), so nothing here would ever record the retry
+        judges = proj["slug"] not in self.links
+
+        def gave_up(fid):  # autopilot finished with it, with repairs older than today's
+            report = draft_reports.read(self, fid, project_id=proj["id"])
+            return report.get("complete") and not draft_reports.tried_everything(report)
+
         return [r["id"] for r in rows if r["seed"] is None
-                or r["seed_key"] != self._draft_plan(r, proj, names[r["id"]][1], contexts[r["unit"]])[0]]
+                or r["seed_key"] != self._draft_plan(r, proj, names[r["id"]][1], contexts[r["unit"]])[0]
+                or judges and r["unscored"] and gave_up(r["id"])]
 
     def draft_mark(self, proj) -> tuple:
         """What drafts are made from, summed up: a new header version, compiler, rename or split changes it."""

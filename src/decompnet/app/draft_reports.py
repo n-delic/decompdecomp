@@ -3,6 +3,8 @@ import copy
 import hashlib
 import json
 import time
+from functools import cache
+from importlib import metadata
 
 PREFIX = 'machine-draft:'
 GENERATION_PREFIX = 'machine-draft-generation:'
@@ -10,6 +12,18 @@ GENERATION_PREFIX = 'machine-draft-generation:'
 REPAIR_REVISION = 30  # 30: stores to a number become word stores, branches out of a function drafted as returns; 29: IDO void pointer steps, null for numbers; 28: switches through missing tables drafted around; 27: written argument registers declared; 26: calls through computed addresses cast, stack-slot function pointers; 25: GCC pointer/float word repairs; 24: double-to-unsigned fences too; 23: IDO float-to-unsigned fences drafted as truncations, float bases of fields repaired
 # 22: pointer bits read as floats, denormal float words, labels before a brace, longer compile-error repair runs
 # 21: drafts retry with the compile-error repairs for IDO casts, typed table calls, argument counts and SN64 diagnostics. 20: see DRAFT_REVISION. 19: see DRAFT_REVISION; 18: see DRAFT_REVISION; 17: see DRAFT_REVISION; 16: see DRAFT_REVISION; 15: see DRAFT_REVISION; 14: see DRAFT_REVISION; 13: see DRAFT_REVISION; 12: more m2c draft repairs (see DRAFT_REVISION); 11: m2c drafts that never compiled (64-bit FPU doubles, KSEG0-stripped jump tables, undeclared slots, pointer and void types, argument counts) retry; 7: drafts repaired from the compiler's diagnostics (app/compile_error_repair.py), 8: assembly set aside and entry loops drafted, 9: oversized drafts compacted, a self-call's arguments converted; 10: the source guard admits a 190 KB draft; so functions with no saved C retry
+
+
+@cache
+def repairs():
+    """What a draft that never compiled was repaired with. A newer repair library or revision is worth another try;
+    a draft that did compile keeps its verdict, so a library release (several a day) rejudges only the failures."""
+    return f"{REPAIR_REVISION}:{metadata.version('decomprepair')}"
+
+
+def tried_everything(report):
+    """Whether there is nothing new to try for the function this report is about."""
+    return bool(report.get('scored') or report.get('matched') or report.get('repairs') == repairs())
 
 
 def generation(net, fid, *, project_id=None):
