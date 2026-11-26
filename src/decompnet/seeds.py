@@ -514,6 +514,13 @@ def _compilable(source: str | None, name='', asm='', header='', toolchain=None, 
     for pointer in re.findall(r"^[ \t]+[A-Za-z_][\w \t\*]*\(\*(\w+)\)\([^;\n]*\);", source, flags=re.M):
         if re.search(rf"\b{pointer}\s*[-+]=", source):
             source = re.sub(rf"^([ \t]+)[A-Za-z_][\w \t\*]*\(\*{pointer}\)\([^;\n]*\);", rf"\1s32 {pointer};", source, flags=re.M)
+        elif re.fullmatch(r"(?:unk)?sp[0-9A-Fa-f]+", pointer):
+            # a stack slot also becomes a `#define` onto the frame (`#define sp24 (*(s32 *)(sp + 0x24))`, added later), which expands
+            # over the declaration's name and leaves a syntax error: the macro is the storage, so the declaration goes, an address
+            # is stored as a word and a call goes through a cast
+            source = re.sub(rf"^[ \t]+[A-Za-z_][\w \t\*]*\(\*{pointer}\)\([^;\n]*\);[ \t]*\n", "", source, flags=re.M)
+            source = re.sub(rf"(?m)^([ \t]*{pointer} = )([A-Za-z_]\w*);", r"\1(s32)\2;", source)
+            source = re.sub(rf"(?<![\w#])(?<!define ){pointer}\(", f"((M2C_UNK (*)()){pointer})(", source)
     source = re.sub(r"\*[ \t]*(?:NULL|\(\(void \*\)0\))(?![\w])", "0", source)  # (an argument slot nothing set: `*NULL`)
     source = re.sub(r"^([ \t]*\w+:)[ \t]*\n(?=[ \t]*\})", r"\1;\n", source, flags=re.M)
     from decomprepair import void_pointer_arithmetic as stores

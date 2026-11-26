@@ -56,6 +56,33 @@ def undo_float_words(source: str, line: int) -> str | None:
     return None
 
 
+_NOT_A_FUNCTION = ('Non-function name referenced', 'called object is not a function')
+
+
+def call_through_cast(source: str, line: int) -> str | None:
+    """`(sp4C + sp74)(sp6C);`: m2c called an address it computed. A compiler wants a function there, so the sum is cast
+    to a function pointer first (once per statement on the named line)."""
+    lines = source.split('\n')
+    if not 0 < line <= len(lines):
+        return None
+    text = lines[line - 1]
+    star = re.search(r'(^\s*|[=(,]\s*|return\s+)\*(\w+)\(', text)  # `*arg1();`: a call through the word's address
+    if star:
+        lines[line - 1] = f"{text[:star.start()]}{star[1]}((M2C_UNK (*)()){star[2]})({text[star.end():]}"
+        return '\n'.join(lines)
+    for found in re.finditer(r'(?:^\s*|[=(,]\s*|return\s+)(?=\()', text):
+        open_at = found.end()
+        close = _closing(text, open_at)
+        if close is None or text[close + 1:close + 2] != '(':
+            continue
+        inner = text[open_at + 1:close]
+        if re.match(r'\s*(?:\w+\s*\*+|\w+\s*\(\s*\*)', inner) or inner.lstrip().startswith('('):
+            continue  # already a cast or a function-pointer type
+        lines[line - 1] = f"{text[:open_at]}((M2C_UNK (*)()){text[open_at:close + 1]}){text[close + 1:]}"
+        return '\n'.join(lines)
+    return None
+
+
 def candidates(compile_source, source, *, rounds=ROUNDS, check_cancel=None):
     """Yield (family, source) once, when `source` compiles after repairs. `compile_source(text)` returns something
     with `.ok` and `.log`; the draft itself is not offered again."""
@@ -91,6 +118,8 @@ def candidates(compile_source, source, *, rounds=ROUNDS, check_cancel=None):
             repaired = compile_error_repairs.repair(source, line, message, tried.get(key, 0))
             if repaired is None and any(part in message for part in _POINTER_FROM_FLOAT):
                 repaired = undo_float_words(source, line)
+            if repaired is None and any(part in message for part in _NOT_A_FUNCTION):
+                repaired = call_through_cast(source, line)
             tried[key] = tried.get(key, 0) + 1
             if repaired is not None and repaired != source:
                 source, changed = repaired, True

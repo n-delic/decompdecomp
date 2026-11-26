@@ -150,3 +150,18 @@ def test_gcc_pointer_from_float_line_unwraps_the_float_word_macros():
     twice = cer.undo_float_words(once, 2)
     assert "((void *)(s32)((y - z)))" in twice
     assert cer.undo_float_words(twice, 2) is None
+
+
+def test_stack_slot_function_pointer_declaration_goes_and_the_call_is_cast():
+    from decompnet import seeds
+    out = seeds._compilable("void f(void) {\n    u8 sp[40];\n    M2C_UNK (*sp24)(void *);\n    sp24 = g;\n    sp24(1);\n}\n", "f")
+    assert "(*sp24)" not in out.replace("((M2C_UNK (*)())sp24)", "") and "sp24 = (s32)g;" in out
+    assert "((M2C_UNK (*)())sp24)(1);" in out
+
+
+def test_called_address_is_cast_to_a_function_pointer():
+    from decompnet.app import compile_error_repair as cer
+    assert "((M2C_UNK (*)())(sp4C + sp74))(sp6C);" in cer.call_through_cast("a;\n    (sp4C + sp74)(sp6C);\n", 2)
+    assert "arg1((M2C_UNK (*)())arg1)()" not in (cer.call_through_cast("a;\n    *arg1();\n", 2) or "")
+    assert "((M2C_UNK (*)())arg1)();" in cer.call_through_cast("a;\n    *arg1();\n", 2)
+    assert cer.call_through_cast("a;\n    ((void (*)())x)(1);\n", 2) is None
