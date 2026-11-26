@@ -51,9 +51,10 @@ assert.match(elements.get('compilerParts').innerHTML, /Replace default with this
 assert.match(elements.get('compilerParts').innerHTML, /Test all non-matches/);
 const menuHtml = elements.get('compilerParts').innerHTML;
 assert.match(menuHtml, /class="agent-menu compiler-profile-menu"/);
+assert.match(menuHtml, /Compare with another profile/);
 assert.match(menuHtml, /<summary aria-label="Actions for [^"]+ profile"[^>]*>⋮<\/summary>/);
 const menu = menuHtml.match(/<div class="agent-menu-items">(.*?)<\/div>/s)[1];
-assert.equal((menu.match(/<button /g) || []).length, 4);
+assert.equal((menu.match(/<button /g) || []).length, 5);
 assert.doesNotMatch(menu, /class="ghost/);
 
 // Selecting each option closes the menu and restores focus before opening its workflow.
@@ -63,13 +64,15 @@ vm.runInContext(steering.slice(clickStart, clickEnd) + '};', ctx);
 const routed = [];
 ctx.testProfileAsDefault = async (button, action) => routed.push(action);
 ctx.compareProfileWithDefault = async () => routed.push('compare');
+ctx.compareProfileWithAnother = async () => routed.push('another');
 (async () => {
-  for (const action of ['compare', 'test', 'replace', 'nonmatches']) {
+  for (const action of ['compare', 'another', 'test', 'replace', 'nonmatches']) {
     let focused = false;
     const disclosure = {open:true, querySelector:()=>({focus(){focused=true;}})};
     const button = {dataset:{profileAction:action === 'test' ? undefined : action}, closest:()=>disclosure};
     const target = {closest:selector => selector === '.compiler-profile-menu button' ? button
-      : selector === 'button[data-profile-test-default]' && action !== 'compare' ? button
+      : selector === 'button[data-profile-test-default]' && !['compare', 'another'].includes(action) ? button
+      : selector === 'button[data-profile-compare]' && action === 'another' ? button
       : selector === 'button[data-profile-default]' && action === 'compare' ? button : null};
     await elements.get('compilerParts').onclick({target});
     assert.equal(disclosure.open, false);
