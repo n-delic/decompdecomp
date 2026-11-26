@@ -172,6 +172,16 @@ def test_the_plan_is_bounded():
     assert len(profile_probe.plan(N64, facts(words=[LDC1, ADDIU_SP, JR, NOP], sdk=True))) <= profile_probe.MAX_PROBES
 
 
+def test_a_target_that_keeps_a_frame_pointer_is_named_unoptimised_in_the_brief():
+    words = [ADDIU_SP, 0xAFBE0010, 0x03A0F021, JR, NOP]  # ... sw $fp; addu $fp, $sp, $zero
+    code = struct.pack('>5I', *words)
+    own = {'toolchain': 'gcc-2.7.2-kmc', 'flags': ['-G0', '-mips3', '-O1']}
+    assert '-G0 -mips3 -O0' in profile_probe.unoptimised_hint('mips', own, code)
+    assert profile_probe.unoptimised_hint('mips', {**own, 'flags': ['-O0']}, code) == ''
+    assert profile_probe.unoptimised_hint('mips', {**own, 'toolchain': 'ido-7.1'}, code) == ''
+    assert profile_probe.unoptimised_hint('mips', own, struct.pack('>3I', ADDIU_SP, JR, NOP)) == ''
+
+
 def test_another_console_without_hints_still_gets_the_flag_rules_and_no_more():
     ps2 = consoles.get('ps2')
     own = {'toolchain': 'ee-gcc-2.95.3', 'flags': ['-O2', '-G0']}

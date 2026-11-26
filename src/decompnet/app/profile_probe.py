@@ -49,7 +49,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Callable
 
-from ..arch.mips_profile_evidence import float_pool_through_at, words_of
+from ..arch.mips_profile_evidence import float_pool_through_at, keeps_frame_pointer, words_of
 
 MAX_PROBES = 10  # profiles the evidence names, judged per function and saved C (the -O levels come on top)
 NEIGHBOUR_MIN = 3  # matched neighbours on one other profile that make it the first profile to judge
@@ -151,6 +151,21 @@ def float_profile_hint(arch, own, code, big_endian=True) -> str:
     return (f"Compiler check (do this before rewriting source): the target suggests {' '.join(fp_fingerprints.flipped(flags))} "
             f"rather than this function's flags, because {why}. Judge your C under those flags with compiler_experiments; "
             "an exact result there is applied for this function only.")
+
+
+def unoptimised_hint(arch, own, code, big_endian=True) -> str:
+    """One line for an open function's brief when its target looks unoptimised and its profile optimises, or ''. The
+    probe judges every -O level by itself, but an agent writes C first: a startup function sat at 1510 under `-O1`
+    through two dozen attempts, and its plain C was exact under `-O0`. MIPS GCC only (IDO frames differ)."""
+    flags = list(own.get('flags') or ())
+    levels = [f for f in flags if re.fullmatch(r'-O[123s]?', f)]
+    if arch != 'mips' or own.get('cmd') or not levels or not own.get('toolchain') \
+            or own['toolchain'].startswith('ido-') or not keeps_frame_pointer(words_of(bytes(code or b''), big_endian)):
+        return ''
+    unoptimised = ' '.join('-O0' if f in levels else f for f in flags)
+    return (f"Compiler check (do this before rewriting source): the target copies $sp into $fp, as unoptimised code "
+            f"does. Write plain C (no do-while fences or padding) and judge it with compiler_experiments under "
+            f"{unoptimised}; an exact result there is applied for this function only.")
 
 
 def neighbour_profile_hint(net, proj, cfg, fn, own) -> str:
