@@ -483,6 +483,11 @@ layout asserts) compile, and a few then meet an LLVM backend error (`Function ad
 placing their symbols. A function whose C compiles but cannot be placed runs as the original's code in a second attempt,
 as one clang rejects does (`build._PlaceFallback`).
 
+A struct written on one line with members declared together (`u16 x, y; u32 hi : 24; u32 mode : 6; u32 lo : 2;`) was once
+left in clang's order, which the size check can't see: a game's menu rows kept their old layer and the port drew no briefing
+text (found with Play beside the console: the text boxes' flag word differed from the console's). Each declarator now goes
+on its own line before the reorder.
+
 #### Functions with no C yet
 
 A function the game's C calls (or reaches through a pointer, or starts a thread at) that has no C yet runs from the

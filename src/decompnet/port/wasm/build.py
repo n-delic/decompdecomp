@@ -367,6 +367,18 @@ def contiguous_stack_locals(text: str) -> str:
 _INLINE_BITFIELDS = re.compile(r"\{([^{}\n]*:\s*\d+\s*;[^{}\n]*)\}")
 _BITFIELD_DECL = re.compile(r"^\s*(?:[A-Za-z_]\w*\s+)*[A-Za-z_]\w*\s*\w*\s*:\s*\d+\s*$")
 _MEMBER_DECL = re.compile(r"^[\w\s*\[\]]+$")
+# a declaration of several members at once: its type words, then the declarators (`u16 x, y`, `u32 b31:1, b30:1`)
+_SEVERAL = re.compile(r"^((?:(?:unsigned|signed|const|volatile|struct|union)\s+)*[A-Za-z_]\w*(?:\s+(?:long|int|short|char))*)"
+                      r"(\s*\*[\s*]*|\s+)([^()]*,[^()]*)$")
+
+
+def _one_each(declaration: str) -> list[str]:
+    """`u16 x, y` as `u16 x` and `u16 y`, each declarator with the type; anything else as it is."""
+    m = _SEVERAL.match(declaration)
+    if not m:
+        return [declaration]
+    kind, stars, rest = m.group(1), m.group(2).strip(), [d.strip() for d in m.group(3).split(",")]
+    return [f"{kind} {stars if i == 0 else ''}{d}" for i, d in enumerate(rest)]
 
 
 def _expand_inline_bitfields(text: str) -> str:
@@ -374,7 +386,9 @@ def _expand_inline_bitfields(text: str) -> str:
     like any other: each declaration goes on its own line, so the rewrite below sees it. Only a body of plain
     declarations with a bitfield in it: `{ x = c ? a : 1; }` is code."""
     def split(match):
-        pieces = [d.strip() for d in match.group(1).split(";") if d.strip()]
+        # (a menu's sprite struct, `... u16 x, y; ... u32 hi : 24; u32 mode : 6; u32 lo : 2;` on one line, was left as it
+        # was for its comma: its layer was written into the word's top byte, and the port drew no briefing text)
+        pieces = [one for d in match.group(1).split(";") if d.strip() for one in _one_each(d.strip())]
         if not any(_BITFIELD_DECL.match(d) for d in pieces) or not all(
                 _BITFIELD_DECL.match(d) or _MEMBER_DECL.match(d) for d in pieces):
             return match.group(0)

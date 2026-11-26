@@ -74,3 +74,18 @@ def test_a_rewrite_that_grows_a_struct_is_warned_about(tmp_path):
 def test_the_real_rewrite_keeps_the_size(tmp_path):
     found, logged = _build(tmp_path, big_endian_bitfields)
     assert found == [] and logged == []
+
+
+def test_a_one_line_struct_with_members_declared_together_still_gets_its_bitfields_laid_out():
+    """A game's menu sprite struct was one line with `u16 x, y;`, so the whole struct's bitfields stayed in clang's
+    order: the text rows it moved to layer 3 stayed on layer 7 and the port didn't draw them."""
+    from decompnet.port.wasm.build import big_endian_bitfields
+
+    one_line = "typedef struct { u8 pad[4]; u16 x, y; u32 hi : 24; u32 mode : 6; u32 lo : 2; } Spr;\n"
+    out = big_endian_bitfields(one_line)
+    assert out.index("lo : 2") < out.index("mode : 6") < out.index("hi : 24")  # declared in reverse
+    assert "u16 x;" in out and "u16 y;" in out
+    runs = big_endian_bitfields("struct BF { u32 b31:1, b30:1, rest:30; };\n")
+    assert runs.index("rest : 30") < runs.index("b30 : 1") < runs.index("b31 : 1")
+    pointers = big_endian_bitfields("struct P { u8 *a, *b; u32 f : 8; u32 g : 24; };\n")
+    assert "u8 *a;" in pointers and "u8 *b;" in pointers
