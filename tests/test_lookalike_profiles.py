@@ -224,3 +224,16 @@ def test_an_improved_inexact_search_under_the_own_profile_is_kept_as_an_attempt(
     monkeypatch.setattr(lp.toolchains, 'installed', lambda tc: True)
     lp.trial(game, agent, proj, fn, 'plain', {'toolchain': 'gcc-2.7.2-kmc', 'flags': ['-O1']}, first=first)
     assert not recorded  # under a donor's profile it would mislead whoever starts from it
+
+
+def test_float_literals_built_with_lui_are_proposed_including_a_change_of_sign():
+    # a look-alike's `* -20.0f` is another function's `* 20.0f`: one LUI differs
+    source = 'D = sinf(x) * -20.0f - D_2;'
+    at = source.index('-20.0f')
+    assert lp.proposals(source, [(0xC1A00000, 0x41A00000)]) == [(at, at + 6, '20.0f')]
+    assert lp.proposals('y = x * 20.0f;', [(0x41A00000, 0xC1A00000)]) == [(8, 13, '-20.0f')]
+    assert lp.proposals('y = x - 2.5f;', [(0x40200000, 0x3F000000)]) == [(8, 12, '0.5f')]  # a subtraction builds +2.5
+    assert lp.proposals('y = x - 2.5f;', [(0xC0200000, 0x3F000000)]) == []
+    assert lp.proposals('y = -2.5f;', [(0xC0200000, 0x3DCCCCCD)]) == [(4, 9, '0.1f')]
+    assert lp.proposals('y = x -2.5f;', [(0x40200000, 0xBF800000)]) == [(7, 11, ' -1.0f')]
+    assert lp.proposals('s = "2.0f"; /* 2.0f */ d = D_2f + 2.0;', [(0x40000000, 0x40400000)]) == []

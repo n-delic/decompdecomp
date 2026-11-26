@@ -20,7 +20,9 @@ ROM mode, MIPS (the similar-code pass's reach); project mode has no per-function
 from __future__ import annotations
 
 import json
+import math
 import re
+import struct
 from dataclasses import dataclass
 
 from .. import scoring, toolchains
@@ -31,6 +33,10 @@ SEARCH_COMPILES = 40   # compiles one trial's literal search may spend, beside t
 TOKENS = re.compile(r'/\*.*?\*/|//[^\n]*|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|'
                     r'[A-Za-z_]\w*|(?<![\w.])(?:0[xX][0-9a-fA-F]+|[0-9]+)(?:[uUlL]*)(?![\w.])', re.S)
 INTEGER = re.compile(r'(0[xX][0-9a-fA-F]+|[0-9]+)([uUlL]*)\Z')
+# A single-precision literal (`-20.0f`): the compiler builds its bits with LUI (and ORI), so a look-alike with another
+# float differs from its donor in the same immediates as one with another integer.
+FLOAT = re.compile(r'/\*.*?\*/|//[^\n]*|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|[A-Za-z_]\w*|'
+                   r'(?<![\w.])((?:[0-9]+\.[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+)([fF])(?![\w.])', re.S)
 MASK = 0xffffffff
 
 
@@ -112,15 +118,69 @@ def _written(literal, new) -> str | None:
     return None if wanted is None else _format(digits, wanted) + suffix
 
 
+def _bits(value: float) -> int | None:
+    try:
+        return struct.unpack('>I', struct.pack('>f', value))[0]
+    except (OverflowError, struct.error):
+        return None
+
+
+def _float_text(bits: int, suffix: str) -> str | None:
+    """The shortest decimal literal a compiler reads back as exactly these single-precision bits."""
+    value = struct.unpack('>f', bits.to_bytes(4, 'big'))[0]
+    if not math.isfinite(value):
+        return None
+    for digits in range(1, 10):
+        text = f'{value:.{digits}g}'
+        if _bits(float(text)) == bits:
+            text = repr(float(text))  # '20.0' rather than '2e+01'
+            if '.' not in text:  # '1e-07'
+                text = text.replace('e', '.0e')
+            return text + suffix
+    return None
+
+
+def _unary_minus(source: str, start: int) -> int | None:
+    """Where the minus sign negating the literal at `start` is; None for no minus or a subtraction (`x - 2.0f` is
+    built from +2, unlike an integer's `addiu -2`)."""
+    before = source[:start].rstrip()
+    if not before.endswith('-'):
+        return None
+    ahead = before[:-1].rstrip()
+    if not ahead or ahead[-1] in '=(,*/+-?:<>&|^!~[{};' or re.search(r'\breturn$', ahead):
+        return len(before) - 1
+    return None
+
+
+def float_proposals(source: str, pairs) -> list[tuple[int, int, str]]:
+    """[(start, end, text)]: each float literal built as one of `pairs`' compiled bit patterns, rewritten to the
+    wanted one. Its sign can change too (`* -20.0f` to `* 20.0f`): the minus is part of the rewritten text."""
+    out = []
+    for token in FLOAT.finditer(source):
+        if not token[1]:
+            continue
+        minus = _unary_minus(source, token.start())
+        value = float(token[1])
+        built = _bits(value if minus is None else -value)
+        for old, new in pairs:
+            if built is None or built != old & MASK or (text := _float_text(new & MASK, token[2])) is None:
+                continue
+            start = token.start() if minus is None else minus
+            if text.startswith('-') and source[:start].endswith('-'):
+                text = ' ' + text  # never `--`
+            out.append((start, token.end(), text))
+    return out
+
+
 def proposals(source: str, pairs) -> list[tuple[int, int, str]]:
-    """[(start, end, text)]: each C integer literal whose value the compiler built as one of `pairs`' compiled
-    values, rewritten to the wanted value."""
+    """[(start, end, text)]: each C literal whose value the compiler built as one of `pairs`' compiled values,
+    rewritten to the wanted value: integers, then floats."""
     out = []
     for literal in literals(source):
         for old, new in pairs:
             if literal[5] & MASK == old & MASK and (text := _written(literal, new)) is not None:
                 out.append((literal[0], literal[1], text))
-    return list(dict.fromkeys(out))
+    return list(dict.fromkeys(out + float_proposals(source, pairs)))
 
 
 MARKERS = 24  # literals one marked build tells apart
