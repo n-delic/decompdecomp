@@ -12,6 +12,7 @@ from contextlib import ExitStack, contextmanager
 from ..network import NetworkError
 from ..project import function_compiler_key
 from . import (
+    folder_owner,
     match_commit_notes,
     repository_git,
     repository_operations,
@@ -365,6 +366,8 @@ def process(net, slug, output=log.info):
                 cfg = net._update_cfg(slug, bind_checkout, synchronize=False)
                 if not cfg.get(setting):
                     return
+            # (a copy of the database in another home must not commit into the original's checkout)
+            folder_owner.refuse(net, proj, saves.default_folder(net, slug))
             root = repository_sync.checkout(cfg['auto_commit_folder'], clean=False)
             with repository_operations.operation(root, slug, 'Committing a polished function' if kind == 'polished' else 'Committing a verified match', output) as log:
                 if log is None:return

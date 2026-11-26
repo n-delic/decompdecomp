@@ -103,7 +103,10 @@ def default_folder(net, slug: str) -> Path:
     proj = store.one("SELECT * FROM projects WHERE slug=?", slug)
     if proj is None:
         raise NetworkError(f"no project {slug!r} here: check its name, or whether it was removed")
-    return Path(net.cfg(proj).get("progress_folder") or Path(proj["root"]) / SAVE_FOLDER)
+    folder = Path(net.cfg(proj).get("progress_folder") or Path(proj["root"]) / SAVE_FOLDER)
+    from . import folder_owner
+    folder_owner.refuse(net, proj, folder)  # a copy of the database in another home never writes this one's folder
+    return folder
 
 
 def save_folder(net, slug: str) -> Path:

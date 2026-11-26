@@ -46,8 +46,13 @@ Testing a change must not touch it:
   app runs from this checkout's `.venv`, run them in another environment so uv doesn't rebuild it underneath:
   `UV_PROJECT_ENVIRONMENT=<scratch venv> uv run pytest -q`.
 - To try a change on a real project, work on a copy: `sqlite3 "file:$HOME/Decomp-RetroReversing/.decomp/decomp.db?mode=ro"
-  ".backup <copy>/.decomp/decomp.db"`, copy the project folder, point `projects.root` in the copy at it. Read the
-  live database only with `?mode=ro`.
+  ".backup <copy>/.decomp/decomp.db"` (and the project's own `project-databases/<id>.sqlite3`), copy the project
+  folder, point `projects.root` in the copy at it, and point every folder its settings name at the copy too
+  (`progress_folder`, `save_folder`, `auto_commit_folder`, `repository_sync_folder`, `export`; turn off
+  `auto_commit_matches`/`auto_push`): opening the copy syncs them. A copy that kept the user's save folder deleted the
+  saved C of eight functions it reopened, and the user's app reopened those matches. The app now refuses a copy that
+  names another home's folders (`app/folder_owner.py`), but only once that home has recorded them. Read the live
+  database only with `?mode=ro`.
 - Don't restart, update or quit the user's app, and don't change its projects, without asking.
 
 Compilers and tools (objdiff, dtk, wibo, Ghidra, m2c, decomp-permuter, period compilers) are pinned with checksums
