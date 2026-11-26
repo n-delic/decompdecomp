@@ -61,6 +61,32 @@ def test_the_target_call_site_reads_argument_registers_and_the_result():
     assert ("target-argument", "h") in kinds(missing) and "$a1" in missing[0]["text"]
 
 
+def test_a_result_read_in_the_next_calls_delay_slot_is_read():
+    """A collision walk's `start = first(0); end = last(0);`: the first result is copied in the second jal's delay
+    slot and the second's in the third's. Both were reported as "overwritten unread" (call it as a statement)."""
+    asm = """glabel w
+/* */ addu $a0, $zero, $zero
+/* */ jal first
+/* */ nop
+/* */ addu $a0, $zero, $zero
+/* */ jal last
+/* */ addu $s0, $v0, $zero
+/* */ addiu $a0, $zero, 0x12D
+/* */ jal find
+/* */ sw $v0, 0x30($sp)
+/* */ jal other
+/* */ nop
+/* */ jal again
+/* */ nop
+/* */ jr $ra
+/* */ nop
+"""
+    assert [(s["callee"], s["result"]) for s in cs.call_sites(asm)] == [
+        ("first", True), ("last", True), ("find", False), ("other", False), ("again", None)]
+    source = "void w(void) {\n    s = first(0);\n    e = last(0);\n    find(0x12D);\n    other();\n}\n"
+    assert not {k for k in kinds(cs.check("w", source, "", {}, {}, asm)) if k[0] == "result-unread"}
+
+
 def test_return_width_from_the_header_against_the_matched_definition():
     found = cs.check("f", "void f(void) {\n    x = get();\n}\n", "s32 get(void);\nu32 put(void);",
                      {"get": "s16 get(void) {\n    return 1;\n}\n"})

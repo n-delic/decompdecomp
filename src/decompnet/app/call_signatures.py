@@ -192,11 +192,19 @@ def call_sites(asm, aliases=None):
                 break
         arg_regs = max((ARG_REGS.index(r) + 1 for r in written if r in ARG_REGS), default=0)
         result = None
-        for m, o, _label in insns[i + 2:i + 2 + MAX_FORWARD]:
+        window = insns[i + 2:i + 2 + MAX_FORWARD]
+        for k, (m, o, _label) in enumerate(window):
             if '$v0' in _reads(m, o):
                 result = True
                 break
-            if m in ('jal', 'jalr') or '$v0' in _writes(m, o):
+            if m in ('jal', 'jalr'):
+                # The next call's delay slot runs before that call returns: a collision walk's
+                # `jal start; ...; jal end; move $s0, $v0` keeps the first result there, and calling it
+                # "overwritten unread" sent agents to turn a used result into a bare statement.
+                slot = window[k + 1] if k + 1 < len(window) else None
+                result = bool(slot and '$v0' in _reads(*slot[:2]))
+                break
+            if '$v0' in _writes(m, o):
                 result = False
                 break
             if m == 'jr':
