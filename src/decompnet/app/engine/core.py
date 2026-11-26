@@ -11,6 +11,7 @@ import secrets
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 from ... import consoles, hostenv
 from ...network import Agent, Network, NetworkError, hash_token
@@ -208,6 +209,17 @@ class Core(Network):
         if reconsidered:
             done.append(f'{reconsidered} obsolete tooling verdicts reconsidered with supported C')
         n = self.twins.set_aside_asm(self.project_row(slug)) + self.not_c_from_notes(slug)
+        # library code this version recognises: named, then set aside, every function in one go (not the 3 seconds
+        # a turn background naming takes)
+        from ..sdk_assembly import set_aside_c
+        from ..sdk_names import name_functions
+        library = 0
+        if self.is_rom(row):  # (an imported build renames through rebuilds: its background naming does that)
+            before = set_aside_c(self, row)
+            name_functions(self, slug, SimpleNamespace(stop=threading.Event()))
+            library = set_aside_c(self, row) - before
+        if library > 0:
+            done.append(f"{library} library function{'' if library == 1 else 's'} set aside, found by library detection")
         self._update_cfg(slug, lambda cfg: cfg.update(checked=__version__))
         if n:
             done.append(f"{n} more function{'' if n == 1 else 's'} set aside, as no C makes them")
