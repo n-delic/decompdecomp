@@ -733,6 +733,12 @@ says the fix and the library families it names; try those families with `prove_c
   copies the target keeps in the switch arms though never read, and local-alloc's `optimize_reg_copy_1` comparing a
   clamp on its copy.
 
+- **SN64 GCC 2.8.1: two pointer tables read with one index in a loop, the wrong table's address hoisted** (the target's
+  rematerialised `lui/addiu $t0` is the other table): loop.c moves an address only when `threshold * savings * life >=
+  insn_count`, and `&T[m]` lives 2 insns (never desirable). A user pointer `tt = T;` at the body's top is the one moved;
+  then one slot pointer per table, loads after both slots (`ts = &tt[m]; vs = &V[m]; tri = &(*ts)[k]; vtx = *vs;`):
+  55 -> 0 and 195 -> 0 on two triangle walkers; decomp-repair `loop_table_slot_pointers`
+  (docs/learnings/finding/loop-hoists-the-table-a-user-pointer-names.md).
 - **SN64 GCC 2.8.1: a loop local stepped by a constant (`y = 0x37; ... y += 0xE` in both arms) whose `li` sits first in
   the preheader where the target has it after loop.c's pointers:** write it as a giv of a zero-based row counter,
   `y = row * 14 + 0x37;` at the top of the body and `row++;` before the counter's step (bivs are reduced newest first),
