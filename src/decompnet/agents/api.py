@@ -568,10 +568,20 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
         "defer_asset_region": ("Record a failed approach and continue the queue.",s(region=st("region ID",True),claim_token=st("claim token",True),approach=st("approach tried",True),findings=st("findings and missing evidence",True))),
         "get_boundary_evidence": ("Read original mapped boundary evidence, neighbours, direct edges, symbols and scan limits. No claim needed.", s(function=st("selected function", True))),
         "suggest_boundary": ("Save an advisory recommendation; no layout change. End the investigation after reporting.",
-            s(function=st("selected function", True), action=st("delay_slot, join_previous, adjust, padding, data, keep, unclear", True),
+            s(function=st("selected function", True), action=st("delay_slot, join_previous, adjust, padding, data, keep, trim_start, split_end, split_gap, unclear", True),
               supporting=st("Supporting evidence", True), counter=st("Counter-evidence or explicitly none observed", True),
               uncertainty=st("Remaining uncertainty", True), citations=st("Comma-separated hex instruction addresses from evidence", True),
-              end=st("Exclusive hex end for adjust"), confidence=st("strong, tentative, unclear"))),
+              end=st("Exclusive hex end for adjust and split_gap; the real entry for trim_start and split_end"),
+              confidence=st("strong, tentative, unclear"), entry=st("split_gap: where the next function starts"))),
+        "propose_change": ("Propose a change only the user may make, with evidence; nothing changes until they approve it. "
+                           "set_aside (hand-written assembly), set_aside_sdk (SDK, driver or library code), or a boundary "
+                           "change (mapped MIPS ROM): delay_slot, join_previous, adjust, padding, data, keep, trim_start, "
+                           "split_end, split_gap (end after the return, entry at the next prologue; stray words between "
+                           "stay out of any function).",
+            s(function=st("function", True), action=st("set_aside, set_aside_sdk, delay_slot, join_previous, adjust, padding, data, keep, trim_start, split_end, split_gap", True),
+              evidence=st("instructions and addresses that show it, and what you could not rule out", True),
+              end=st("hex address: adjust's new end, trim_start/split_end's real entry, split_gap's end"),
+              entry=st("split_gap: hex address where the next function starts"))),
         "get_claims": ("Recover only your live claims and claim tokens; no build or mutation.", s()),
         "project_info": ("Game, compiler and progress; detail=true includes all facts and suggestions.", s(detail=bo("full details"))),
         "get_candidate": ("Read candidate C and its revision, without assembly or notes.", s(function=st("function", True), base={"type":"string","enum":["current","saved_best","last_compiling","reported_corrected","regional_alternative"],"description":"Named recovery base, never a revision hash; selection does not judge source."})),

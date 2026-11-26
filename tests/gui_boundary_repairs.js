@@ -37,6 +37,9 @@ async function main(){
   assert(test.ctx.boundaryRepairPreviewHTML({...plan,action:'data'}).includes('Archived as data'));
   const shrink=test.ctx.boundaryRepairPreviewHTML({...plan,action:'adjust',old_end:0x80001020});
   assert(shrink.includes('Retained tail'));
+  const gap=test.ctx.boundaryRepairPreviewHTML({...plan,action:'split_gap',end:0x80001010,entry:0x80001018,old_end:0x8000102c});
+  assert(gap.includes('Stray words · archived as padding')&&gap.includes('New function func_80001018'));
+  assert(test.ctx.boundaryRepairPreviewHTML({...plan,action:'trim_start',end:0x80001008,old_end:0x80001010}).includes('Words before the entry'));
   const recommendation={action:'join_previous',agent:'<unsafe>',supporting:'<unsafe>',counter:'A caller exists',uncertainty:'Indirect edges',confidence:'tentative',time:1,stale:false,citations:[packet.start]};
   const advice=test.ctx.boundarySuggestionsHTML({...packet,suggestions:[recommendation]});
   assert(advice.includes('Counter-evidence')&&advice.includes('Remaining uncertainty')&&advice.includes('href="#boundary-evidence-line-2147487744"'));

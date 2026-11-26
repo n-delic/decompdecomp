@@ -131,9 +131,12 @@ function renderSteering(ov) {
   if (typeof renderRepositoryAutoPush === "function") renderRepositoryAutoPush(ov.auto_push);
   renderKnowledge();
   // what agents can't change themselves: where a function ends, and suggestions; a compiler's are in Settings → Compiler
-  const sg = (ov.suggestions || []).filter((s) => !s.toolchain), bd = ov.boundaries || [];
-  $("suggestPanel").hidden = !sg.length && !bd.length;
-  setHtml($("suggestList"), bd.map((r) => `<div class="note">${saidHead("where a function ends", [r.agent], r.t, true)}
+  const sg = (ov.suggestions || []).filter((s) => !s.toolchain), bd = ov.boundaries || [], proposed = ov.proposals || 0;
+  $("suggestPanel").hidden = !sg.length && !bd.length && !proposed;
+  // (changes agents proposed: their count opens the drawer that lists them, js/agent-proposals.js)
+  const proposals = proposed ? `<div class="note">${saidHead("agents propose", [], 0, true)}
+    <button class="link-btn" type="button" data-open-proposals>${plural(proposed, "change")} waiting for your approval</button>: functions to set aside and boundaries to fix, each with the agents' evidence. Nothing changes until you approve it.</div>` : "";
+  setHtml($("suggestList"), proposals + bd.map((r) => `<div class="note">${saidHead("where a function ends", [r.agent], r.t, true)}
     <b class="mono">${esc(r.function)}</b> ends at <span class="mono">${hex8(r.end)}</span>: the ${r.cut} bytes after it aren't code. ${esc(r.reason)}
     <p class="small muted mono">after ${hex8(r.end)}: ${esc(r.rest)}</p>
     <div class="row"><button class="primary small-btn" type="button" data-bapply="${r.id}">Cut it there</button><button class="ghost small-btn" type="button" data-bdismiss="${r.id}">Dismiss</button></div></div>`).join("") + sg.map(suggestionHtml).join(""));
@@ -251,6 +254,7 @@ function compilerSuggestionHtml(s) {
 }
 
 $("suggestList").onclick = $("compilerWaiting").onclick = async (e) => {
+  if (e.target.closest("[data-open-proposals]")) { openAgentProposals(); return; }
   const cut = e.target.closest("button[data-bapply], button[data-bdismiss]");
   if (cut) {
     const apply = cut.dataset.bapply != null;

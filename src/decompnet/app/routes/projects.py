@@ -146,9 +146,33 @@ def register(app: App) -> None:
                 return {'job':running['id'] if running else jobs.start(repairs.safe_job_kind(slug),lambda log:repairs.apply_safe(net,slug,log),project=slug,
                                                                          cancel_message='Safe boundary fixes stopped. Fixes already applied are kept and can be undone.')}
         if action=='automatic':return repairs.set_entry_fixes(net,slug,data.get('enabled'))
-        if action=='preview':return repairs.public(repairs.preview(net,slug,data.get('function'),data.get('repair'),data.get('end')))
+        if action=='preview':return repairs.public(repairs.preview(net,slug,data.get('function'),data.get('repair'),data.get('end'),entry=data.get('entry')))
         if action=='undo':return {'job':jobs.start('Undo boundary decision',lambda log:repairs.undo(net,slug,data.get('key'),log))}
-        return {'job':jobs.start('Verify boundary repair',lambda log:repairs.apply(net,slug,data.get('function'),data.get('repair'),data.get('revision'),data.get('image'),data.get('end'),data.get('note',''),log))}
+        return {'job':jobs.start('Verify boundary repair',lambda log:repairs.apply(net,slug,data.get('function'),data.get('repair'),data.get('revision'),data.get('image'),data.get('end'),data.get('note',''),log,entry=data.get('entry')))}
+
+    def p_agent_proposals(slug, request, data):
+        """What agents proposed for the user to approve (agent_proposals): list, approve, dismiss, undo."""
+        from .. import agent_proposals as proposals
+        if request.method == 'GET':
+            listed = proposals.listing(net, slug)
+            for item in listed['items']:
+                running = jobs.active((proposals.job_kind(slug, item['id']),))
+                item['job'] = running['id'] if running else None
+            return listed
+        action, pid = data.get('action'), str(data.get('id', ''))
+        if action == 'dismiss':
+            return proposals.dismiss(net, slug, pid)
+        if action not in ('approve', 'undo'):
+            raise NetworkError('Choose approve, dismiss or undo.')
+        # One run per proposal: a second click (or another window) follows the running one.
+        kind = proposals.job_kind(slug, pid)
+        with jobs._lock:
+            running = jobs.active((kind,))
+            if running:
+                return {'job': running['id']}
+            work = proposals.approve if action == 'approve' else proposals.undo
+            return {'job': jobs.start(kind, lambda log: work(net, slug, pid, log), project=slug,
+                                     cancel_message='Stopped before anything was saved; the proposal is still pending.' if action == 'approve' else 'Undo stopped before anything changed.')}
 
     def p_symbol_names(slug, request, data):
         from .. import symbol_names
@@ -1494,6 +1518,7 @@ def register(app: App) -> None:
         "/api/boundary-evidence": (g_boundary_evidence, ["GET"]),
         "/api/boundary-investigations": (g_boundary_investigations, ["GET"]),
         "/api/boundary-repairs": (p_boundary_repairs, ["GET", "POST"]),
+        "/api/agent-proposals": (p_agent_proposals, ["GET", "POST"]),
         '/api/repair-generation-metrics': (g_generation_metrics, ['GET']),
         "/api/project": (p_overview, ["GET"]),
         "/api/split-rom": (p_split_rom, ["POST"]),

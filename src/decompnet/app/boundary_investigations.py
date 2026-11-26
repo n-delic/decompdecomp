@@ -8,7 +8,9 @@ from . import boundary_evidence, boundary_repairs
 
 TASK = 'boundary'
 TOOLS = frozenset({'project_info', 'get_boundary_evidence', 'suggest_boundary'})
-ACTIONS = frozenset({'delay_slot', 'join_previous', 'adjust', 'padding', 'data', 'keep', 'unclear'})
+ACTIONS = frozenset({'delay_slot', 'join_previous', 'adjust', 'padding', 'data', 'keep', 'trim_start', 'split_end', 'split_gap', 'unclear'})
+# (the actions whose `end` is an address: the new end, or for trim_start and split_end the real entry)
+WITH_END = frozenset({'adjust', 'trim_start', 'split_end', 'split_gap'})
 PREFIX = 'boundary-suggestion:'
 INSTRUCTIONS = ('You are a boundary investigator in decompdecomp, reviewing a game the user owns. '
                 'Use only project_info(detail=false), get_boundary_evidence and suggest_boundary. '
@@ -66,11 +68,14 @@ def _key(session):
     return PREFIX + session.id
 
 
-def report(net, agent, slug, function, action, supporting, counter, uncertainty, citations, end='', confidence='tentative'):
+def report(net, agent, slug, function, action, supporting, counter, uncertainty, citations, end='', confidence='tentative', entry=''):
     """Save a recommendation against the original evidence; this never applies a layout edit."""
     session = scope(net, agent)
     if not session:
-        raise NetworkError('Start a boundary investigation from Review function boundaries first.')
+        # A matching agent that found a boundary problem: its proposal is the user's to approve (agent_proposals).
+        raise NetworkError('suggest_boundary is for a boundary investigation the user starts from Review function '
+                           'boundaries. To propose a change yourself, call propose_change(function, action, evidence, '
+                           'end, entry): nothing changes until the user approves it.')
     guard(net, agent, slug, 'suggest_boundary', {'function': function})
     packet = getattr(session, 'boundary_evidence', None)
     if not packet:
@@ -89,14 +94,17 @@ def report(net, agent, slug, function, action, supporting, counter, uncertainty,
         raise NetworkError('Cite comma-separated hex instruction addresses from the evidence.') from None
     if not addresses or not set(addresses) <= known:
         raise NetworkError('Cite instruction addresses present in the supplied evidence.')
-    try: proposed_end = int(end, 16) if action == 'adjust' else None
+    try: proposed_end = int(end, 16) if action in WITH_END else None
     except (TypeError, ValueError):
-        raise NetworkError('Supply the proposed exclusive end as a hex address.') from None
+        raise NetworkError('Supply the proposed exclusive end (trim_start, split_end: the real entry) as a hex address.') from None
+    try: proposed_entry = int(entry, 16) if action == 'split_gap' else None
+    except (TypeError, ValueError):
+        raise NetworkError('Supply where the next function starts after the stray words (entry) as a hex address.') from None
     # A read-only preview tests layout feasibility, not ownership. Claims are enforced
     # again when the user previews/applies; investigation must never steal a claim.
     if action != 'unclear':
-        boundary_repairs.preview(net, slug, function, action, proposed_end, investigation=True)
-    item = {'function': function, 'action': action, 'end': proposed_end, 'confidence': confidence,
+        boundary_repairs.preview(net, slug, function, action, proposed_end, entry=proposed_entry, investigation=True)
+    item = {'function': function, 'action': action, 'end': proposed_end, 'entry': proposed_entry, 'confidence': confidence,
             'supporting': supporting, 'counter': counter, 'uncertainty': uncertainty,
             'citations': addresses, 'agent': session.label, 'model': session.model,
             'time': time.time(), 'revision': packet['revision'], 'image': packet['image']}

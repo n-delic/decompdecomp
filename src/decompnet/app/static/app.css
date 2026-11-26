@@ -2375,6 +2375,12 @@ img.rom-preview-media { image-rendering:pixelated; background:var(--bg-alt); bor
 .globals-table th.r .sort-btn { text-align: right; }
 .globals-table .sort-btn:focus-visible { outline: 2px solid var(--accent, currentColor); outline-offset: -2px; }
 .port-failure-table td { vertical-align: top; }
+/* Changes agents proposed (js/agent-proposals.js): the drawer scrolls, not the table; a row's evidence, actions and
+   preview span its full width under it. */
+.proposal-table { max-height: none; overflow-x: visible; }
+.proposal-table tr.proposal-evidence td { white-space: normal; padding-top: 0; }
+.proposal-table tr:not(.proposal-evidence) td { border-bottom: 0; }
+.proposal-table .boundary-preview { overflow-x: auto; }
 .port-failure-table td:last-child { overflow-wrap: anywhere; }
 .port-help { width: 18px; height: 18px; padding: 0; border-radius: 50%; border: 1px solid var(--line, currentColor); background: none; color: var(--muted); font: 600 11px/1 var(--mono); cursor: pointer; vertical-align: middle; }
 .port-help:hover, .port-help:focus-visible { color: var(--ink); border-color: var(--ink); }

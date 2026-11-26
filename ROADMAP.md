@@ -433,7 +433,7 @@ Implemented: automatic start and end fixes the bytes prove (`app/entry_fixes.py`
 
 Implemented: guided mapped MIPS boundary evidence, neighbouring instruction windows, explicit before/after extents and one-shot agent recommendations with cited supporting/counter-evidence and uncertainty. Advice never edits layouts, claims work or compiles, and stale inputs are labelled.
 
-Implemented: mapped MIPS boundary audit/quarantine, original-byte repair previews, retained-record delay-slot/join/end/padding/data/keep decisions and guarded undo. Guided evidence/agent investigation and repair adapters for other processors and imported object projects remain planned; source-free audit/repair evidence and limitations are documented in docs/CODE_COVERAGE_REVIEW.md. Safe-fix discovery now shares layout/image reads, avoids discarded full previews and coalesces saved-folder checks within each decision while retaining the complete safety fingerprint and commit guards.
+Implemented: mapped MIPS boundary audit/quarantine, original-byte repair previews, retained-record delay-slot/join/end/padding/data/keep/stray-word (`split_gap`) decisions and guarded undo; agents propose any of them (`propose_change`) for one-click approval. Guided evidence/agent investigation and repair adapters for other processors and imported object projects remain planned; source-free audit/repair evidence and limitations are documented in docs/CODE_COVERAGE_REVIEW.md. Safe-fix discovery now shares layout/image reads, avoids discarded full previews and coalesces saved-folder checks within each decision while retaining the complete safety fingerprint and commit guards.
 
 Implemented: overlay-scoped data-region review with reversible new-claim pauses, explicit investigation
 outcomes, independent-model verification requests, function-scoped prepared compiler evidence with a bounded
@@ -878,6 +878,8 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Automatic start/end fixes the bytes prove (`entry_fixes`, import and Check again, undoable) | ✓ | ✓ shared MIPS path, not yet run on a game | ✓ shared MIPS path, not yet run on a game | — | — | ✓ shared MIPS path, not yet run on a game | — | — | — | — | — | — |
 | Guided boundary repair and advisory agent investigation (local mapped ROM) | ✓ | ✓ | ✓ (scalar decoder) | — | — | ✓ | — | — | — | — | — | — |
 | Function-end reports (`report_boundary`) | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ (2-byte boundaries) | — | ✓ (agents agree, the rebuild checks) | ✓ | — | — |
+| Agents propose setting a function aside (assembly or SDK code); you approve or dismiss it, undoable (`propose_change`) | ✓ | ✓ shared code, not yet run on a game | ✓ shared code, not yet run on a game | ✓ shared code, not yet run on a game | — | ✓ shared code, not yet run on a game | ✓ shared code, not yet run on a game | ✓ shared code, not yet run on a game | ✓ shared code, not yet run on a game | ✓ shared code, not yet run on a game | ✓ shared code, not yet run on a game | ✓ shared code, not yet run on a game |
+| Agents propose boundary changes, including stray words between two functions (`split_gap`); you approve, undoable | ✓ | ✓ shared MIPS path, not yet run on a game | ✓ shared MIPS path, not yet run on a game | — | — | ✓ shared MIPS path, not yet run on a game | — | — boundary repairs are mapped MIPS ROM only | — boundary repairs are mapped MIPS ROM only | — | — boundary repairs are mapped MIPS ROM only | — the project's build decides extents |
 | Your own compiler (Setup: another build of one it has) | ✓ | ✓ | ✓ | ✓ your SDK | — | ✓ | ✓ | — | ✓ your Visual C++, for 32-bit games (64-bit ones build with the pack's 2017) | ✓ your XDK | — | the project's own build |
 | Compiler ranges and suggestions | ✓ | ✓ | ✓ | ✓ (ps3dev GCC, your SDK's) | — | ✓ | — | from scratch: per source file (`try_compiler`, Settings); else the project's build | per source file (`try_compiler`, Settings) | per source file (`try_compiler`, Settings): Visual C++ 7.0 / 7.1, your XDK's own | from scratch: per source file (`try_compiler`, Settings); else the project's build | the project's build |
 | Verified cleanup of rare compiler profiles | ✓ ROM mode | ✓ ROM mode | ✓ ROM mode | — | — | ✓ ROM mode | — | — | — | — | — | — |
@@ -1230,6 +1232,21 @@ compilers have their years so far; every other console's compiler counts as unre
 `released=`. Fill them in per console, and set the year automatically where a public decomp or ROM header says it.
 
 ## Recently done
+
+- **Agents propose changes; you approve them with one click.** In an N64 session, matching agents found driver code
+  that should be set aside and an entry that had swallowed two functions (a return, two stray words that are no
+  instruction, then a second prologue), and nothing they could call would act on it: one agent's `not_c` waits for
+  agents of other models, `split_function` refused the stray words, and `suggest_boundary` needs an investigation the
+  user starts. Now `propose_change` records the change with the agent's evidence and changes nothing; "Waiting for you"
+  counts the proposals, and its drawer lists them (sortable, with every agent's evidence) with Approve, Dismiss and
+  Undo. Approve runs the app's own guarded code: `set_aside_by_you`, or a fresh boundary preview and apply that
+  rechecks the matches referring into the changed extent. A proposal whose function changed since says what changed
+  and isn't applied. One reviewed step, `split_gap`, now ends a function after its return, keeps the stray words out of
+  any function (archived as padding with their original bytes, undoable) and starts the next function, from Review
+  function boundaries, from a proposal, and as the answer `split_function` gives where it refused. Set-aside proposals
+  work in every mode; boundary proposals reach mapped MIPS ROM projects only, like the rest of boundary repair.
+  Planned: run both on a PS1, PS2 and PSP game, and boundary proposals for other processors and project mode once
+  boundary repair reaches them.
 
 - **The Deep Permuter detects which compiler built a near-match.** An N64 game built with KMC GCC 2.7.2 had eight
   near-matches stuck at score 10 that were SN GCC 2.8.1 code. Under SN their saved C was exact, or one edit away. The

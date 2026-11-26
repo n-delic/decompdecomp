@@ -159,24 +159,26 @@ def audit(net, slug):
             'automatic':entry_fixes_enabled(net,proj)}
 
 
-def preview(net, slug, name, action, end=None, *, investigation=False):
-    """Build a fresh guarded preview; automatic discovery uses only the shared extent checks below."""
+def preview(net, slug, name, action, end=None, *, entry=None, investigation=False):
+    """Build a fresh guarded preview; automatic discovery uses only the shared extent checks below. `entry`: for
+    split_gap, where the next function starts (`end` is where this one ends; the words between are kept out of any
+    function)."""
     proj=_supported(net,slug)
     mapped=_image(net,proj);image,segments=mapped
-    plan=_preview(net,proj,dict(net._function(name,slug)),action,end,investigation=investigation,mapped=mapped,retain=True)
+    plan=_preview(net,proj,dict(net._function(name,slug)),action,end,entry=entry,investigation=investigation,mapped=mapped,retain=True)
     plan['function']=name
     owners=[s for s in segments if s.rom_start<=plan['rom']<s.rom_end and s.vram+plan['rom']-s.rom_start==plan['start']]
     if len(owners)!=1:raise NetworkError('This entry needs one unambiguous original image mapping.')
     from .. import arch
     from .boundary_evidence import assembly
     plan['assembly']=assembly(arch.get(proj['arch']).boundary_instruction,image,owners[0],plan['start'],plan['end'],
-                              [plan['start'],plan['old_end'],plan['end'],*[p['vram'] for p in plan['pieces']]],proj['big_endian'])
+                              [plan['start'],plan['old_end'],plan['end'],*([plan['entry']] if plan.get('entry') else []),*[p['vram'] for p in plan['pieces']]],proj['big_endian'])
     plan['revision']=_revision(net,proj,[p['id'] for p in plan['pieces']])
     plan['image']=_digest(image)
     return plan
 
 
-def _preview(net, proj, fn, action, end=None, *, investigation=False, rows=None, mapped=None, retain=False):
+def _preview(net, proj, fn, action, end=None, *, entry=None, investigation=False, rows=None, mapped=None, retain=False):
     # Discovery shares immutable inputs within one pass. Every selected decision
     # still goes through a fresh public preview and the transaction-time guards.
     name=fn['name']
@@ -200,18 +202,24 @@ def _preview(net, proj, fn, action, end=None, *, investigation=False, rows=None,
         last=int.from_bytes(fn['target'][-4:],'big' if proj['big_endian'] else 'little')
         if not rabbitizer.Instruction(last).hasDelaySlot():raise NetworkError('The last instruction does not require a delay slot.')
         newend+=4
-    elif action in ('adjust','trim_start','split_end'):
+    elif action in ('adjust','trim_start','split_end','split_gap'):
         # trim_start/split_end: cut at `end`, the real entry, which becomes its own function (entry_fixes). For
         # trim_start what is left before it is archived as padding; for split_end it stays this function.
+        # split_gap: this function ends at `end`, the words up to `entry` stay outside any function (archived as
+        # padding, original bytes kept) and `entry` starts a function of its own: an entry that swallowed a return,
+        # a couple of stray words that are no instruction, then the next function's prologue. It took a split_end
+        # and then a trim_start on its tail, and split_function refused the second cut (the stray words "run on").
         if type(end) is not int:raise NetworkError('Enter an aligned end address.')
         newend=end
         if action!='adjust' and not address<newend<address+fn['size']:raise NetworkError('The entry must lie inside the function.')
+        if action=='split_gap' and (type(entry) is not int or entry%4 or not newend<entry<address+fn['size']):
+            raise NetworkError('Enter where the next function starts: an aligned address after the new end and inside the function.')
     elif action not in ('padding','data','keep'):
         raise NetworkError('Choose a boundary repair action.')
     if newend%4 or not address<newend<=address+65536:raise NetworkError('Choose an aligned extent of at most 64 KiB.')
     finish=start+newend-address
     if start<owner.rom_start or finish>owner.rom_end or finish>len(image):raise NetworkError('The proposed extent crosses the original segment mapping.')
-    resizing=action in ('join_previous','delay_slot','adjust','trim_start','split_end')
+    resizing=action in ('join_previous','delay_slot','adjust','trim_start','split_end','split_gap')
     if resizing:
         # An entirely absorbed piece stays archived under its own ID, with all history.
         for row in rows:
@@ -225,7 +233,8 @@ def _preview(net, proj, fn, action, end=None, *, investigation=False, rows=None,
             if all(p['id']!=row['id'] for p in pieces):pieces.append(row)
         if newend<address+fn['size']:
             # Shrink only into a separately retained tail, never throw away original bytes.
-            if net.project_store(proj['id']).one('SELECT 1 FROM functions WHERE project_id=? AND vram=? AND gone_mark IS NULL',proj['id'],newend):
+            if any(net.project_store(proj['id']).one('SELECT 1 FROM functions WHERE project_id=? AND vram=? AND gone_mark IS NULL',proj['id'],at)
+                   for at in (newend,*([entry] if action=='split_gap' else []))):
                 raise NetworkError('A function already starts at the proposed tail. Review a join instead.')
     if any(p['status']=='matched' for p in pieces):raise NetworkError('The repair would change an existing matched function.')
     if any(image[p['rom_offset']:p['rom_offset']+p['size']]!=p['target'] for p in pieces):
@@ -242,10 +251,38 @@ def _preview(net, proj, fn, action, end=None, *, investigation=False, rows=None,
             retained.append(dict(current))
         pieces=retained
     raw=image[start:finish]
-    return {'function':name,'owner':fn['name'],'action':action,'end':newend,'start':address,
+    return {'function':name,'owner':fn['name'],'action':action,'end':newend,'start':address,'entry':entry if action=='split_gap' else None,
             'old_size':fn['size'],'old_end':fn['vram']+fn['size'],'new_size':len(raw),'affected':[{'id':p['id'],'name':p['name'],'size':p['size'],'start':p['vram'],'end':p['vram']+p['size']} for p in pieces],
             'warning':'Safety checks reverify existing matches and guard mappings, overlaps and changed inputs. They do not prove the proposed boundary. Sources, attempts and notes are retained. Resized functions need a fresh match.',
             'pieces':pieces,'raw':raw,'unit':fn['unit'],'rom':start}
+
+
+STRAY_WORDS = 8  # at most this many words between a return and the next entry count as stray
+
+
+def stray_cut(proj, fn, addr):
+    """What a cut at `addr` should be instead when the words just before it are stray: ('split_gap', end) when `fn`
+    returns first (the jump and its delay slot end at `end`) and at most STRAY_WORDS words, not all nops, follow
+    before `addr`; ('trim_start', None) when every word of `fn` before `addr` is such a word and one is no
+    instruction at all (the tail an earlier cut at the return left, starting on the stray words). None otherwise.
+    A cut cannot say either: the words would stay in one of the two functions and "run on" into the next. Mapped
+    MIPS only, as every boundary repair here."""
+    if proj['arch'] != 'mips':
+        return None
+    from .. import arch
+    facts = arch.get(proj['arch']).boundary_instruction
+    order = 'big' if proj['big_endian'] else 'little'
+    code = (fn['target'] or b'')[:addr - fn['vram']]
+    words = [int.from_bytes(code[i:i + 4], order) for i in range(0, len(code) - 3, 4)]
+    for i in range(len(words) - 2, -1, -1):  # (a jump whose delay slot is inside the first part)
+        if facts(words[i], fn['vram'] + 4 * i)['terminal']:
+            end = fn['vram'] + 4 * (i + 2)
+            # (nops after a return are alignment the split trims off the first part already)
+            stray = 0 < (addr - end) // 4 <= STRAY_WORDS and any(code[end - fn['vram']:])
+            return ('split_gap', end) if stray else None
+    if words and len(words) <= STRAY_WORDS and not all(rabbitizer.Instruction(w).isValid() for w in words):
+        return ('trim_start', None)
+    return None
 
 
 def public(plan):
@@ -408,18 +445,18 @@ def _spans(plan):
 COMMIT_TRIES = 3
 
 
-def apply(net, slug, name, action, revision, image_hash, end=None, note='', log=print):
+def apply(net, slug, name, action, revision, image_hash, end=None, note='', log=print, entry=None):
     proj=_supported(net,slug)
     if slug in net.rooms or net._link(slug) is not None:raise NetworkError('Leave the room before editing shared function boundaries.')
     if not isinstance(note,str) or not note.strip():raise NetworkError('Record the evidence for this boundary decision.')
-    plan=preview(net,slug,name,action,end)
+    plan=preview(net,slug,name,action,end,entry=entry)
     if plan['revision']!=revision or plan['image']!=image_hash:raise NetworkError('The project or original image changed. Preview again.')
     first=public(plan)
     for attempt in range(COMMIT_TRIES):
         if attempt:
             # A worker matched or changed something while the check ran: the same decision, checked again on what
             # is there now. A different preview (the layout itself moved) is the person's to review.
-            plan=preview(net,slug,name,action,end)
+            plan=preview(net,slug,name,action,end,entry=entry)
             if {k:v for k,v in public(plan).items() if k!='revision'}!={k:v for k,v in first.items() if k!='revision'} or plan['image']!=image_hash:
                 raise NetworkError('The project or original image changed. Preview again.')
         matched=_referring(net,proj,_spans(plan))
@@ -472,27 +509,37 @@ def _commit(net, proj, plan, name, action, revision, image_hash, note, automatic
                 meta['gone']=True;meta['boundary_classification']='padding'
                 db.execute('UPDATE functions SET meta=? WHERE id=?',(json.dumps(meta),head['id']))
             if len(plan['raw'])<head['size']:
-                entry=action in ('trim_start','split_end')
-                tailname=('func_' if entry else 'boundary_tail_')+format(plan['end'],'08X')
-                taken=lambda candidate:(db.execute('SELECT 1 FROM functions WHERE project_id=? AND name=?',(proj['id'],candidate)).fetchone()
-                                        or entry and db.execute('SELECT 1 FROM symbols WHERE project_id=? AND name=?',(proj['id'],candidate)).fetchone())
-                if taken(tailname):tailname+='_'+format(time.time_ns(),'x')
+                entry=action in ('trim_start','split_end','split_gap')
                 offset=len(plan['raw'])
-                tailmeta=json.dumps({'boundary_split_from':head['name'],'boundary_decision':meta['boundary_decision']} if entry else
-                                    {'boundary_tail_review':'Retained tail from a reviewed boundary adjustment; confirm its entry point before agent work.'})
-                tailraw=head['target'][offset:]
-                tailtarget,tailasm,tailcount=_rebuilt(net,proj,tailname,plan['end'],head['rom_offset']+offset,head['unit'],tailraw,carried)
-                fid=db.execute("INSERT INTO functions(project_id,name,vram,rom_offset,size,n_insns,target,relocs,asm,unit,meta) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                    (proj['id'],tailname,plan['end'],head['rom_offset']+offset,len(tailraw),tailcount,tailtarget.code,json.dumps(tailtarget.to_json()),tailasm,head['unit'],tailmeta)).lastrowid
-                created.append(fid)
-                if entry:
-                    # A real entry is a function symbol, so references to it read by name like any other.
-                    db.execute('INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)',(proj['id'],tailname,plan['end'],len(tailraw),'func'))
-                    created_symbols.append(tailname)
+                # (kind, address, offset into the old extent, size): the retained tail, or for split_gap the stray
+                # words, archived as padding outside any function, and then the next function's entry.
+                if action=='split_gap':
+                    gap=plan['entry']-plan['end']
+                    cuts=[('padding',plan['end'],offset,gap),('entry',plan['entry'],offset+gap,head['size']-offset-gap)]
+                else:
+                    cuts=[('entry' if entry else 'tail',plan['end'],offset,head['size']-offset)]
+                for kind,at,piece_offset,piece_size in cuts:
+                    tailname={'entry':'func_','padding':'pad_','tail':'boundary_tail_'}[kind]+format(at,'08X')
+                    taken=lambda candidate:(db.execute('SELECT 1 FROM functions WHERE project_id=? AND name=?',(proj['id'],candidate)).fetchone()
+                                            or db.execute('SELECT 1 FROM symbols WHERE project_id=? AND name=?',(proj['id'],candidate)).fetchone())
+                    if taken(tailname):tailname+='_'+format(time.time_ns(),'x')
+                    tailmeta=json.dumps({'boundary_split_from':head['name'],'boundary_decision':meta['boundary_decision']} if kind=='entry' else
+                                        {'boundary_split_from':head['name'],'boundary_decision':meta['boundary_decision'],'gone':True,
+                                         'boundary_classification':'padding'} if kind=='padding' else
+                                        {'boundary_tail_review':'Retained tail from a reviewed boundary adjustment; confirm its entry point before agent work.'})
+                    tailraw=head['target'][piece_offset:piece_offset+piece_size]
+                    tailtarget,tailasm,tailcount=_rebuilt(net,proj,tailname,at,head['rom_offset']+piece_offset,head['unit'],tailraw,carried)
+                    fid=db.execute("INSERT INTO functions(project_id,name,vram,rom_offset,size,n_insns,target,relocs,asm,unit,meta) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                        (proj['id'],tailname,at,head['rom_offset']+piece_offset,len(tailraw),tailcount,tailtarget.code,json.dumps(tailtarget.to_json()),tailasm,head['unit'],tailmeta)).lastrowid
+                    created.append(fid)
+                    if kind=='entry':
+                        # A real entry is a function symbol, so references to it read by name like any other.
+                        db.execute('INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)',(proj['id'],tailname,at,len(tailraw),'func'))
+                        created_symbols.append(tailname)
         after={str(p['id']):_pack(dict(db.execute('SELECT * FROM functions WHERE id=?',(p['id'],)).fetchone())) for p in rows}
         for fid in created:after[str(fid)]=_pack(dict(db.execute('SELECT * FROM functions WHERE id=?',(fid,)).fetchone()))
         history={'evidence':note[:4000],'function':name,'action':action,'time':time.time(),'before':old,'after':after,'created':created,'symbols':symbols,
-                 'created_symbols':created_symbols,'automatic':bool(automatic),'start':head['vram'],'entry':plan['end'] if action in ('trim_start','split_end') else None,
+                 'created_symbols':created_symbols,'automatic':bool(automatic),'start':head['vram'],'entry':plan['entry'] if action=='split_gap' else plan['end'] if action in ('trim_start','split_end') else None,
                  'image':image_hash,'symbol_after':[dict(r) for r in net.project_store(proj['id']).all('SELECT name,size FROM symbols WHERE project_id=? AND name=?',proj['id'],head['name'])],
                  'config':json.dumps(_config_inputs(proj['config']),sort_keys=True),'contexts':_digest([list(r) for r in net.project_store(proj['id']).all('SELECT unit,version,header FROM context_versions WHERE project_id=? ORDER BY version',proj['id'])]),
                  'attempt_id':db.execute('SELECT COALESCE(MAX(id),0) FROM attempts').fetchone()[0]}
