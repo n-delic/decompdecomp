@@ -106,3 +106,10 @@ def test_a_library_reloaded_in_place_is_offloaded_again(installed):
     from decomprepair import field_struct_view_repairs as view
     importlib.reload(view)
     assert view.variants.__offloaded__ and 'decomprepair.field_struct_view_repairs.variants' in offload.ORIGINALS
+
+
+def test_a_compiled_repair_function_is_offloaded_like_a_python_one():
+    """A Cython function is not `inspect.isfunction`: compiled families once ran in the server."""
+    compiled = type('cython_function_or_method', (), {})()
+    compiled.__module__ = 'decomprepair.some_repairs'
+    assert offload.selected('decomprepair.some_repairs', 'variants', compiled)
