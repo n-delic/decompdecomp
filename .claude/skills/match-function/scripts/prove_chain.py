@@ -327,6 +327,7 @@ def main(argv=None):
     ap.add_argument("--flags", metavar="'-G0 -mips3 ... -mfp32'",
                     help="judge and propose under these compiler flags instead of the function's own (the toolchain "
                          "stays): the way to ask whether the families reach a match under another profile")
+    ap.add_argument("--toolchain", help="judge and propose with this compiler instead of the function's own")
     ap.add_argument("--fp-flip", action="store_true",
                     help="the function's own flags with the other floating-point model: -mfp64 <-> -mfp32 "
                          "(fp_fingerprints.flipped, the profile the Deep Permuter's climb tries)")
@@ -341,9 +342,13 @@ def main(argv=None):
             sys.exit("the app has no saved C for that function: give SOURCE.c")
     judge = fast_judge.Judge(a.slug, a.function, home=a.home)
     try:
-        if a.flags or a.fp_flip:
-            from decompnet.app import fp_fingerprints
-            judge.compiler["flags"] = a.flags.split() if a.flags else fp_fingerprints.flipped(judge.compiler["flags"])
+        if a.toolchain:
+            judge.compiler["toolchain"] = a.toolchain
+        if a.flags or a.fp_flip or a.toolchain:
+            if a.flags or a.fp_flip:
+                from decompnet.app import fp_fingerprints
+                judge.compiler["flags"] = (a.flags.split() if a.flags
+                                           else fp_fingerprints.flipped(judge.compiler["flags"]))
             print(f"profile: {judge.compiler['toolchain']} {' '.join(judge.compiler['flags'])}")
         generate = generator(judge, a.function)
         if a.list:

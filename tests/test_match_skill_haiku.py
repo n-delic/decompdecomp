@@ -125,6 +125,7 @@ def session(tmp_path, monkeypatch):
     monkeypatch.setattr(haiku, "Worker", Worker)
     monkeypatch.setattr(haiku, "VERIFY_SECONDS", 0)
     monkeypatch.setattr(haiku.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(haiku, "library_chain", lambda root, info, name, profile, path: None)
 
     def write(text):
         path = root / "work.c"
@@ -218,6 +219,55 @@ def test_done_keeps_the_near_miss_as_a_trial_writes_the_note_and_releases_with_t
     assert "best 7 under gcc-2.7.2-kmc -O1" in release["notes"] and "register swap" in release["notes"]
     assert "trial abc123" in release["notes"]
     assert session.stopped == ["small"] and "not matched" in capsys.readouterr().out
+
+
+def chain(monkeypatch, result):
+    asked = []
+
+    def run(root, info, name, profile, path):
+        asked.append((name, profile["flags"], path.read_text()))
+        return result
+    monkeypatch.setattr(haiku, "library_chain", run)
+    return asked
+
+
+def test_done_saves_the_match_the_repair_library_finds_from_a_near_miss(session, monkeypatch, capsys):
+    asked = chain(monkeypatch, "// own=90 other=0")
+
+    def apply(self, tool, arguments, wait=None, real=Gateway.call):
+        if tool == "suggest":
+            App.status = "matched"
+        return real(self, tool, arguments)
+    monkeypatch.setattr(Gateway, "call", apply)
+    haiku.main(["try", "small", session.write("// own=90 other=7")])
+    assert haiku.main(["done", "small"]) == 0
+    assert asked == [("f1", ["-O1"], "// own=90 other=7")]
+    assert dict(Gateway.calls)["suggest"]["source"] == "// own=90 other=0"
+    assert "compiler_experiments" not in tools() and "release_function" not in tools()
+    assert "RESULT f1: MATCHED" in capsys.readouterr().out
+
+
+def test_done_keeps_the_closer_source_the_repair_library_reaches(session, monkeypatch):
+    chain(monkeypatch, "// own=90 other=3")
+    haiku.main(["try", "small", session.write("// own=90 other=7")])
+    haiku.main(["done", "small"])
+    assert dict(Gateway.calls)["compiler_experiments"]["trials"][0]["new"] == "// own=90 other=3"
+    assert "best 3 under" in dict(Gateway.calls)["release_function"]["notes"]
+
+
+def test_scaffolding_the_library_adds_is_not_taken(session, monkeypatch):
+    chain(monkeypatch, "// own=90 other=0\nvoid f(void) { do { } while (0); }")
+    haiku.main(["try", "small", session.write("// own=90 other=7")])
+    haiku.main(["done", "small"])
+    assert "suggest" not in tools()
+    assert "best 7 under" in dict(Gateway.calls)["release_function"]["notes"]
+
+
+def test_a_far_near_miss_is_not_chained(session, monkeypatch):
+    asked = chain(monkeypatch, "// own=900 other=0")
+    haiku.main(["try", "small", session.write(f"// own=900 other={haiku.CHAIN_NEAR + 1}")])
+    haiku.main(["done", "small"])
+    assert asked == []
 
 
 def test_done_with_nothing_tried_only_ends_the_session(session):

@@ -16,7 +16,8 @@ Scripts: if you were not given a path, extract them first (never pull or edit th
 3. `python3 $H try HOLDER /tmp/dd-HOLDER/work.c`. Read the scores and rows, change one thing, try again.
 4. Repeat about 15 times. Do not stop after 2 or 3. Stop early only on MATCHED.
 5. `python3 $H done HOLDER` (add `--note "what you tried, what is left"`). ALWAYS run it, matched or not. It submits
-   your best C, keeps your best under another profile for the next worker, writes the note, releases the claim and
+   your best C, runs the repair library on a close one under another profile (a few minutes; it may match it),
+   keeps your best under another profile for the next worker, writes the note, releases the claim and
    removes the session. Never delete the folder yourself.
 
 Everything else (profiles, submitting, saving a match under another profile, claim token, release) is automatic.
