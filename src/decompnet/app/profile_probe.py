@@ -140,6 +140,29 @@ def float_profile_hint(arch, own, code, big_endian=True) -> str:
             "an exact result there is applied for this function only.")
 
 
+def neighbour_profile_hint(net, proj, cfg, fn, own) -> str:
+    """One line for an open function's brief when most of its matched neighbours were built with another profile, or ''.
+
+    The probe judges that profile on the saved C and the draft, and says nothing when neither gets closer. But C tuned
+    for the function's own settings is the wrong shape under the others: in a game built `-O2` by default, three
+    functions sat at 130 and 445 with do-while fences and a padding array until plain C was written under the `-O1` of
+    their neighbours, which was exact. So the agent is told before it writes, whatever the scores say."""
+    from . import profile_detection
+    mine = key(own)
+    if own.get('cmd') or not own.get('toolchain'):
+        return ''
+    votes, read = profile_detection.neighbours(net, proj, cfg, fn)
+    for other, count in votes.most_common(1):
+        if other != mine and count >= NEIGHBOUR_MIN and count >= read * NEIGHBOUR_SHARE:
+            flags = ' '.join(other[1])
+            return (f"Compiler check (do this before rewriting source): {count} of its {read} nearest matched neighbours "
+                    f"were built with {other[0]} {flags}, not this function's flags. C tuned for the current flags "
+                    "(do-while fences, padding arrays, goto tails) usually does not carry over: write plain C and judge "
+                    "it with compiler_experiments under those flags; an exact result there is applied for this function "
+                    "only.")
+    return ''
+
+
 def neighbour(facts) -> list[dict]:
     """The profile most of the nearest matched functions were built with, when it is not this function's own: the
     address stretch a library or a module sits in (the matched audio code around an open function)."""

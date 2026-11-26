@@ -495,10 +495,12 @@ class BriefMixin:
             review += '\n\n' + start_note
         if header_report:review += '\n\n'+header_report
         if fn['status'] == 'open' and self.is_rom(proj):
-            from ..profile_probe import float_profile_hint
-            if float_hint := float_profile_hint(proj['arch'], compiler_for(self.cfg(proj), fn['vram'], fn),
-                                                fn['target'] or b'', bool(proj['big_endian'])):
+            from ..profile_probe import float_profile_hint, neighbour_profile_hint
+            own = compiler_for(self.cfg(proj), fn['vram'], fn)
+            if float_hint := float_profile_hint(proj['arch'], own, fn['target'] or b'', bool(proj['big_endian'])):
                 review += '\n\n' + float_hint
+            if neighbour_hint := neighbour_profile_hint(self, proj, self.cfg(proj), fn, own):
+                review += '\n\n' + neighbour_hint
         from ..wrapper_contracts import brief as wrapper_hint
         advice=wrapper_hint(self,proj,fn,fn['matched_source'] or fn['best_source'] or fn['seed'] or '')
         if advice:review+='\n\n'+advice
