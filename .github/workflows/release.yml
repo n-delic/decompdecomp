@@ -47,7 +47,7 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" dist/*.deb dist/*.rpm dist/*.AppImage dist/decomp-mcp-gateway-* --clobber
           else
-            gh release create "$TAG" dist/*.deb dist/*.rpm dist/*.AppImage dist/decomp-mcp-gateway-* --generate-notes --latest
+            gh release create "$TAG" dist/*.deb dist/*.rpm dist/*.AppImage dist/decomp-mcp-gateway-* --notes "Changes: https://github.com/${{ github.repository }}/commits/${{ env.TAG }}" --latest
           fi
 
   windows:
@@ -90,7 +90,7 @@ jobs:
           if ($LASTEXITCODE -eq 0) {
             gh release upload $env:TAG $portable @gateway --clobber
           } else {
-            gh release create $env:TAG $portable @gateway --generate-notes --latest
+            gh release create $env:TAG $portable @gateway --notes "Changes: https://github.com/${{ github.repository }}/commits/${{ env.TAG }}" --latest
           }
 
   macos:
@@ -122,5 +122,5 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" dist/*macos*.zip dist/decomp-mcp-gateway-* --clobber
           else
-            gh release create "$TAG" dist/*macos*.zip dist/decomp-mcp-gateway-* --generate-notes --latest
+            gh release create "$TAG" dist/*macos*.zip dist/decomp-mcp-gateway-* --notes "Changes: https://github.com/${{ github.repository }}/commits/${{ env.TAG }}" --latest
           fi
