@@ -1,7 +1,8 @@
 """Native recursive project locks with bounded, redacted diagnostics for long waits.
 
 The monitor observes waits; it never acquires the project lock, changes its deadline,
-or retains frames, project names, request arguments or source content.
+or retains frames, request arguments or source content. The only project detail in a
+warning is the lock's slug, so a queue can be traced to its project.
 """
 import itertools
 import logging
@@ -11,6 +12,7 @@ import time
 import weakref
 from dataclasses import dataclass, replace
 
+from ..db_diagnostics import label
 from .view_snapshots import _owner_stack
 
 WAIT_SECONDS = 5
@@ -94,7 +96,7 @@ class _Monitor:
             sample = lock.sample(waiter, now) if lock is not None else None
         if sample is not None:
             logging.getLogger('decompdecomp').warning(
-                'Project lock wait pid=%d lock=%d wait=%.3fs waiter=%d waiter_native=%d '
+                'Project lock wait pid=%d lock=%d project=%s wait=%.3fs waiter=%d waiter_native=%d '
                 'owner=%d owner_native=%d held=%.3fs depth=%d phase=%s owner_stack=%s waiter_stack=%s', *sample)
 
     def run(self):
@@ -113,7 +115,8 @@ _monitor = _Monitor()
 
 
 class ProjectLock:
-    def __init__(self):
+    def __init__(self, project=None):
+        self.project = label(project) if project else '-'
         self._lock = threading.RLock()
         self._metadata = threading.Lock()
         self._owner = None
@@ -196,6 +199,6 @@ class ProjectLock:
             self._logged_at = now
             # Capture while release/ownership transfer is fenced by metadata: the
             # frame names must describe this owner, not its work after unlocking.
-            return (os.getpid(), self.number, max(0, now-waiter.since), waiter.thread, waiter.native_thread,
+            return (os.getpid(), self.number, self.project, max(0, now-waiter.since), waiter.thread, waiter.native_thread,
                     owner.thread, owner.native_thread, max(0, now-owner.since), owner.depth, owner.phase,
                     _owner_stack(owner.thread), _owner_stack(waiter.thread))

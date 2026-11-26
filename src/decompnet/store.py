@@ -524,6 +524,8 @@ class _ThreadReader:
 
 
 class Store:
+    project_slug = None  # set on a project's own database, for diagnostics (db_diagnostics)
+
     def __init__(self, path: str | Path, *, repair_archive=None, project_namespace=None, stable_ids=False, require_existing=False):
         self.path = str(path)
         self.require_existing = require_existing
@@ -1046,7 +1048,8 @@ class Store:
                     if queued:
                         last = self._last_writer
                         db_diagnostics.write_waited(began-queued[0], where,
-                                                    last[0] if last and last[1] >= queued[0] else None)
+                                                    last[0] if last and last[1] >= queued[0] else None,
+                                                    self.project_slug)
                     self._local.in_tx = True
                     self._local.after_commit = []
                     _transactions.depth = getattr(_transactions, 'depth', 0) + 1

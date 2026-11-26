@@ -3,15 +3,43 @@
 The header stays untouched. Ambiguous/conditional declarations, old-style parameters and C++ need
 human review; the ordinary compiler and exact judge decide whether this candidate may be kept.
 """
+import hashlib
 import re
+import threading
+from collections import OrderedDict
 
 from decomprepair.integer_repair_support import IDENT, INTEGER, edit, split_args
 from decomprepair.repair_preflight import _PROTO
 
 from ..forks.csource import _blank, find
 
+# A Deep Permuter status poll asks about every finished function, nearly all of them under the same few headers;
+# parsing one again each time was about a seventh of a busy app's CPU. Both limits bound the memory: an entry holds the
+# blanked header (as long as the header) and its prototype matches.
+CACHE_ENTRIES = 64
+CACHE_CHARACTERS = 16 * 1024 * 1024
+_cache = OrderedDict()  # SHA-256 of a header -> what _prepare made of it
+_cache_lock = threading.Lock()
+
 
 def prepare(header):
+    """The header blanked, its prototypes by name and whether it is conditional. Shared: callers only read it."""
+    key = hashlib.sha256(header.encode('utf-8', 'surrogatepass')).digest()
+    with _cache_lock:
+        if key in _cache:
+            _cache.move_to_end(key)
+            return _cache[key]
+    value = _prepare(header)
+    if len(value[0]) <= CACHE_CHARACTERS:
+        with _cache_lock:
+            _cache[key] = value
+            _cache.move_to_end(key)
+            while len(_cache) > CACHE_ENTRIES or sum(len(v[0]) for v in _cache.values()) > CACHE_CHARACTERS:
+                _cache.popitem(last=False)
+    return value
+
+
+def _prepare(header):
     shared = _blank(header)
     prototypes = {}
     conditional = bool(re.search(r'^\s*#\s*(?:if|ifdef|ifndef|include)\b|::', shared, re.M))
