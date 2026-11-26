@@ -83,7 +83,7 @@ def test_the_drafts_offer_the_row_loop_as_one_child():
 def test_they_run_in_the_bounded_local_lane(monkeypatch, name):
     from tests.test_permute import AGENT
 
-    net = setup(monkeypatch)
+    net = setup(monkeypatch, declared=(name,))
     monkeypatch.setattr(generation_calls, 'IN_SERVER', True)
     proj = net.project_row('game')
     fn = {**net.function(), 'asm': ''}

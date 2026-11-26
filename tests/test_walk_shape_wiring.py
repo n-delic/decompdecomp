@@ -98,7 +98,12 @@ def test_drafts_and_the_beam_propose_the_chain():
     chain = [v for v in out if labels.get(v) == walk_shape_repairs.FAMILY_CHAIN]
     assert chain
     assert 'log_table[log_count].base' in chain[0] and '(a0 = node->addr)' in chain[0] and 'node = t;' in chain[0]
-    assert {walk_shape_repairs.FAMILY_MOVE, walk_shape_repairs.FAMILY_POINTER} <= set(labels.values())
+    assert walk_shape_repairs.FAMILY_MOVE in set(labels.values())
+    # Every walk-shape child is proposed. Its label may be another family's that writes the same text first (the
+    # library's element_pointer_direct_index writes the pointer one), so the texts are checked, not only labels.
+    own = walk_shape_repairs.variants(SOURCE, NAME)
+    assert walk_shape_repairs.FAMILY_POINTER in {family for family, _ in own}
+    assert {child for _, child in own} <= set(out)
 
 
 def test_the_families_reach_the_deep_passes_local_lane():

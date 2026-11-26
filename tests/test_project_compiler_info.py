@@ -98,7 +98,10 @@ endif
 def test_imported_n64_settings_include_header_and_target_signature_evidence(tmp_path, monkeypatch):
     from decompnet.app.twins import Print
     root = tmp_path/'checkout'; root.mkdir(); fixture(root)
-    (root/'decompressed.pal.z64').write_bytes(bytes.fromhex('80371240') + bytes(8) + bytes.fromhex('00001446'))
+    # The splat target is the user's own ROM here: a decompressed image is not one (the header is read from the original).
+    (root/'decompressed.pal.yaml').write_text(
+        'options:\n  platform: n64\n  compiler: IDO\n  target_path: baserom.pal.z64\nsegments: []\n')
+    (root/'baserom.pal.z64').write_bytes(bytes.fromhex('80371240') + bytes(8) + bytes.fromhex('00001446'))
     net = RomNetwork(tmp_path/'app.db', tmp_path/'workspace')
     net.forks._register('demo', 'Demo', '', root,
                         {'kind': 'fork', 'platform': 'n64', 'ready': False}, 'test')
@@ -110,7 +113,7 @@ def test_imported_n64_settings_include_header_and_target_signature_evidence(tmp_
     assert info['signature_candidates'][0]['fingerprints'] == 1
     assert info['summary'] == ('ROM header declares 2.0F; code matches the 2.0F archives in your folder '
                                '(2.0A\u20132.0E are not indexed, so code shared with them can\'t be told apart).')
-    (root/'decompressed.pal.z64').unlink()
+    (root/'baserom.pal.z64').unlink()
     assert net.forks.overview('demo')['libultra']['header_version'] is None
 
 

@@ -391,3 +391,16 @@ def test_deep_climb_tries_the_jump_threader_off_under_the_closest_kmc_level(monk
     exact = {'toolchain': 'gcc-2.7.2-kmc', 'flags': ['-O1', '-fno-thread-jumps']}
     assert profile_climb.lead(search, None, PROJ, FN, FN['best_source'], 155) == (exact, 0)
     assert tried == [['-O1'], ['-O1', '-fno-thread-jumps']]
+
+
+def test_the_jump_threader_probe_keeps_flags_spelled_as_one_string_whole(monkeypatch):
+    """A project's settings may spell its flags as one string: the probe added -fno-thread-jumps to its characters."""
+    monkeypatch.setattr('decompnet.project.compiler_for',
+                        lambda cfg, vram, fn: {'toolchain': 'gcc-2.7.2-kmc', 'flags': '-O2 -g'})
+    monkeypatch.setattr(cf, 'ranked', lambda *a, **k: [])
+    monkeypatch.setattr(cf, 'own_agreement', lambda *a: None)
+    tried = []
+    search = Search({})
+    search.net._judge_with = lambda proj, fn, tc, flags, source: tried.append(flags) or (False, None, '')
+    assert profile_climb.lead(search, None, PROJ, FN, FN['best_source'], 155) is None
+    assert tried == [['-O2', '-g', '-fno-thread-jumps']]

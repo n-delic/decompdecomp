@@ -83,7 +83,9 @@ def lead(search, agent, proj, fn, source, own_score, *, check=None):
             and not any(flag in lead_profile['flags'] for flag in ('-fno-thread-jumps', '-fthread-jumps'))
             and search.tested < search.limit):
         check()
-        profile = dict(lead_profile, flags=[*lead_profile['flags'], '-fno-thread-jumps'])
+        flags = lead_profile['flags']  # (a project's settings may spell them as one string)
+        flags = flags.split() if isinstance(flags, str) else list(flags)
+        profile = dict(lead_profile, flags=[*flags, '-fno-thread-jumps'])
         score = _judge(search, proj, fn, profile, source)
         if score == 0:
             return profile, score

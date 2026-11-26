@@ -53,7 +53,7 @@ def test_each_runs_in_the_bounded_local_lane(monkeypatch, module, family):
 
     from tests.test_permute import AGENT
 
-    net = setup(monkeypatch)
+    net = setup(monkeypatch, declared=('entry_constant_local', 'store_temp_inline'))
     monkeypatch.setattr(generation_calls, 'IN_SERVER', True)
     proj = net.project_row('game')
     fn = {**net.function(), 'asm': ''}

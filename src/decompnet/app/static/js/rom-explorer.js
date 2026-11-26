@@ -39,8 +39,9 @@ async function loadRomExplorer() {
     if(!status.supported){$('romLoaderRoles').hidden=true;$('romReload').hidden=true;$('romMap').hidden=true;$('romSummary').textContent='This project uses an object build. ROM Explorer needs an original-image mapping adapter; support is planned.';view.report=null;return;}
     $('romReload').hidden=false;$('romLoaderRoles').hidden=false;loadAssetAgents();
     if($('romLoaderRoles').open && !roles.children.length)loadRomLoaderRoles();
-    // Show the last saved map while the scan below refreshes it.
-    if(!view.report || view.report.cache_miss){
+    // Show the last saved map while the scan below refreshes it. Running work is attached first: reading a large
+    // saved map must not delay its progress and Stop (AGENTS.md), and its completion reads the map anyway.
+    if(status.job?.state!=='running' && (!view.report || view.report.cache_miss)){
       try{const saved=await api('/api/rom-explorer?cached=1&slug='+encodeURIComponent(slug));
         if(romCurrent(slug,epoch) && !saved.cache_miss){view.report=saved;renderRomExplorer(view);}}catch(_){}
     }
