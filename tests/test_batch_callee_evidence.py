@@ -105,3 +105,78 @@ def test_warm_batch_still_checks_catalog_and_rejects_replaced_store(data,monkeyp
         with pytest.raises(NetworkError,match='removed'):candidate_scope.context(net,proj,fn['unit'],batch)
         patch.setattr(net,'project_store',lambda _:object())
         with pytest.raises(NetworkError,match='another project or database'):candidate_scope.key(net,proj,fn,batch)
+
+
+def joined_scan_state(net,proj,fn):
+    """The scope as it was read before its pieces were cached: one parse of the settings and one scan of the joined
+    fields for every call, the helpers read fresh. Every cached call must give exactly this."""
+    import json
+    real_settings,real_scan=candidate_scope.settings,candidate_scope._bounded
+    try:
+        candidate_scope.settings=lambda text:json.loads(text)
+        candidate_scope._bounded=lambda cache,key,build,limit:build()
+        return candidate_scope.state(net,proj,fn,candidate_scope.batch_context(net,proj))
+    finally:
+        candidate_scope.settings,candidate_scope._bounded=real_settings,real_scan
+
+
+def test_candidates_reuse_settings_scans_and_helpers_and_give_the_same_scope(data,monkeypatch):
+    # A deep search asks for one function's scope with every candidate's source (deep_profiles.probe): the settings,
+    # the function's own scan and each helper's evidence are read once, and every scope is what a fresh read gives.
+    from decompnet import candidate_work, project
+    net,store,proj=data;fn=dict(net._function('f0','game'))
+    proj=store.held_one('SELECT * FROM projects WHERE id=?',proj['id'])
+    sources=['int f0(){ helper_a(); }','int f0(){ helper_a(); helper_b(); }','int f0(){ return D_80001234 + 0x10; }',
+             'int f0(){ helper_b(); }','int f0(){ helper_a(); /* again */ }']
+    expected=[joined_scan_state(net,proj,{**fn,'best_source':source}) for source in sources]
+    parses=[];loads=project.json.loads
+    monkeypatch.setattr(project.json,'loads',lambda text,*a,**k:parses.append(1) or loads(text,*a,**k))
+    project._settings.clear()
+    queries=[];original=store.all
+    def select_all(sql,*args):
+        if sql.startswith('SELECT name,matched_source'):queries.append(args[1])
+        return original(sql,*args)
+    monkeypatch.setattr(store,'all',select_all)
+    with candidate_work.scope():
+        actual=[candidate_scope.state(net,proj,{**fn,'best_source':source}) for source in sources]
+        keys=[candidate_scope.key(net,proj,{**fn,'best_source':source}) for source in sources]
+    assert actual==expected
+    assert keys==[candidate_scope.hashlib.sha256(repr(value).encode()).hexdigest() for value in expected]
+    assert len(parses)==1
+    # (helper_a and helper_b once each, besides the names no matched function has)
+    assert sum(name in query for query in queries for name in ('"helper_a"','"helper_b"'))==2
+
+
+def test_a_cached_scope_sees_a_helper_change_and_new_settings(data):
+    from decompnet import candidate_work
+    net,store,proj=data;fn={**dict(net._function('f0','game')),'best_source':'int f0(){ helper_a(); }'}
+    def scope():
+        row=store.held_one('SELECT * FROM projects WHERE id=?',proj['id'])
+        with candidate_work.scope():return candidate_scope.state(net,row,fn),candidate_scope.key(net,row,fn)
+    before=scope()
+    with store.tx() as db:db.execute("UPDATE functions SET matched_source='changed helper' WHERE name='helper_a'")
+    helper=scope()
+    assert helper[0][-1]!=before[0][-1] and helper[1]!=before[1]
+    with store.tx() as db:
+        db.execute('UPDATE projects SET config=? WHERE id=?',
+                   (candidate_scope.json.dumps({**net.cfg(proj),'gp':1234}),proj['id']))
+    settings=scope()
+    assert settings[0][0]['gp']==1234 and settings[1]!=helper[1]
+
+
+def test_a_scope_never_hands_out_the_shared_settings(data):
+    net,store,proj=data;fn=net._function('f0','game')
+    with store.tx() as db:
+        db.execute('UPDATE projects SET config=? WHERE id=?',
+                   (candidate_scope.json.dumps({'compiler':{'toolchain':'gcc-2.7.2-kmc','flags':['-O2']}}),proj['id']))
+    proj=store.held_one('SELECT * FROM projects WHERE id=?',proj['id'])
+    value=candidate_scope.state(net,proj,fn)
+    value[0]['compiler']['flags']='changed'
+    assert candidate_scope.state(net,proj,fn)[0]['compiler']['flags']!='changed'
+    assert net.cfg(proj)['compiler'].get('flags')!='changed'
+
+
+def test_rows_a_caller_built_with_unhashable_values_still_key_exactly():
+    assert candidate_scope._frozen(({'a':1},{'b':'x'}))==(( ('a',1),),(('b','x'),))
+    assert candidate_scope._frozen(({'a':[1]},{}))==candidate_scope._frozen(({'a':[1]},{}))
+    assert candidate_scope._frozen(({'a':[1]},{}))!=candidate_scope._frozen(({'a':[2]},{}))
