@@ -742,6 +742,13 @@ says the fix and the library families it names; try those families with `prove_c
   then one slot pointer per table, loads after both slots (`ts = &tt[m]; vs = &V[m]; tri = &(*ts)[k]; vtx = *vs;`):
   55 -> 0 and 195 -> 0 on two triangle walkers; decomp-repair `loop_table_slot_pointers`
   (docs/learnings/finding/loop-hoists-the-table-a-user-pointer-names.md).
+- **A display-list texture loader whose target ORs registers holding 0 into a SetTile word (`move $s5, $zero` ...
+  `or $v0, $s5, $fp`), or whose mip loop keeps zero copies of its counter, with a frame 8 bytes larger than ours:** the
+  SDK's gDPSetTile clamp fields as locals, `cmt = cms = 0;` set once at the top and `((cmt & 3) << 18)`,
+  `((cms & 3) << 8)` written into every `0xF5...` command's word. cse folds them only inside the block that follows the
+  set, so a join (the `x < 0x800 ? x : 0x7FF` clamp) and the loop's hoisted invariants keep the registers. Look for a
+  matched sibling loader first: its spelling (`G`, `CALC_DXT`, the ternary clamps) was the rest (7532 -> 0 with four
+  statement-order grids; decomp-repair `settile_clamp_locals`, docs/learnings/function/texture-loader-settile-clamp-locals.md).
 - **SN64 GCC 2.8.1: a loop local stepped by a constant (`y = 0x37; ... y += 0xE` in both arms) whose `li` sits first in
   the preheader where the target has it after loop.c's pointers:** write it as a giv of a zero-based row counter,
   `y = row * 14 + 0x37;` at the top of the body and `row++;` before the counter's step (bivs are reduced newest first),
