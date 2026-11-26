@@ -142,9 +142,10 @@ def twin(net, proj, fn, rows) -> dict | None:
 
 def candidates(net, slug: str, max_insns: int = 150) -> list[dict]:
     """The shortlist of open, unclaimed functions: those with the lowest saved score for their size, then the
-    smallest that have only a machine draft. Ones a model worked on lately come last (the oldest of those first), each
-    earlier give-up counts against one, and library code is left out. The caller judges them under the candidate
-    profiles and picks."""
+    smallest that have only a machine draft. Each earlier give-up counts against one, and library code is left out.
+    Ones a model worked on lately come last, those given up least first and the longest untouched among equals: once a
+    run had tried every small function, ordering them by time alone handed one that had failed eight times out as
+    often as one that had failed once. The caller judges them under the candidate profiles and picks."""
     proj = _rom(net, slug)
     rows = _functions(net, proj)
     taken = _claimed(net, proj)
@@ -152,10 +153,14 @@ def candidates(net, slug: str, max_insns: int = 150) -> list[dict]:
     usable = [fn for fn in rows if fn["status"] == "open" and fn["id"] not in taken and fn["vram"] is not None
               and fn["target"] and (not max_insns or (fn["n_insns"] or 0) <= max_insns)
               and (fn["best_source"] or fn["seed"]) and not LIBRARY.match(fn["name"])]
+    def lately(fn):
+        at = recent.get(fn["id"], 0)
+        return bool(at), (fn["abandons"] or 0) if at else 0, at
+
     scored = sorted((fn for fn in usable if fn["best_score"] is not None), key=lambda fn: (
-        recent.get(fn["id"], 0), fn["best_score"] / max(1, fn["n_insns"] or 1) * (1 + (fn["abandons"] or 0))))
+        *lately(fn), fn["best_score"] / max(1, fn["n_insns"] or 1) * (1 + (fn["abandons"] or 0))))
     drafted = sorted((fn for fn in usable if fn["best_score"] is None), key=lambda fn: (
-        recent.get(fn["id"], 0), fn["abandons"] or 0, fn["n_insns"] or 0))
+        *lately(fn), fn["abandons"] or 0, fn["n_insns"] or 0))
     out = []
     for fn in scored[:SHORTLIST] + drafted[:SHORTLIST]:
         kept = trials(net, proj, fn)[:1]

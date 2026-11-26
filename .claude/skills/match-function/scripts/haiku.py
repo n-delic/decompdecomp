@@ -3,13 +3,15 @@
 
     haiku.py next SLUG [FUNC] [--repo CHECKOUT] [--home DIR] [--holder NAME] [--max-size N]
                          start a session (setup.py: private worktree, venv, MCP connection, claim renewal), claim FUNC or
-                         the most promising open function of at most N=150 instructions (recently tried ones and
-                         library names last or never), and print one screen: assembly, saved C, a fresh machine draft,
+                         the most promising open function of at most N=150 instructions (recently tried ones last,
+                         the most given up last of all; library names never), and print one screen: assembly, saved C, a fresh machine draft,
                          an earlier worker's near-miss under another profile, every candidate profile's score, the
                          matched twin's C, neighbours' signatures
     haiku.py try HOLDER CAND.c
                          judge CAND.c under every candidate profile; submit it when it beats the saved score; when it is
-                         exact, make it the match (under another profile: `suggest`, for this function only)
+                         exact, make it the match (under another profile: `suggest`, for this function only).
+                         Scaffolding the starting C already has may stay while improving; adding more is refused, and
+                         an exact C with any is not saved as a match (it goes into the note)
     haiku.py done HOLDER [--note TEXT]     (also: giveup)
                          submit the best candidate seen, keep a better one under another profile as a compiler trial
                          (compiler_experiments: nothing is applied; the next `next` shows it), write the note, release
@@ -65,16 +67,17 @@ def _without_records(code):
         code = code[:found.start()] + " record " + code[end:]
 
 
-def faults(source):
-    """Why `source` may not be sent: scaffolding that scores without being a program anybody wrote."""
+def scaffolding(source):
+    """{item: how often} of the scaffolding in `source`: constructs that score without being a program anybody wrote."""
     code = _code(source)
-    found = []
-    if re.search(r"\bwhile\s*\(\s*0[uUlL]*\s*\)", code):
-        found.append("a `do { } while (0)` fence (or `while (0)`): delete it and write the statements plainly")
-    if "__repair_" in code:
-        found.append("a `__repair_` local or helper from a search: rewrite it as ordinary C")
-    if re.search(r"\bvolatile\b", code):
-        found.append("`volatile`: remove it")
+    found = {}
+    fences = len(re.findall(r"\bwhile\s*\(\s*0[uUlL]*\s*\)", code))
+    if fences:
+        found["fence"] = fences
+    found.update({f"repair:{name}": 1 for name in re.findall(r"\w*__repair_\w*", code)})
+    volatiles = len(re.findall(r"\bvolatile\b", code))
+    if volatiles:
+        found["volatile"] = volatiles
     body, depth = [], 0
     for char in _without_records(code):
         depth += {"{": 1, "}": -1}.get(char, 0)
@@ -87,7 +90,32 @@ def faults(source):
             continue
         name = array[1]
         if re.match(r"_*(pad|dummy|unused|filler)", name, re.I) or len(re.findall(rf"\b{name}\b", inside)) == 1:
-            found.append(f"the padding array `{name}[]` (declared but not used for anything): delete it")
+            found[f"padding:{name}"] = 1
+    return found
+
+
+def inherited(sources):
+    """The scaffolding the C a session starts from already has: the most of each item in any one of `sources`."""
+    found = {}
+    for source in sources:
+        for item, count in scaffolding(source or "").items():
+            found[item] = max(count, found.get(item, 0))
+    return found
+
+
+def faults(source, allowed=None):
+    """Why `source` may not be sent: its scaffolding beyond `allowed` ({item: how often}, from `inherited`)."""
+    allowed = allowed or {}
+    over = [item for item, count in scaffolding(source).items() if count > allowed.get(item, 0)]
+    found = []
+    if "fence" in over:
+        found.append("a `do { } while (0)` fence (or `while (0)`): delete it and write the statements plainly")
+    if any(item.startswith("repair:") for item in over):
+        found.append("a `__repair_` local or helper from a search: rewrite it as ordinary C")
+    if "volatile" in over:
+        found.append("`volatile`: remove it")
+    found.extend(f"the padding array `{item.split(':', 1)[1]}[]` (declared but not used for anything): delete it"
+                 for item in over if item.startswith("padding:"))
     return found
 
 
@@ -133,8 +161,9 @@ def shown(score):
 
 
 def rank(worker, items):
-    """The shortlist, most promising first: the lowest score any profile gives the saved C or the draft, per
-    instruction, discounted for matched neighbours to learn from."""
+    """The shortlist, most promising first: functions nobody worked on lately by the lowest score any profile gives
+    the saved C or the draft, per instruction, discounted for matched neighbours to learn from; then the others, those
+    given up least first and, among equals, the longest untouched."""
     ranked = []
     for item in items:
         found = [s["score"] for source in dict.fromkeys((item["best"], item["draft"], item.get("near"))) if source
@@ -143,7 +172,9 @@ def rank(worker, items):
         if found:
             value = min(found) / max(1, item["n_insns"] or 1) / (1 + 0.25 * min(4, item["matched_near"]))
             value *= 1 + item.get("abandons", 0)
-            ranked.append((item.get("worked", 0), value, item["n_insns"], item["name"]))
+            worked = item.get("worked", 0)
+            ranked.append((bool(worked), item.get("abandons", 0) if worked else 0, worked, value, item["n_insns"],
+                           item["name"]))
     return [name for *_, name in sorted(ranked)]
 
 
@@ -203,11 +234,16 @@ def same_profile(one, other):
 
 
 def screen(root, info, brief, worker, write=print):
-    """Print the one screen; returns (the scores per profile, the kept near-miss's score under its profile now)."""
+    """Print the one screen; returns (the scores per profile, the kept near-miss's score under its profile now, the
+    scaffolding the starting C already has)."""
     folder = root / "start"
     folder.mkdir(exist_ok=True)
-    near = next((t for t in brief.get("trials") or [] if not faults(t["source"])), None)
     twin = brief.get("twin")
+    came_with = [brief["best"], brief["draft"], (twin or {}).get("source")]
+    allowed = inherited(came_with)
+    near = next((t for t in brief.get("trials") or [] if not faults(t["source"], allowed)), None)
+    if near:
+        allowed = inherited([*came_with, near["source"]])
     sources = {"best": brief["best"], "draft": brief["draft"], **({"near": near["source"]} if near else {})}
     files = {key: folder / f"{key}.c" for key in sources}
     files["asm"] = folder / "asm.s"
@@ -249,9 +285,10 @@ def screen(root, info, brief, worker, write=print):
         if rows:
             (folder / "rows.txt").write_text(rows)
             write(f"Its differing rows (target | yours):\n{differing(rows, folder / 'rows.txt')}")
-        problems = faults(sources[key] or "")
-        if problems:
-            write("It contains scaffolding you must remove before `try`: " + "; ".join(problems))
+    if allowed:
+        write("\nThe C above came with scaffolding (" + ", ".join(sorted({i.split(":")[0] for i in allowed}))
+              + "). `try` accepts what is already there, so start from it and keep your progress; adding more is "
+              "refused. A match is only saved without any: remove it when you can.")
     if brief.get("declarations"):
         write("\n--- shared header declarations (already included; do not redeclare differently)")
         write("\n".join(brief["declarations"]))
@@ -260,7 +297,7 @@ def screen(root, info, brief, worker, write=print):
                     for n in brief.get("neighbours") or []) or "(none matched yet)")
     kept = next((pair[keys.index("near")] for profile, pair in zip(profiles, results)
                  if near and same_profile(near, profile)), None)
-    return results, kept
+    return results, kept, allowed
 
 
 def next_function(args):
@@ -286,11 +323,12 @@ def next_function(args):
     try:
         brief = worker.ask({"op": "brief", "name": info["function"]})
         first = not (root / "haiku.json").exists()
-        results, kept = screen(root, info, brief, worker)
+        results, kept, allowed = screen(root, info, brief, worker)
         if first:
             write_state(root, {"function": {k: brief[k] for k in ("name", "vram", "target")},
                                "profiles": brief["profiles"], "tries": 0, "best": {}, "submitted": [],
-                               "start": results, "app_score": brief["best_score"], "kept": kept})
+                               "start": results, "app_score": brief["best_score"], "kept": kept,
+                               "inherited": allowed})
     finally:
         worker.close()
     return 0
@@ -344,9 +382,10 @@ def try_source(holder, path):
         source = Path(path).read_text()
     except OSError as error:
         sys.exit(f"can't read {path}: {error}")
-    problems = faults(source)
+    problems = faults(source, state.get("inherited"))
     if problems:
-        sys.exit("NOT judged. Remove this scaffolding first:\n- " + "\n- ".join(problems))
+        sys.exit("NOT judged. You added scaffolding the C you started from doesn't have; remove it:\n- "
+                 + "\n- ".join(problems))
     claimlost.warn(root)
     if claimlost.taken(claimlost.read(root)):
         sys.exit(f"{name} is no longer yours (matched, or someone else holds it): run `haiku.py done {holder}`")
@@ -363,7 +402,13 @@ def try_source(holder, path):
             print("It did not compile:\n" + (replies[0].get("detail") or "")[-1500:])
             return 1
         best = min((score, index) for index, score in enumerate(found) if score is not None)[1]
+        left = faults(source)  # inherited: fine for progress, never for a match
         for index, score in enumerate(found):
+            if score == 0 and left:  # kept apart: `done` must not submit it as a match
+                copy = root / f"exact-scaffolded-profile{index}.c"
+                copy.write_text(source)
+                state["scaffolded"] = {"profile": index, "path": str(copy)}
+                continue
             kept = state["best"].get(str(index))
             if score is not None and (kept is None or score < kept["score"]):
                 copy = root / f"best-profile{index}.c"
@@ -377,6 +422,11 @@ def try_source(holder, path):
             return 0
         exact = own if found[own] == 0 else next((i for i, s in enumerate(found) if s == 0), None)
         saved = current.get("best")
+        if exact is not None and left:
+            print(f"EXACT under profile {exact} ({label(profiles[exact])}) but NOT saved: it still has scaffolding.\n- "
+                  + "\n- ".join(left) + "\nRemove it one piece at a time and `try` again. If it can't go, run: haiku.py "
+                  f"done {holder}   (the C is kept in the function's note) and report it.")
+            return 1
         if exact is not None:
             if exact == own:
                 print(submit(holder, root, state, source))
@@ -441,6 +491,15 @@ def keep_work(holder, root, info, state):
             if not str(error).startswith("not submitted"):
                 raise
             print(error)
+
+
+def scaffolded_note(state):
+    """The note's copy of an exact C that was not saved because it still has scaffolding."""
+    kept = state.get("scaffolded")
+    if not kept:
+        return ""
+    return (f"EXACT C under {label(state['profiles'][kept['profile']])}, not saved because it still has scaffolding:\n"
+            f"{Path(kept['path']).read_text()[:6000]}")
 
 
 def candidate(gateway, name):
@@ -508,6 +567,7 @@ def done(holder, note=""):
     if current.get("status") != "matched" and not lost:
         keep_work(holder, root, info, state)
         near = keep_near(holder, root, info, state)
+        near = "\n".join(part for part in (near, scaffolded_note(state)) if part)
         current = app_function(info, name)
     if current.get("status") == "matched":
         setup.stop_session(holder)
@@ -534,7 +594,8 @@ def done(holder, note=""):
     setup.stop_session(holder)
     best = min((kept["score"] for kept in state["best"].values()), default=None)
     print(f"RESULT {name}: not matched; app best {current.get('best')}, best seen under any profile {best}, "
-          f"{state['tries']} tries. Released.")
+          f"{state['tries']} tries. Released."
+          + (" An EXACT C with scaffolding is in the note (not saved as a match)." if state.get("scaffolded") else ""))
     return 0
 
 
