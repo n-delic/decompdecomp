@@ -233,6 +233,7 @@ class _Linker:
         self.data: dict[tuple[int, int], int] = {}  # every datum of its own the candidate uses -> ROM address
         self.widths: dict[tuple[int, int], int | None] = {}  # bytes the code loads from it (None: its address is used)
         self._data_relocs: dict[int, list] = {}
+        self._holds: dict[tuple[int, int, int], bool] = {}  # holds_own_word's answers
         self.words: list[int] = []
         self.fn_shndx = None
         # the $gp the assembler assumed (.reginfo's ri_gp_value): a $gp-relative reference to the object's own data
@@ -384,11 +385,33 @@ class _Linker:
             for toff, taddr in by_type.get(r["type"], ()):
                 if abs(toff - r["off"]) <= self.BASE_WINDOW:
                     base = (taddr - off) & 0xFFFFFFFF
-                    tally[base] = tally.get(base, 0) + 1
+                    if self.holds_own_word(shndx, off, base):
+                        tally[base] = tally.get(base, 0) + 1
         for shndx, tally in votes.items():
             ranked = sorted(tally.items(), key=lambda kv: -kv[1])
             if ranked and ranked[0][1] >= 2 and (len(ranked) == 1 or ranked[0][1] > ranked[1][1]):
                 self.bases[shndx] = ranked[0][0]
+
+    def holds_own_word(self, shndx: int, off: int, base: int) -> bool:
+        """Can the ROM keep the candidate's datum at `off` at `base + off`: the ROM's bytes there are the datum's
+        (its first word, or less when the section ends sooner). A word with a relocation in it (a jump table's
+        entry) and a section with no bytes (.bss) always can: their bytes are only known after linking.
+
+        A 72-instruction SN function with one `li.s` literal had it voted to a global pointer's address, because
+        that global's %lo appears three times within BASE_WINDOW and the pool's own address only once per half
+        (score 70 before the vote, 365 after, for the same source). The pointer's address is .bss: no ROM bytes,
+        so no literal can sit there."""
+        cache = self._holds
+        key = (shndx, off, base)
+        if key not in cache:
+            sec = self.elf.get_section(shndx)
+            mine = b"" if sec["sh_type"] == "SHT_NOBITS" else sec.data()[off:off + 4]
+            relocated = any(off - 4 < at < off + 4 for at, _, _ in self._relocs_in(shndx))
+            if not mine or relocated:
+                cache[key] = True
+            else:
+                cache[key] = self.read((base + off) & 0xFFFFFFFF, len(mine)) == mine
+        return cache[key]
 
     def section_place(self, shndx: int, off: int, rtype: int) -> int | None:
         """The ROM address of `off` in one of the candidate's own sections by its voted base, when the target

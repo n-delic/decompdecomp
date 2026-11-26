@@ -96,3 +96,20 @@ def test_a_literal_where_the_target_refers_to_another_datum_still_takes_the_pool
     result = match.link(obj, 'f', match.RomTarget('f', 0x80001000, bytes(size), target), SymbolTable(), read)
     assert sorted(next(iter(result.placements.values())).values()) == [POOL + offsets[0], POOL + offsets[1]]
     assert not any('differs from the ROM' in p for p in result.problems), result.problems
+
+
+@pytest.mark.skipif(toolchains.installed('sn-n64-281') is None, reason='needs the pinned SN compiler')
+def test_a_global_referenced_often_nearby_does_not_take_the_pool(tmp_path):
+    obj, size, refs = compiled(tmp_path)
+    offsets = pool_offsets(refs)
+    hi = [off for off, kind, *_ in refs if kind == match.R_MIPS_HI16]
+    lo = [off for off, kind, *_ in refs if kind == match.R_MIPS_LO16]
+    # A record in .bss (the ROM has no bytes there) whose fields the target uses eight times near the literals
+    # outvotes the pool's own address, which each half of each reference names once: no literal can be there.
+    other = 0x80300000
+    target = [(hi[0], match.R_MIPS_HI16, POOL + offsets[0]), (lo[0], match.R_MIPS_LO16, POOL + offsets[0]),
+              (hi[1], match.R_MIPS_HI16, POOL + offsets[1]), (lo[1], match.R_MIPS_LO16, POOL + offsets[1])]
+    target += [(lo[1] + 8 + 8 * k, match.R_MIPS_HI16, other + offsets[k % 2]) for k in range(2)]
+    target += [(lo[1] + 12 + 8 * k, match.R_MIPS_LO16, other + offsets[k % 2]) for k in range(6)]
+    result = match.link(obj, 'f', match.RomTarget('f', 0x80001000, bytes(size), target), SymbolTable(), read)
+    assert sorted(next(iter(result.placements.values())).values()) == [POOL + offsets[0], POOL + offsets[1]]
