@@ -443,8 +443,8 @@ def test_scoped_byte_read_trial_recognizes_a_saved_address_named_draft(monkeypat
     monkeypatch.setattr(deep_permuter.permuter_focus, 'classify', lambda *args: 'operand')
     # The pass tries only its first few children, and this family's eight for the same call come first (its own test:
     # test_argument_weight_scope_wiring).
-    from decomprepair import argument_weight_scope
     from decompnet.app import generation_calls
+    from decomprepair import argument_weight_scope
     monkeypatch.setattr(generation_calls, 'IN_SERVER', True)
     monkeypatch.setattr(argument_weight_scope, 'variants', lambda *args, **kwargs: [])
     tried = []
