@@ -211,3 +211,32 @@ def test_history_of_a_setup_the_project_settings_name_is_borrowed_without_search
         policy.record(net, old, 'register', 'useful', 20, 0, 10)   # counted before setups were noted
     new, = setups(net, monkeypatch, '-O1')
     assert policy.factors(net, new, 'register')['useful'] > 1
+
+
+def test_pooling_matches_a_plain_sum_while_the_cache_serves_and_picks_up_new_counts(monkeypatch):
+    """pooled_rows keeps per-profile totals between reads; its answer must stay what summing the other kinds gives."""
+    net = FakeNet()
+    for kind, family, n in (('control', 'a', 3), ('call', 'a', 2), ('call', 'b', 4), ('register', 'a', 5)):
+        for _ in range(n):
+            policy.record(net, 'profile', kind, family, 20, 0, 10)
+    def totals(focus):
+        return {r['family']: (r['attempted'], r['matched']) for r in policy.pooled_rows(net, 'profile', focus)}
+    assert totals('call') == {'a': (8, 8)}
+    assert totals('register') == {'a': (5, 5), 'b': (4, 4)}
+    assert totals('call') == {'a': (8, 8)}                       # (served from the kept totals)
+    policy.record(net, 'profile', 'control', 'a', 20, None, 10)  # a new count shows at once, before any flush
+    assert totals('call') == {'a': (9, 8)}
+    assert totals('control') == {'a': (7, 7), 'b': (4, 4)}
+
+
+def test_sequence_rankings_read_their_tables_once_between_counts():
+    from decompnet.app import repair_sequence_metrics as metrics
+    net = FakeNet()
+    reads = []
+    original = net.store.all
+    net.store.all = lambda sql, *args: (reads.append(sql), original(sql, *args))[1]
+    metrics.prepare(net)
+    metrics.record_outcome(net, 'p', 'f', [], 'a', True, True, False)
+    for _ in range(5):
+        assert [r['family'] for r in metrics.outcome_rows(net, 'p', 'f', [])] == ['a']
+    assert sum('repair_sequence_outcomes' in sql for sql in reads) <= 1

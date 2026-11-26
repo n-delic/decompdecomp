@@ -28,6 +28,11 @@ SCHEMA = '''CREATE TABLE IF NOT EXISTS deep_permutation_passes(
  result TEXT NOT NULL DEFAULT '{}', error TEXT NOT NULL DEFAULT '')'''
 
 
+def environment_failure(error):
+    """An import failure of the app's own packages, here or reported by a search worker process."""
+    return isinstance(error, ImportError) or (isinstance(error, RuntimeError) and 'No module named' in str(error))
+
+
 def looking(net):
     """The pass's own bookkeeping reads the database as it stands, without first syncing the saved folder.
 
@@ -396,11 +401,11 @@ class Sweeps:
         return sorted(issues, key=lambda issue: issue['function'])
 
     def recover_room_transport(self, slug):
-        """Requeue transient failures and turns cut short by the retired budget policy."""
+        """Requeue transient failures (a host outage, or the app's own packages missing during an update) and turns cut short by the retired budget policy."""
         from .deep_room import unavailable
         proj=self.net.project_row(slug)
         rows=self._store(slug).all("SELECT function_id,state,error FROM deep_permutation_passes WHERE state IN ('error','rotated') AND function_id IN (SELECT id FROM functions WHERE project_id=?)",proj['id'])
-        ids=[r['function_id'] for r in rows if r['state']=='rotated' or unavailable(r['error'])]
+        ids=[r['function_id'] for r in rows if r['state']=='rotated' or unavailable(r['error']) or 'No module named' in (r['error'] or '')]
         if ids:
             with self._store(slug).tx() as db:
                 db.executemany("UPDATE deep_permutation_passes SET state='pending',error='' WHERE function_id=?",[(fid,) for fid in ids])
@@ -926,8 +931,16 @@ class Sweeps:
                 activity.update(fn['name'], {'phase': 'interrupted'}, finished=True)
                 self.record(fn, scope, 'pending', minutes, variants)
                 raise
-            logging.getLogger('decompdecomp').exception('Deep search failed for %s; continuing with other functions', fn['name'])
             message = f'{type(error).__name__}: {error}'
+            if environment_failure(error):
+                # The app's own code or packages vanished underneath it (an update re-syncing its environment): not
+                # this function's fault, and every function after it fails the same way. Leave it pending and stop the
+                # pass, so the next one retries instead of the sweep marking the whole queue as errors.
+                logging.getLogger('decompdecomp').error('Deep search stopped for %s: %s', fn['name'], message)
+                activity.update(fn['name'], {'phase': 'interrupted', 'error': message}, line=message, finished=True)
+                self.record(fn, scope, 'pending', minutes, variants)
+                raise NetworkError(f'The app could not load part of itself ({message}); the pass stopped and its functions stay queued. Restart the app once its update finishes.') from error
+            logging.getLogger('decompdecomp').exception('Deep search failed for %s; continuing with other functions', fn['name'])
             self.record(fn, scope, 'error', minutes, variants, error=message)
             activity.update(fn['name'], {'phase': 'error', 'error': message}, line=message, finished=True)
             log(f'{fn["name"]}: {message}; continuing with other functions.')

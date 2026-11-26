@@ -10,7 +10,7 @@ import time
 
 from ..match_bundle import compiler_identity
 from ..project import compiler_for
-from . import adaptive_repairs, allocation_evidence, expression_recipes, permuter_focus
+from . import adaptive_repairs, allocation_evidence, expression_recipes, permuter_focus, trial_bookkeeping
 
 MAX_STEPS = 4
 SCHEMA = '''CREATE TABLE IF NOT EXISTS repair_sequences(
@@ -19,8 +19,13 @@ SCHEMA = '''CREATE TABLE IF NOT EXISTS repair_sequences(
 
 
 def prepare(net):
+    """The table exists (once for this engine: next_families runs before every batch of candidates, and each CREATE
+    was a transaction through the project's single writer.)"""
+    if getattr(net, '_repair_sequences_ready', False):
+        return
     with net.store.tx() as db:
         db.execute(SCHEMA)
+    net._repair_sequences_ready = True
 
 
 def learn(net, profile, focus, steps, *, max_steps=MAX_STEPS):
@@ -34,6 +39,7 @@ def learn(net, profile, focus, steps, *, max_steps=MAX_STEPS):
         db.execute('''INSERT INTO repair_sequences VALUES(?,?,?,1,?) ON CONFLICT(profile,focus,steps)
           DO UPDATE SET successes=successes+1,updated_at=excluded.updated_at''',
                    (profile,focus,json.dumps(steps),time.time()))
+    trial_bookkeeping.written()  # (next_families keeps what it read for a second)
 
 
 def observe(net, profile, focus, prefix, family, before, after, prior_output, output, *, exact=False, elapsed_ms=None):
@@ -59,7 +65,8 @@ def productive(net, profile, focus, prefix):
 
 def next_families(net, profile, focus, prefix):
     prepare(net)
-    rows = net.store.all('SELECT steps FROM repair_sequences WHERE profile=? AND focus=? ORDER BY successes DESC,updated_at DESC LIMIT 16',profile,focus)
+    rows = trial_bookkeeping.stored(net.store, ('sequences', profile, focus), lambda: net.store.all(
+        'SELECT steps FROM repair_sequences WHERE profile=? AND focus=? ORDER BY successes DESC,updated_at DESC LIMIT 16',profile,focus))
     result = []
     for row in rows:
         steps = json.loads(row['steps'])
