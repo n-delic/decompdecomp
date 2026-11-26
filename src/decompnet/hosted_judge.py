@@ -40,6 +40,10 @@ Requests:
 - {"op": "signatures", "slug", "name", "source" (optional: the saved best)} -> {"text", "findings"}: every call in
   that C checked against the callee's matched C, the shared header and the target's call sites, and the function's own
   parameters against its matched callers (call_signatures; the skill's signatures.py, printed after a claim).
+- {"op": "candidates", "slug", "max_insns" (optional)} -> {"items"}: open, unclaimed functions worth a small
+  model's try, each with its saved C, stored draft and candidate profiles (match_brief; the skill's haiku.py).
+- {"op": "brief", "slug", "name"} -> that function's assembly, saved C, a fresh draft, candidate profiles, matched
+  neighbours' signatures and header declarations (match_brief.brief).
 - {"op": "preprocess", "slug", "name", "source"} -> {"text", "cc1", "log"}: the candidate preprocessed as the app's
   compile does it (the function's profile, the project's header; compiler.preprocess_candidate), and the cc1 command
   line to run dumps on the result (the skill's preprocess.py). The bundled bare `cpp` aborts, so never run it by hand.
@@ -326,6 +330,19 @@ def signatures_for(net, proj, fn, source, call_signatures=None):
     return {"text": "\n".join(call_signatures.render(findings)), "findings": findings}
 
 
+def match_candidates(net, request: dict) -> dict:
+    """The open functions a small model's matching loop picks from (match_brief; the skill's haiku.py)."""
+    from .app import match_brief
+    return {"items": match_brief.candidates(net, str(request.get("slug") or ""),
+                                            int(request.get("max_insns") or 0))}
+
+
+def match_brief_report(net, request: dict) -> dict:
+    """One function's screen for that loop: assembly, saved C, draft, candidate profiles, neighbours."""
+    from .app import match_brief
+    return match_brief.brief(net, str(request.get("slug") or ""), str(request.get("name") or ""))
+
+
 def preprocess_report(net, request: dict) -> dict:
     """A candidate preprocessed exactly as the app's compile does it, and the cc1 command to dump its passes."""
     from . import compiler, toolchains
@@ -411,6 +428,10 @@ def serve(net, lines=sys.stdin, out=sys.stdout) -> None:
                 reply = neighbours_report(net, request)
             elif request.get("op") == "signatures" and not packs:
                 reply = signatures_report(net, request)
+            elif request.get("op") == "candidates" and not packs:
+                reply = match_candidates(net, request)
+            elif request.get("op") == "brief" and not packs:
+                reply = match_brief_report(net, request)
             elif request.get("op") == "preprocess" and not packs:
                 reply = preprocess_report(net, request)
             else:
