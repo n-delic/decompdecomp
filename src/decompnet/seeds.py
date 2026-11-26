@@ -554,18 +554,51 @@ def pointer_bits_as_float(source: str, name: str) -> str:
     # a float read as an address (`M2C_BITWISE(s32 *, temp_fa0)`) and a float load used as a base (`M2C_FIELD(*(f32 *)0x2CF8`):
     # the word the original held in a pointer, which m2c typed by the load it saw
     floats = set(re.findall(r"^[ \t]*f32[ \t]+(\w+)[ \t]*;", source, flags=re.M))
-    source = re.sub(r"M2C_BITWISE\((\w+ \*+),\s*(\w+)\)",
-                    lambda m: f"M2C_PTR_FROM_F32({m.group(1)}, {m.group(2)})" if m.group(2) in floats else m.group(0), source)
     source = re.sub(r"M2C_FIELD\(([^,\n]*)", lambda m: "M2C_FIELD(" + re.sub(r"\*\(f32 \*\)(0x[0-9A-Fa-f]+)", r"*(u32 *)\1", m.group(1)), source)
-    if "M2C_BITWISE(f32," not in source:
-        return source
     head = re.search(rf"\b{re.escape(name)}\s*\(([^)]*)\)\s*\{{", source)
+    # a float parameter or local that the code also dereferences (`M2C_FIELD(arg1, f32 *, 4)`): the register held an address
+    # and m2c typed it by another use; the field access reads it as a word, as IDO and GCC 2.x need for a base
+    floaty = floats | set(re.findall(r"\bf32\s+(\w+)\s*[,)]", head.group(1) if head else ""))
+    if floaty:
+        source = re.sub(r"M2C_FIELD\((\w+),", lambda m: f"M2C_FIELD((s32){m[1]}," if m[1] in floaty else m[0], source)
+    if "M2C_BITWISE(" not in source:
+        return source
     pointers = set(re.findall(r"\*\s*(\w+)\s*(?:,|$)", head.group(1))) if head else set()
     pointers |= set(re.findall(r"^[ \t]*[\w ]+\*+\s*(\w+)\s*[;=]", source, flags=re.M))
-    def swap(m):
-        expr = m.group(1).strip()
-        return f"M2C_BITS_F32({expr})" if expr.startswith("&") or expr in pointers else m.group(0)
-    return re.sub(r"M2C_BITWISE\(f32,\s*([^(),]+)\)", swap, source)
+
+    def arguments(text: str, start: int):
+        """The two arguments of the macro call whose '(' is at `start`, with its end: the second may hold calls."""
+        depth, comma = 0, None
+        for k in range(start, len(text)):
+            if text[k] == "(":
+                depth += 1
+            elif text[k] == ")":
+                depth -= 1
+                if depth == 0:
+                    return (text[start + 1:comma], text[comma + 1:k], k + 1) if comma is not None else None
+            elif text[k] == "," and depth == 1 and comma is None:
+                comma = k
+        return None
+
+    out, at = [], 0
+    for m in re.finditer(r"M2C_BITWISE\(", source):
+        if m.start() < at:
+            continue
+        parts = arguments(source, m.end() - 1)
+        if not parts:
+            continue
+        kind, expr, end = parts[0].strip(), parts[1].strip(), parts[2]
+        lead = re.match(r"\(*\s*(&?)\s*(\w+)", expr)
+        if kind == "f32" and lead and (lead[1] or lead[2] in pointers):
+            new = f"M2C_BITS_F32({expr})"
+        elif re.fullmatch(r"\w+ \*+", kind) and (
+                expr in floats or (lead and lead[2] in floats) or re.search(r"\bf32\b|\d\.\d*f\b", expr)):
+            new = f"M2C_PTR_FROM_F32({kind}, {expr})"
+        else:
+            continue
+        out.append(source[at:m.start()] + new)
+        at = end
+    return "".join(out) + source[at:]
 
 
 def drop_saved_register_reads(source: str) -> str:

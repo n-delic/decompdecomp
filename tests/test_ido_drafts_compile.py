@@ -130,3 +130,23 @@ def test_ido_double_to_unsigned_fence_becomes_a_double_truncation():
         ".L80032298:", "  nop", "  ctc1       $t3, $31", "  jr $ra"])
     out = seeds.float_unsigned_conversions(asm)
     assert "cfc1" not in out and "trunc.w.d $ft2, $ft1" in out and "mfc1 $s3, $ft2" in out
+
+
+def test_float_dereferenced_as_a_base_and_parenthesised_pointer_words():
+    from decompnet import seeds
+    src = ("void f(f32 arg0, void *arg1) {\n    f32 temp;\n    temp = M2C_FIELD(arg0, f32 *, 4);\n"
+           "    g(M2C_BITWISE(f32, (arg1 + 0x3C)), M2C_BITWISE(void *, (M2C_FIELD(arg1, f32 *, 8) * 2.0f)));\n}\n")
+    out = seeds.pointer_bits_as_float(src, "f")
+    assert "M2C_FIELD((s32)arg0, f32 *, 4)" in out
+    assert "M2C_BITS_F32((arg1 + 0x3C))" in out
+    assert "M2C_PTR_FROM_F32(void *, (M2C_FIELD(arg1, f32 *, 8) * 2.0f))" in out
+
+
+def test_gcc_pointer_from_float_line_unwraps_the_float_word_macros():
+    from decompnet.app import compile_error_repair as cer
+    src = "a;\n    g(M2C_BITS_F32(&x), M2C_BITWISE(void *, (y - z)));\n"
+    once = cer.undo_float_words(src, 2)
+    assert "g((&x)," in once
+    twice = cer.undo_float_words(once, 2)
+    assert "((void *)(s32)((y - z)))" in twice
+    assert cer.undo_float_words(twice, 2) is None
