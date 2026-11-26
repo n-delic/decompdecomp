@@ -83,6 +83,35 @@ def test_a_run_hands_the_frontend_its_requests_and_keeps_a_cut_short_report(tmp_
     assert cut.timed_out and cut.vis == 0 and cut.hits[0].words == (1, 2, 3, 4)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="the stand-in frontend is a shell script")
+def test_a_run_keeps_its_saves_out_of_the_users_home_unless_given_a_folder(tmp_path, monkeypatch):
+    """The core's own save folder is in the user's home and outlives a run, so one run's EEPROM changed the next."""
+    script = tmp_path / "mupenre-frontend"
+    script.write_text("#!/bin/sh\n"
+                      f'echo "$EMU_SAVES" >> "{tmp_path / 'folders'}"\n'
+                      f'ls "$EMU_SAVES" >> "{tmp_path / 'found'}"\n'
+                      'echo data > "$EMU_SAVES/game.eep"\n'
+                      'echo "stopped $EMU_VIS" >&2\n')
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setattr(emulator, "installed", lambda: tmp_path)
+    monkeypatch.setattr(emulator, "current", lambda folder, log=print: folder)
+    monkeypatch.setenv("EMU_SAVES", str(tmp_path / "ambient"))
+    rom = tmp_path / "game.z64"
+    rom.write_bytes(bytes(64))
+    for _ in range(2):
+        emulator.run(rom, 3, timeout=20)
+    first, second = (tmp_path / "folders").read_text().splitlines()
+    assert first != second and str(tmp_path / "ambient") not in (first, second)
+    assert not os.path.exists(first) and not os.path.exists(second)  # nothing is left behind
+    assert (tmp_path / "found").read_text() == ""  # and each run started without a save
+    mine = tmp_path / "mine"  # (made when it isn't there)
+    for _ in range(2):
+        assert emulator.main([str(rom), "--vis", "3", "--saves", str(mine)]) == 0
+    assert (tmp_path / "folders").read_text().splitlines()[2:] == [str(mine.resolve())] * 2
+    assert (tmp_path / "found").read_text() == "game.eep\n"  # the second found the first's save
+    assert (mine / "game.eep").is_file()
+
+
 ROM = os.environ.get("DECOMP_TEST_N64_ROM", "")
 
 

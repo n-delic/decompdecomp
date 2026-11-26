@@ -840,6 +840,12 @@ function is called with:
 python -m decompnet.consoles.n64.emulator baserom.z64 --vis 2600 --input @race.txt --watch 802A45C8 --from 2400
 ```
 
+A headless run starts without a save and keeps none (EEPROM, SRAM, FlashRAM, Controller Pak), so it is the same run every
+time; so are the console's sides of `tools/n64_frame_compare.py` and Check pictures. To run from a save, give its folder:
+`--saves FOLDER` (`emulator.run(saves=...)`). The run reads and writes the files there, so hand it a copy to run the same
+way again. The emulator's own save folder in your home is not used: before this, headless runs read and wrote it, so a
+measurement in these notes that read "the emulator's save" may have had an earlier run's.
+
 That is how a racing game's backwards start was found. Each car's matrix came from an Euler-angle helper; the
 console passed it a yaw of 0x800, and the port passed 0. The yaw was the `$v0` a void function left for its
 caller, and the port had overwritten it (`port/wasm/adapt.py`).
