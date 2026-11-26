@@ -735,9 +735,12 @@ def register(app: App) -> None:
                 raise NetworkError("This comparison currently needs a ROM-mode project.")
             if type(data.get("auto_apply", False)) is not bool:
                 raise NetworkError("Auto-apply must be true or false.")
+            if type(data.get("apply_matches", False)) is not bool:
+                raise NetworkError("Apply matches must be true or false.")
             scope = {'slug':slug, 'function':str(data.get('function') or ''),
                      'untested_only':bool(data.get('untested_only', True)), 'flags_only':bool(data.get('flags_only', False)),
-                     'used_profiles_only':bool(data.get('used_profiles_only', False)), 'auto_apply':data.get('auto_apply', False)}
+                     'used_profiles_only':bool(data.get('used_profiles_only', False)), 'auto_apply':data.get('auto_apply', False),
+                     'apply_matches':data.get('apply_matches', False)}
             with jobs._lock:
                 active = compiler_comparison(slug)
                 if active and active['state'] == 'running':return {'job':active['id'], **active}

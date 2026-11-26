@@ -3479,7 +3479,7 @@ def test_starting_compiler_comparison_returns_job_without_saved_file_sync(app, m
     monkeypatch.setattr(net, 'fork_slug', fork)
     monkeypatch.setattr(net, 'run_compiler_comparison', compare)
     monkeypatch.setattr(net.progress, 'sync', lambda *a, **kw:pytest.fail('job startup must not synchronize files'))
-    payload = {'slug':slug,'all_installed':True,'flags_only':True,'auto_apply':True,'untested_only':True}
+    payload = {'slug':slug,'all_installed':True,'flags_only':True,'auto_apply':True,'apply_matches':True,'untested_only':True}
     headers = {'X-Decomp':'1'}
     job = None
     try:
@@ -3501,7 +3501,7 @@ def test_starting_compiler_comparison_returns_job_without_saved_file_sync(app, m
         repeated = client.post('/api/compilermap', json={**payload, 'flags_only':False}, headers=headers).json()
         assert repeated['job'] == job and repeated['scope']['flags_only']
         assert calls == [(slug, {'function':'','untested_only':True,'flags_only':True,
-                                 'used_profiles_only':False,'auto_apply':True})]
+                                 'used_profiles_only':False,'auto_apply':True,'apply_matches':True})]
         if cancel:
             assert client.post('/api/job/cancel', json={'id':job}, headers=headers).json()['cancelled']
         else:release.set()
