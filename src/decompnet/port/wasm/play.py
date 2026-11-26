@@ -465,7 +465,7 @@ def play(net, slug: str, log=print, *, adapter: Path | None = None, compare: boo
         megabytes = megabytes >> 20 if megabytes > 8 else megabytes
         try:  # the emulator has the Expansion Pak when the port's console does (the port defaults to it)
             session = side_by_side.Session(rom, url, out / "side-by-side", expansion_pak=megabytes != 4,
-                                           lockstep=True, symbols=project_symbols(net, slug))
+                                           lockstep=True, symbols=project_symbols(net, slug), title=slug)
         except BaseException:
             end(proc)
             raise

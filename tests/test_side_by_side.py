@@ -13,6 +13,7 @@ import pytest
 
 from decompnet import toolchains
 from decompnet.consoles.n64.emulator import live
+from decompnet.network import NetworkError
 from decompnet.port.wasm import side_by_side as sbs
 
 
@@ -306,3 +307,42 @@ def test_the_consoles_sound_is_served_in_the_ports_format_from_the_ring(tmp_path
     assert struct.unpack("<IQI", tail[:16])[1] == end - 4 and len(tail[16:]) == 16
     assert struct.unpack("<2h", tail[16:20])[0] == 7  # frame end-4 is the ring's last word
     shared.close()
+
+
+def test_a_screenshot_is_saved_as_a_new_png_and_only_from_the_page_itself(tmp_path, monkeypatch):
+    import json
+    import urllib.error
+
+    png = b"\x89PNG\r\n\x1a\n" + b"data"
+    first = sbs.save_screenshot(png, tmp_path / "shots", "My Game!")
+    second = sbs.save_screenshot(png, tmp_path / "shots", "My Game!")
+    assert first != second and first.read_bytes() == second.read_bytes() == png
+    assert first.name.startswith("side-by-side-my-game-") and first.suffix == ".png"
+    with pytest.raises(NetworkError):
+        sbs.save_screenshot(b"not a png", tmp_path)
+
+    class Quiet:
+        def poll(self):
+            return None
+
+        def kill(self):
+            pass
+
+    monkeypatch.setattr(live, "start", lambda *a, **k: Quiet())
+    monkeypatch.setattr(sbs, "ConsoleView", StubConsole)
+    session = sbs.Session(tmp_path / "rom.z64", "http://127.0.0.1:9/", tmp_path / "work", title="g",
+                          screenshots=tmp_path / "downloads")
+    try:
+        def post(body, headers):
+            request = urllib.request.Request(session.url + "screenshot", data=body, headers=headers, method="POST")
+            with urllib.request.urlopen(request, timeout=5) as r:
+                return json.loads(r.read())
+        saved = Path(post(png, {"X-Side-By-Side": "1"})["path"])
+        assert saved.parent == tmp_path / "downloads" and saved.read_bytes() == png
+        with pytest.raises(urllib.error.HTTPError):  # another site's page can't send the header without asking
+            post(png, {})
+        with pytest.raises(urllib.error.HTTPError):
+            post(b"not a png", {"X-Side-By-Side": "1"})
+        assert len(list((tmp_path / "downloads").iterdir())) == 1
+    finally:
+        session.close()

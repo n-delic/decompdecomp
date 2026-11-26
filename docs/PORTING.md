@@ -653,7 +653,9 @@ In the app it is the Porting tab's **Play beside the console** button, next to P
 it builds and starts the port as Play does, in lockstep, starts the emulator and opens the page in the game's window. The
 differing addresses carry the project's names (`gScore+0x4`: its symbols and functions, `play.project_symbols`; on the command
 line `--symbols FILE`), and both sides get the same console memory (the emulator the Expansion Pak when the port has its 8 MB, so
-`osMemSize` is no longer a difference). Stop ends both. The page's **Sound** menu plays the port's sound or the console's
+`osMemSize` is no longer a difference). Stop ends both. **Save screenshot** writes both pictures, their frame counts, the retrace and the difference list as one PNG in
+Downloads, for showing a difference (the port not drawing some text, say).
+The page's **Sound** menu plays the port's sound or the console's
 (an audio plugin, `emulator/audio.c`, copies each buffer the game gives the audio interface into a ring in the shared file; the
 viewer serves it in the format the port's own live view uses). The console's frames are drawn one converted picture at a time
 (`Renderer.draw_picture`, planes instead of pixels): about 23 a second where it was 16, the rest being the software renderer

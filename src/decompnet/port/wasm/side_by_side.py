@@ -47,7 +47,7 @@ h2{margin:0 0 6px;font-size:14px;font-weight:600}p{text-align:center;margin:6px}
 </style></head><body><div class=row>
 <div class=side><h2>Port</h2><canvas id=p width=320 height=240></canvas><p id=ps></p></div>
 <div class=side><h2>Console (mupenRE)</h2><canvas id=e width=320 height=240></canvas><p id=es></p></div></div>
-<p>Sound: <select id=snd><option value=''>off</option><option value=/port/audio>port</option><option value=/emu/audio>console</option></select></p>
+<p>Sound: <select id=snd><option value=''>off</option><option value=/port/audio>port</option><option value=/emu/audio>console</option></select> &nbsp; <button id=shot>Save screenshot</button> <span id=shotmsg></span></p>
 <p id=hud hidden><button id=run>Pause</button> <button id=step>Step</button> <span id=vi></span></p>
 <pre id=diff hidden style="margin:6px auto;max-width:900px;text-align:left;color:#9c9;font:12px ui-monospace,monospace"></pre>
 <p>Arrows steer &middot; X: A &middot; Z: B &middot; Enter: Start &middot; Space: Z &middot; Q/W: L/R &middot; I/J/K/L: C buttons &middot; or a gamepad. Both sides get the same pad.</p>
@@ -85,6 +85,21 @@ const o=ac.createBufferSource();o.buffer=buf;o.connect(ac.destination);
 if(next<ac.currentTime+0.02||next>ac.currentTime+0.5)next=ac.currentTime+0.08;o.start(next);next+=n/hz;}}}
 catch(e){}setTimeout(sound,40);}
 sound();
+// both pictures as they are now, their frame counts, the retrace and the difference list, in one PNG the viewer saves
+function composite(){const text=id=>{const e=document.getElementById(id);return e.hidden?'':e.textContent;};
+const w=640,h=480,gap=12,lines=[text('vi'),...text('diff').split('\n')].filter((l,i)=>i||l);
+const c=document.createElement('canvas');c.width=2*w+3*gap;c.height=h+70+lines.length*18+gap;const g=c.getContext('2d');
+g.fillStyle='#111';g.fillRect(0,0,c.width,c.height);g.imageSmoothingEnabled=false;
+[['Port','p','ps',gap],['Console (mupenRE)','e','es',w+2*gap]].forEach(([name,id,note,x])=>{
+g.fillStyle='#ddd';g.font='600 16px system-ui';g.textAlign='center';g.fillText(name,x+w/2,22);
+g.drawImage(document.getElementById(id),x,32,w,h);g.fillStyle='#bbb';g.font='13px system-ui';g.fillText(text(note),x+w/2,h+52);});
+g.textAlign='left';g.fillStyle='#9c9';g.font='13px ui-monospace,monospace';lines.forEach((l,i)=>g.fillText(l,gap,h+80+i*18));return c;}
+const shot=document.getElementById('shot'),shotmsg=document.getElementById('shotmsg');
+shot.onclick=async()=>{shot.disabled=true;shot.blur();shotmsg.textContent='Saving\u2026';
+try{const png=await new Promise((ok,no)=>composite().toBlob(b=>b?ok(b):no(new Error('the picture could not be made')),'image/png'));
+const r=await fetch('/screenshot',{method:'POST',headers:{'X-Side-By-Side':'1'},body:png});const answer=await r.json();
+if(!r.ok)throw new Error(answer.error||r.status);shotmsg.textContent='Saved to '+answer.path;}
+catch(e){shotmsg.textContent='Not saved: '+e.message;}finally{shot.disabled=false;}};
 let running=true;
 async function status(){try{const r=await fetch('/state');const d=await r.json();
 if(d.lockstep){document.getElementById('hud').hidden=false;document.getElementById('diff').hidden=false;
@@ -361,13 +376,36 @@ class Lockstep:
         self.stop = True
 
 
+SCREENSHOT_MAX = 20 << 20
+
+
+def save_screenshot(data: bytes, folder: Path, title: str = "") -> Path:
+    """The page's picture of both halves, written as a new PNG in `folder`, never over one already there. It holds the
+    game's own pictures, so it goes where the user keeps downloads, not into a project or a repository."""
+    if not data.startswith(b"\x89PNG\r\n\x1a\n") or len(data) > SCREENSHOT_MAX:
+        raise NetworkError("That isn't a screenshot the viewer can save.")
+    name = re.sub(r"[^A-Za-z0-9]+", "-", title).strip("-").lower()
+    stem = "-".join(x for x in ("side-by-side", name, time.strftime("%Y%m%d-%H%M%S")) if x)
+    folder.mkdir(parents=True, exist_ok=True)
+    for n in range(1, 1000):
+        path = folder / (f"{stem}.png" if n == 1 else f"{stem}-{n}.png")
+        try:
+            with path.open("xb") as f:
+                f.write(data)
+            return path
+        except FileExistsError:
+            continue
+    raise NetworkError(f"Too many screenshots with one name in {folder}.")
+
+
 class Session:
     """The viewer: a page on 127.0.0.1 showing the port (proxied from its live view) beside the console, one pad."""
 
     def __init__(self, rom: Path, port_url: str, work: Path | None = None, *, expansion_pak: bool = False,
                  lockstep: bool = False, rate: float = 60.0, offset: int = 0, ranges: list | None = None,
-                 symbols: Symbols | None = None):
+                 symbols: Symbols | None = None, title: str = "", screenshots: Path | None = None):
         from ...consoles.n64.emulator import live
+        self.title, self.screenshots = title, Path(screenshots or Path.home() / "Downloads")
         self.port_url = port_url.rstrip("/")
         self._tmp = tempfile.TemporaryDirectory(prefix="decomp-side-by-side-") if work is None else None
         self.work = Path(work or self._tmp.name)
@@ -422,6 +460,17 @@ class Session:
                 else:
                     self._send(b"", status=404)
 
+            def _screenshot(self) -> None:
+                # (the header makes another site's page ask first, which nothing here answers: only this page can write)
+                size = int(self.headers.get("Content-Length") or 0)
+                if self.headers.get("X-Side-By-Side") != "1" or not 0 < size <= SCREENSHOT_MAX:
+                    return self._send(b'{"error": "refused"}', "application/json", 400)
+                try:
+                    path = save_screenshot(self.rfile.read(size), session.screenshots, session.title)
+                except (NetworkError, OSError) as error:
+                    return self._send(json.dumps({"error": str(error)}).encode(), "application/json", 500)
+                self._send(json.dumps({"path": str(path)}).encode(), "application/json")
+
             def do_POST(self):
                 url = urlparse(self.path)
                 q = parse_qs(url.query)
@@ -431,6 +480,8 @@ class Session:
                     if "step" in q:
                         session.lockstep.running, session.lockstep.stepping = False, True
                     return self._send(b"", "text/plain")
+                if url.path == "/screenshot":
+                    return self._screenshot()
                 if url.path != "/input":
                     return self._send(b"", status=404)
                 buttons, x, y = (int((q.get(k) or ["0"])[0]) for k in ("b", "x", "y"))
@@ -517,7 +568,7 @@ def main(argv: list[str] | None = None) -> int:
             port_proc, url = start_port(args.program.resolve(), args.rom.resolve(), Path(tmp), lockstep, args.expansion_pak)
         session = Session(args.rom.resolve(), url, Path(tmp), expansion_pak=args.expansion_pak, lockstep=lockstep,
                           rate=args.rate, offset=args.emulator_offset, ranges=ranges,
-                          symbols=Symbols.from_file(args.symbols) if args.symbols else None)
+                          symbols=Symbols.from_file(args.symbols) if args.symbols else None, title=args.rom.stem)
         print(f"side by side at {session.url}  (Ctrl-C to stop)", flush=True)
         if not args.no_open:
             webbrowser.open(session.url)
