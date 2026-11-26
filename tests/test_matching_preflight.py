@@ -561,3 +561,30 @@ def test_address_split_rows_probe_another_small_data_threshold_with_the_externs_
     assert result['best']['exact'] and result['best']['flags'][0] == '-G4' and 'I[2]' in result['best']['source']
     assert result.get('review_only') is True and not state['applied']
     assert state['suggested'] and state['suggested'][0].get('review_only') is True
+
+
+def test_two_additions_that_each_come_closer_are_probed_together():
+    net, proj, fn, state = setup()
+    off = ['-fno-schedule-insns', '-fno-schedule-insns2']
+    net.flag_variants = lambda *a: [['-O2', '-fno-strength-reduce'], ['-O2', *off]]
+
+    def judge(proj, fn, toolchain, flags, source):
+        state['calls'].append(flags)
+        score = {1: 50, 2: 30, 3: 20, 4: 0}[len(flags)]
+        return score == 0, SimpleNamespace(score=score), ''
+    net._judge_with = judge
+    result = preflight.run(net, proj, fn)
+    assert state['calls'][-1] == ['-O2', '-fno-strength-reduce', *off]
+    assert result['best']['exact'] and len(state['suggested']) == 1
+
+
+def test_an_addition_that_does_not_help_is_not_combined():
+    net, proj, fn, state = setup()
+    net.flag_variants = lambda *a: [['-O2', '-fno-strength-reduce'], ['-O2', '-fno-common']]
+
+    def judge(proj, fn, toolchain, flags, source):
+        state['calls'].append(flags)
+        return False, SimpleNamespace(score=30 if '-fno-common' in flags else 50), ''
+    net._judge_with = judge
+    preflight.run(net, proj, fn)
+    assert state['calls'] == [['-O2'], ['-O2', '-fno-strength-reduce'], ['-O2', '-fno-common']]
