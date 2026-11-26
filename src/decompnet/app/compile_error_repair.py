@@ -83,6 +83,18 @@ def call_through_cast(source: str, line: int) -> str | None:
     return None
 
 
+def null_as_zero(source: str, line: int) -> str | None:
+    """"Constants must have arithmetic type" on `var = NULL;`: the variable is a number, so the null address is a zero."""
+    lines = source.split('\n')
+    if not 0 < line <= len(lines):
+        return None
+    fixed = re.sub(r'\bNULL\b|\(\(void \*\)\s*0\)', '0', lines[line - 1])
+    if fixed == lines[line - 1]:
+        return None
+    lines[line - 1] = fixed
+    return '\n'.join(lines)
+
+
 def candidates(compile_source, source, *, rounds=ROUNDS, check_cancel=None):
     """Yield (family, source) once, when `source` compiles after repairs. `compile_source(text)` returns something
     with `.ok` and `.log`; the draft itself is not offered again."""
@@ -108,7 +120,9 @@ def candidates(compile_source, source, *, rounds=ROUNDS, check_cancel=None):
             tried[('size', '')] = 1
             continue
         changed = False
-        found = compile_error_repairs.diagnostics(result.log)
+        found = list(compile_error_repairs.diagnostics(result.log))
+        found += [(int(n), 'Constants must have arithmetic type') for n in re.findall(r'line (\d+): Constants must have arithmetic type', str(result.log))
+                  if not any(line == int(n) for line, _ in found)]
         if best is None or len(found) < best:
             best, stalled = len(found), 0
         else:
@@ -118,6 +132,8 @@ def candidates(compile_source, source, *, rounds=ROUNDS, check_cancel=None):
             repaired = compile_error_repairs.repair(source, line, message, tried.get(key, 0))
             if repaired is None and any(part in message for part in _POINTER_FROM_FLOAT):
                 repaired = undo_float_words(source, line)
+            if repaired is None and 'Constants must have arithmetic type' in message:
+                repaired = null_as_zero(source, line)
             if repaired is None and any(part in message for part in _NOT_A_FUNCTION):
                 repaired = call_through_cast(source, line)
             tried[key] = tried.get(key, 0) + 1

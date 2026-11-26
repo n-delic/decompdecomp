@@ -181,3 +181,17 @@ def test_a_switch_through_a_missing_table_is_cut_where_it_jumps():
     out = seeds.cut_missing_switches(asm)
     assert "jr $ra" in out.splitlines()[2] and out.count("jr $v0") == 0
     assert seeds.cut_missing_switches("  jr $ra\n") == "  jr $ra\n"
+
+
+def test_ido_void_pointer_steps_and_null_for_numbers():
+    from decompnet import seeds
+    out = seeds.ido_pointer_steps("void f(void **arg0) {\n    void *var_s1;\n    s32 n;\n    var_s1 += (s32)8;\n"
+                                  "    *arg0 += (s32)8;\n    n = NULL;\n    var_s1 = NULL;\n}\n")
+    assert "u8 *var_s1;" in out and "*arg0 = (u8 *)*arg0 + 8;" in out
+    assert "n = 0;" in out and "var_s1 = NULL;" in out
+
+
+def test_null_assigned_to_a_number_becomes_zero_on_the_named_line():
+    from decompnet.app import compile_error_repair as cer
+    assert cer.null_as_zero("a;\n    var = NULL;\n", 2) == "a;\n    var = 0;\n"
+    assert cer.null_as_zero("a;\n    var = 1;\n", 2) is None

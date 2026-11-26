@@ -508,6 +508,7 @@ def _compilable(source: str | None, name='', asm='', header='', toolchain=None, 
         source = void_pointer_arithmetic.rewrite(source, name) or source
         source = void_pointer_arithmetic.externs(source, name) or source
         source = denormal_floats_as_words(source)
+        source = ido_pointer_steps(source)
     source = pointer_bits_as_float(source, name)
     source = declare_written_arguments(source, name)
     # a local m2c typed as a function pointer (`M2C_UNK (*sp24)(M2C_UNK, M2C_UNK);`) that the code also steps (`sp24 += 0xC`):
@@ -553,6 +554,20 @@ def denormal_floats_as_words(source: str) -> str:
             return m.group(0)
         return f"M2C_BITS_F32({struct.unpack('>I', struct.pack('>f', value))[0]}U)"
     return _DENORMAL.sub(word, source)
+
+
+def ido_pointer_steps(source: str) -> str:
+    """IDO refuses what GCC 2.x allows on a `void *` and with a null address:
+    - `void *var_s1;` stepped with `var_s1 += (s32)8;` ("Bad operand type for += or -="): the local is a byte pointer;
+      a stepped slot behind a pointer (`*arg0 += (s32)8;`, `void **arg0`) is written as the cast and add it means.
+    - `var = NULL;` for a local declared as a number ("Constants must have arithmetic type"): a zero."""
+    for name in set(re.findall(r"\b(\w+)\s*[-+]=", source)):
+        source = re.sub(rf"^([ \t]+)void[ \t]*\*[ \t]*{name}[ \t]*;", rf"\1u8 *{name};", source, flags=re.M)
+    source = re.sub(r"(?m)^([ \t]*)\*(\w+)[ \t]*([-+])=[ \t]*(?:\(s32\))?(0x[0-9A-Fa-f]+|\d+);",
+                    lambda m: f"{m[1]}*{m[2]} = (u8 *)*{m[2]} {m[3]} {m[4]};"
+                    if re.search(rf"\bvoid[ \t]*\*\*[ \t]*{m[2]}\b", source) else m[0], source)
+    numbers = set(re.findall(r"^[ \t]*(?:s8|u8|s16|u16|s32|u32|s64|u64|f32|f64|int|float|double)[ \t]+(\w+)[ \t]*[;,=]", source, flags=re.M))
+    return re.sub(r"(\b\w+)([ \t]*=[ \t]*)NULL[ \t]*;", lambda m: f"{m[1]}{m[2]}0;" if m[1] in numbers else m[0], source)
 
 
 def declare_written_arguments(source: str, name: str) -> str:
