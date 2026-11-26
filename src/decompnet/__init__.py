@@ -3,7 +3,7 @@
 import os
 import sys
 
-__version__ = "1.0.13-rr.1"
+__version__ = "1.0.14-rr.1"
 
 # A thread that gives up the GIL (every sqlite row step does) waits for it up to one switch interval for each busy
 # Python thread ahead of it. At the default 5 ms, with a few compute threads running, a 1,700-row read took 18 s of

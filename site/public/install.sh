@@ -22,7 +22,7 @@
 # The same through the environment: DECOMP_SOURCE=..., DECOMP_BRANCH=<name>.
 set -euo pipefail
 
-VERSION="1.0.13-rr.1"
+VERSION="1.0.14-rr.1"
 REPO="RetroReversing/decompdecomp"
 START=1
 SOURCE="${DECOMP_SOURCE:-}"
