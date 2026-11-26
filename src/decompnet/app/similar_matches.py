@@ -331,7 +331,56 @@ def donor_types(header_a: str, header_b: str, names: dict, syms_b) -> str:
     return '\n'.join(items) + '\n' if items else ''
 
 
-TRANSFERS = ('transfer', 'parameter transfer', 'typed transfer', 'fields')
+TRANSFERS = ('transfer', 'parameter transfer', 'typed transfer', 'fields', 'consensus')
+
+
+def _skeleton(source: str) -> tuple[list, list]:
+    """(the source's tokens with each integer literal as '#', [(start, end, value, suffix)] of those literals)."""
+    shape, literals = [], []
+    for token in TOKENS.finditer(source):
+        text = token.group()
+        if text.startswith(('/*', '//')):
+            continue
+        m = INTEGER.fullmatch(text)
+        if m:
+            shape.append('#')
+            literals.append((token.start(), token.end(), int(m[1], 16 if m[1].lower().startswith('0x') else 10), m[2]))
+        else:
+            shape.append(text)
+    return shape, literals
+
+
+def consensus(source: str, others: list[str], report: dict, b, big: bool) -> str:
+    """`source` with the integer literals that differ among the donors (written alike otherwise) set to the values the
+    target's instructions have for them: a literal the games agree on stays, even where its value also appears among
+    the ones that change, which a search over every literal could not tell apart. '' when nothing is settled."""
+    if not report or not report.get('candidate_target'):
+        return ''
+    shape, literals = _skeleton(source)
+    alike = [lits for text in others for other_shape, lits in [_skeleton(text)] if other_shape == shape]
+    if not alike:
+        return ''
+    varying = [i for i, (_, _, value, _) in enumerate(literals) if any(lits[i][2] != value for lits in alike)]
+    if not varying:
+        return ''
+    compiled = bytes.fromhex(report['candidate_target'])
+    relocated = ({int(r[0]) for r in json.loads(report.get('candidate_relocs') or '[]')}
+                 | {offset for offset, _, _ in relocations(b)})
+    changes: dict[int, set] = {}
+    for old, new in mips_immediates.value_pairs(compiled, b['target'] or b'', relocated, big):
+        changes.setdefault(old, set()).add(new)
+    edits = []
+    for i in varying:
+        start, end, value, suffix = literals[i]
+        news = changes.get(value)
+        if news and len(news) == 1 and (new := next(iter(news))) >= 0:
+            edits.append((start, end, (hex(new) if source[start:end].lower().startswith('0x') else str(new)) + suffix))
+    if not edits:
+        return ''
+    out = source
+    for start, end, text in sorted(edits, reverse=True):
+        out = out[:start] + text + out[end:]
+    return out
 
 
 def field_variants(source: str, header: str, report: dict, b, big: bool) -> list[str]:
@@ -344,6 +393,71 @@ def field_variants(source: str, header: str, report: dict, b, big: bool) -> list
                  | {offset for offset, _, _ in relocations(b)})
     offsets = field_offsets.pairs(compiled, b['target'] or b'', relocated, big)
     return field_offsets.from_pairs(source, header, offsets) if offsets else []
+
+
+STEP_NAMES = {
+    'transfer': 'Donor C as it is', 'parameter transfer': 'Donor C with this function\'s parameters',
+    'typed transfer': 'With the donor\'s missing types', 'fields': 'Struct fields moved',
+    'consensus': 'Numbers that differ between donors', 'profile': 'With the donor\'s compiler profile',
+    'literals': 'Constants searched with the compiler', 'repair': 'Repairs of a close miss',
+    'compiler': 'Donor compiler (older review leads)',
+}
+CLOSE_PERCENT = 90
+CLOSE_LISTED = 500
+
+
+def step_report(net, proj) -> dict:
+    """What each step of the similar-code pass has done for this game: checks, matches, close misses (a function
+    still open whose C under that step compiled to at least CLOSE_PERCENT of the target) and builds that failed.
+    Read from the recorded attempts, so it is the same after a restart."""
+    store = net.project_store(proj['id'])
+    rows = store.all("SELECT a.function_id,a.outcome,a.reason,a.source_project_id,a.source_function_id,f.name,"
+                     "f.status,f.n_insns FROM cross_game_attempts a JOIN functions f ON f.id=a.function_id "
+                     "WHERE a.project_id=? AND a.reason LIKE 'similar code%'", proj['id'])
+    steps, close = {}, {}
+    for row in rows:
+        m = re.match(r'similar code \((\d+)%\); ([^;]+);', row['reason'] or '')
+        kind = m.group(2).strip() if m else 'other'
+        step = steps.setdefault(kind, {'step': kind, 'label': STEP_NAMES.get(kind, kind), 'checks': 0,
+                                       'functions': set(), 'matched': set(), 'close': set(), 'unbuilt': 0})
+        if row['outcome'] == 'skip':
+            continue
+        step['checks'] += 1
+        step['functions'].add(row['function_id'])
+        if row['outcome'] == 'match':
+            step['matched'].add(row['function_id'])
+        score = re.search(r'score (\d+)(?:\D|$)', row['reason'] or '')
+        if row['outcome'] == 'miss' and not score and 'build' in (row['reason'] or ''):
+            step['unbuilt'] += 1
+        if row['outcome'] == 'miss' and score and row['status'] == 'open' and row['n_insns']:
+            percent = 100 * (1 - int(score.group(1)) / (row['n_insns'] * 100))
+            if percent >= CLOSE_PERCENT:
+                step['close'].add(row['function_id'])
+                best = close.get((kind, row['function_id']))
+                if best is None or percent > best['percent']:
+                    close[(kind, row['function_id'])] = {
+                        'step': kind, 'function': row['name'], 'percent': round(percent, 1),
+                        'similarity': int(m.group(1)) if m else None,
+                        'donor_project': row['source_project_id'], 'donor_function': row['source_function_id']}
+    names = {r['id']: (r['slug'], r['name']) for r in net.store.all('SELECT id,slug,name FROM projects')}
+    listed = sorted(close.values(), key=lambda r: -r['percent'])[:CLOSE_LISTED]
+    donors = {}
+    for item in listed:
+        key = (item['donor_project'], item['donor_function'])
+        if key not in donors:
+            fn = (net.project_store(key[0]).one('SELECT name FROM functions WHERE id=?', key[1])
+                  if key[0] in names else None)
+            donors[key] = fn['name'] if fn else 'Removed function'
+        slug, game = names.get(item['donor_project'], ('', 'Removed project'))
+        item.update(donor=donors[key], donor_slug=slug, game=game)
+        del item['donor_project'], item['donor_function']
+    out = []
+    for step in steps.values():
+        tried = len(step['functions'])
+        out.append({'step': step['step'], 'label': step['label'], 'checks': step['checks'], 'functions': tried,
+                    'matched': len(step['matched']), 'rate': round(100 * len(step['matched']) / tried, 1) if tried else None,
+                    'close': len(step['close']), 'unbuilt': step['unbuilt']})
+    return {'steps': sorted(out, key=lambda r: -r['matched']), 'close': listed}
 
 
 def destination_supported(net, proj):
@@ -429,7 +543,51 @@ def after_match(twins, proj, fids) -> int:
         found = lookalikes_elsewhere(net, proj, other, fids)
         if found:
             matched += run(twins, other['slug'], Job(), function_ids=found)
+    # An idle game isn't opened now (project_activity): the new donors wait for its next pass, saved in the catalog.
+    enqueue(net, proj, fids, lambda slug: active(net, slug))
     return matched
+
+
+FAN_OUT_QUEUE = ('CREATE TABLE IF NOT EXISTS similar_fanout(project_id INTEGER NOT NULL, donor_project_id INTEGER NOT NULL, '
+                 'donor_function_id INTEGER NOT NULL, created_at REAL NOT NULL, '
+                 'PRIMARY KEY(project_id, donor_project_id, donor_function_id))')
+FAN_OUT_BATCH = 200  # queued donors read per pass, oldest first
+
+
+def enqueue(net, proj, fids, is_active) -> int:
+    """Save new matches for each idle game of the same machine to try on its look-alikes at its next pass. Only the
+    catalog is written: the idle game's own database stays closed. Whether it really is the same machine and how alike
+    its functions are is read when it next runs (`queued`)."""
+    rows = [(other['id'], proj['id'], fid, time.time())
+            for other in net.store.all('SELECT id,slug FROM projects WHERE id!=? AND arch=? AND big_endian=?',
+                                       proj['id'], proj['arch'], proj['big_endian'])
+            if not is_active(other['slug']) for fid in fids]
+    if not rows:
+        return 0
+    with net.store.tx() as db:
+        db.execute(FAN_OUT_QUEUE)
+        db.executemany('INSERT OR IGNORE INTO similar_fanout VALUES(?,?,?,?)', rows)
+    return len(rows)
+
+
+def queued(net, proj, others) -> dict[int, float]:
+    """{open function: priority} for this game's look-alikes of the matches saved for it while it was idle; the
+    queue's rows read are removed (a donor no longer matched or of another machine is dropped with them)."""
+    with net.store.tx() as db:
+        db.execute(FAN_OUT_QUEUE)
+        rows = db.execute('SELECT donor_project_id,donor_function_id FROM similar_fanout WHERE project_id=? '
+                          'ORDER BY created_at LIMIT ?', (proj['id'], FAN_OUT_BATCH)).fetchall()
+        db.executemany('DELETE FROM similar_fanout WHERE project_id=? AND donor_project_id=? AND donor_function_id=?',
+                       [(proj['id'], r[0], r[1]) for r in rows])
+    by_donor: dict[int, list[int]] = {}
+    for donor_project, fid in rows:
+        if donor_project in others:
+            by_donor.setdefault(donor_project, []).append(fid)
+    out = {}
+    for donor_project, fids in by_donor.items():
+        for fid in lookalikes_elsewhere(net, others[donor_project], proj, fids):
+            out[fid] = 1.5
+    return out
 
 
 def byte_exact_leads(net, proj, others) -> dict[int, list[int]]:
@@ -536,7 +694,13 @@ def run(twins, slug: str, job, *, function_ids=None) -> int:
             return 'skip', ''
         from decomprepair.repair_preflight import invalid_call
         if invalid_call(candidate, b['name'], header):
-            return 'skip', 'Generated call disagrees with a fixed prototype'
+            # A callee that gained or lost a parameter between the two games: the donor's calls given the counts
+            # this game's prototypes declare (decomprepair.call_arity), rather than the donor never being tried.
+            from decomprepair.call_arity import fit
+            fitted = fit(candidate, b['name'], header)
+            if not fitted or invalid_call(fitted, b['name'], header):
+                return 'skip', 'Generated call disagrees with a fixed prototype'
+            candidate = fitted
         # (the compile-guided trials are keyed apart: a lead or a miss cached for the same C and profile was
         # judged without the literal search, and never with the profile applied)
         signature = trial_key(candidate, header, settings, b, [names, symbol_state] + ([kind] if kind in SEARCHED else []))
@@ -597,6 +761,9 @@ def run(twins, slug: str, job, *, function_ids=None) -> int:
                             + " ORDER BY id", proj['id'], *params)
     leads = byte_exact_leads(net, proj, others)
     priority = best_first(net, proj, donors, targets, leads, deadline)
+    if function_ids is None:  # a whole pass: what matched elsewhere while this game was idle goes after the leads
+        for fid, value in queued(net, proj, others).items():
+            priority[fid] = max(priority.get(fid, 0.0), value)
     # Manual searches widen each target before moving on. An entire project of
     # cheap misses should not use up the budget before the wider search starts.
     # Within that, the functions with the most alike donors go first: the pass used to walk them by id, so on a
@@ -676,6 +843,7 @@ def run(twins, slug: str, job, *, function_ids=None) -> int:
         # A byte-exact lead's donor is tried whatever the ranking's cap.
         firsts = [(str(a['id']), 1.0) for a in rows if a['id'] in lead_ids]
         ranked = firsts + [item for item in ranked if item[0] not in {key for key, _ in firsts}]
+        renamed = []  # each donor's C with this function's names, in ranked order (the consensus below)
         for key, score in ranked:
             a = by_id[key]
             # Re-read authoritative source after ranking: donors can be polished during a pass.
@@ -716,6 +884,7 @@ def run(twins, slug: str, job, *, function_ids=None) -> int:
             header_b = net._context(proj['id'], b['unit'])['header']
             prelude = _declared(header_a, header_b, names, a['name'])
             source = apply(a['matched_source'], names)
+            renamed.append(source)
             parameter_sources = parameter_transfers.variants(source, a, b, bool(proj['big_endian']))
             destination = b['best_source'] or b['seed'] or ''
             parameter_sources = list(dict.fromkeys([parameter_transfers.destination_signature(v, b['name'], destination)
@@ -768,6 +937,12 @@ def run(twins, slug: str, job, *, function_ids=None) -> int:
                 if kind in TRANSFERS and outcome == 'miss' and kind != 'fields':
                     for moved in field_variants(variant, header_b, feedback, b, big)[:2]:
                         variants.insert(position + 1, (moved, settings, 'fields'))
+                # Several games' C for this one helper, alike apart from some numbers: those numbers are what each
+                # game changes, so they are the ones set from this game's instructions (`consensus`).
+                if kind == 'transfer' and variant == source and outcome == 'miss' and len(renamed) > 1:
+                    agreed = consensus(source, renamed[:-1], feedback, b, big)
+                    if agreed:
+                        variants.insert(position + 1, (agreed, settings, 'consensus'))
                 # Easy transfers get the first pass through the budget. Then repair the closest compiled misses.
                 close = re.fullmatch(r'score (\d+)', why or '')
                 percent = feedback.get('percent', 100 * (1 - int(close[1]) / max(1, (b['n_insns'] or 0) * 100)) if close else 0)

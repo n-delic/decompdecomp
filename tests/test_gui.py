@@ -925,3 +925,35 @@ def test_compiler_profile_compares_with_a_chosen_profile():
         pytest.skip("needs node to run the GUI scripts")
     subprocess.run([NODE, str(Path(__file__).with_name("gui_profile_compare.js"))],
                    cwd=Path(__file__).resolve().parents[1], check=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_similar_step_table_sorts_and_opens_each_steps_close_misses():
+    """The results drawer's step table: sortable headings (missing rates last), and the close-miss count opens those
+    functions with links, read from the server's report."""
+    if not NODE:
+        pytest.skip("needs node to run the GUI's scripts")
+    text = (Path(__file__).parents[1] / "src/decompnet/app/static/js/steering.js").read_text()
+    block = text[text.index("const crossStepView"):text.index("function renderCrossGameProgress")]
+    script = block + r"""
+const box = {innerHTML: '', onclick: null};
+const $ = id => box;
+const esc = s => String(s);
+let opened = null;
+const openNoted = (slug, fn) => { opened = [slug, fn]; };
+const report = {steps: [
+  {step: 'transfer', label: 'Donor C as it is', functions: 10, matched: 2, rate: 20, close: 1, unbuilt: 0, checks: 12},
+  {step: 'fields', label: 'Struct fields moved', functions: 3, matched: 3, rate: null, close: 0, unbuilt: 1, checks: 3}],
+  close: [{step: 'transfer', function: 'func_80001000', percent: 96.5, similarity: 98, donor: 'old', donor_slug: 'a', game: 'A'}]};
+renderCrossGameSteps({slug: 'g'}, report);
+const first = box.innerHTML.indexOf('Struct fields moved') < box.innerHTML.indexOf('Donor C as it is');
+const target = sel => ({closest: s => s === sel[0] ? {dataset: sel[1]} : null});
+box.onclick({target: target(['[data-cross-step-sort]', {crossStepSort: 'rate'}])});
+const rateDesc = box.innerHTML.indexOf('Donor C as it is') < box.innerHTML.indexOf('Struct fields moved');
+box.onclick({target: target(['[data-cross-step-close]', {crossStepClose: 'transfer'}])});
+const listed = box.innerHTML.includes('func_80001000') && box.innerHTML.includes('96.5%');
+box.onclick({target: target(['button[data-transfer-function]', {slug: 'g', transferFunction: 'func_80001000'}])});
+console.log(JSON.stringify({first, rateDesc, listed, opened}));
+"""
+    out = subprocess.run([NODE, "-e", script], capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    assert json.loads(out.stdout) == {"first": True, "rateDesc": True, "listed": True, "opened": ["g", "func_80001000"]}

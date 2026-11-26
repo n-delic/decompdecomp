@@ -1255,8 +1255,12 @@ class Twins:
         verified=sorted([dict(r) for r in [*matches,*archived_matches]],key=lambda r:r['created_at'],reverse=True)
         if not all_matches: verified = verified[:30]
         from .shared_reuse import summary
-        return {'counts':totals,'recent':recent,'matches':verified,'discovery':summary(self,proj),
-                'compiler_leads': attempts('compiler') if totals.get('compiler') else []}
+        out = {'counts':totals,'recent':recent,'matches':verified,'discovery':summary(self,proj),
+               'compiler_leads': attempts('compiler') if totals.get('compiler') else []}
+        if all_matches:  # the results drawer, not the overview's polling: what each similar-code step has done
+            from .similar_matches import step_report
+            out['similar_steps'] = step_report(self.net, proj)
+        return out
 
     def suggestions(self, slug: str, function: str, limit: int = 5) -> list[dict]:
         """Read-only cross-game and local SDK name hints. Similar code is a lead, never a verified match."""

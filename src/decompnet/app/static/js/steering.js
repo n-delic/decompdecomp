@@ -1023,7 +1023,7 @@ let crossGameDrawerResults = null;
 async function openCrossGameResults(ov, filter='matches') {
   const slug=ov.slug;
   crossGameDrawerResults=null;
-  dialog('Matches from other games', `<p class="small muted">Saved results across searches. Only verified byte matches count toward progress.</p><label class="field"><span>Show</span><select id="crossGameFilter"><option value="matches">Verified matches</option><option value="improved">Recent improvements</option><option value="compiler">Compiler leads</option><option value="all">Recent checks</option></select></label><p id="crossGameDrawerStatus" class="small muted" role="status"></p><ol class="transfer-list" id="crossGameRecent"></ol>`, 'cross-game-results');
+  dialog('Matches from other games', `<p class="small muted">Saved results across searches. Only verified byte matches count toward progress.</p><label class="field"><span>Show</span><select id="crossGameFilter"><option value="matches">Verified matches</option><option value="improved">Recent improvements</option><option value="compiler">Compiler leads</option><option value="steps">What each similar-code step found</option><option value="all">Recent checks</option></select></label><p id="crossGameDrawerStatus" class="small muted" role="status"></p><div id="crossGameSteps" hidden></div><ol class="transfer-list" id="crossGameRecent"></ol>`, 'cross-game-results');
   $('dialogBody').dataset.crossSlug=slug;
   $('crossGameFilter').value=filter;
   renderCrossGameResults(ov);
@@ -1047,6 +1047,10 @@ function renderCrossGameResults(ov) {
   }
   const run = $("crossGameRun"), tried = Object.values(cross.counts).reduce((a,b)=>a+b,0);
   const filter = $("crossGameFilter").value;
+  $("crossGameSteps").hidden = filter !== 'steps';
+  $("crossGameRecent").hidden = filter === 'steps';
+  $("crossGameFilter").onchange = () => {$("crossGameFilter")._chosen=true;crossStepView.step=null;renderCrossGameResults(ov);};
+  if (filter === 'steps') { renderCrossGameSteps(ov, crossGameDrawerResults?.similar_steps); return; }
   const rows = filter === 'matches' ? (cross.matches || cross.recent.filter(r => r.outcome === 'match'))
     : filter === 'compiler' ? (cross.compiler_leads || cross.recent.filter(r => r.outcome === 'compiler'))
     : filter === 'improved' ? cross.recent.filter(r => r.outcome === 'improved') : cross.recent;
@@ -1073,6 +1077,45 @@ function renderCrossGameResults(ov) {
     if (button) openNoted(button.dataset.slug, button.dataset.transferFunction);
   };
   $("crossGameFilter").onchange = () => {$("crossGameFilter")._chosen=true;renderCrossGameResults(ov);};
+}
+// Sort choices survive the drawer's refreshes; `step` is the step whose close misses are listed.
+const crossStepView = {sort: {key: 'matched', descending: true}, closeSort: {key: 'percent', descending: true}, step: null};
+function crossSortedRows(rows, sort) {
+  return rows.map((row, index) => ({row, index})).sort((a, b) => {
+    const av = a.row[sort.key], bv = b.row[sort.key];
+    if (av == null || bv == null) return av == null ? bv == null ? a.index - b.index : 1 : -1;  // missing values last
+    const order = typeof av === 'number' ? av - bv : String(av).localeCompare(String(bv), undefined, {numeric: true});
+    return order * (sort.descending ? -1 : 1) || a.index - b.index;
+  }).map(item => item.row);
+}
+function crossSortHeads(columns, sort, attr) {
+  return columns.map(([key, label]) => `<th scope="col" aria-sort="${sort.key === key ? sort.descending ? 'descending' : 'ascending' : 'none'}"><button type="button" class="table-sort" ${attr}="${key}">${label}<span aria-hidden="true">${sort.key === key ? sort.descending ? ' ↓' : ' ↑' : ' ↕'}</span></button></th>`).join('');
+}
+function renderCrossGameSteps(ov, report) {
+  const box = $("crossGameSteps");
+  if (!report) { box.innerHTML = '<p class="small muted">Loading what each step found…</p>'; return; }
+  if (!report.steps.length) { box.innerHTML = '<p class="small muted">The similar-code search has not tried this game\'s functions yet. Start a search to see which steps find matches.</p>'; return; }
+  const view = crossStepView;
+  if (view.step) {
+    const step = report.steps.find(s => s.step === view.step);
+    const rows = crossSortedRows(report.close.filter(r => r.step === view.step), view.closeSort);
+    box.innerHTML = `<p><button type="button" class="ghost small-btn" data-cross-steps-back>← All steps</button></p><p class="small muted">${esc(step?.label || view.step)}: open functions whose C from this step compiled to at least 90% of the target. Open one to start from that C.</p>${rows.length ? `<div class="compiler-table"><table><thead><tr>${crossSortHeads([['function','Function'],['percent','Closest'],['similarity','Code similarity'],['donor','Donor'],['game','Game']], view.closeSort, 'data-cross-close-sort')}</tr></thead><tbody>${rows.map(r => `<tr><td><button class="fn" type="button" data-transfer-function="${esc(r.function)}" data-slug="${esc(ov.slug)}">${esc(r.function)}</button></td><td>${r.percent.toFixed(1)}%</td><td>${r.similarity == null ? '—' : `${r.similarity}%`}</td><td>${r.donor_slug ? `<button class="fn" type="button" data-transfer-function="${esc(r.donor)}" data-slug="${esc(r.donor_slug)}">${esc(r.donor)}</button>` : esc(r.donor)}</td><td>${esc(r.game)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="small muted">None of them is open any more.</p>'}`;
+  } else {
+    const rows = crossSortedRows(report.steps, view.sort);
+    box.innerHTML = `<p class="small muted">Each step of the similar-code search, from what it has recorded for this game. A close miss is a function still open whose C from that step compiled to at least 90% of the target.</p><div class="compiler-table"><table><thead><tr>${crossSortHeads([['label','Step'],['functions','Functions tried'],['matched','Matched'],['rate','Match rate'],['close','Close misses'],['unbuilt','Didn\'t build'],['checks','Checks']], view.sort, 'data-cross-step-sort')}</tr></thead><tbody>${rows.map(r => `<tr><td>${esc(r.label)}</td><td>${r.functions.toLocaleString()}</td><td><b>${r.matched.toLocaleString()}</b></td><td>${r.rate == null ? '—' : `${r.rate.toFixed(1)}%`}</td><td>${r.close ? `<button type="button" class="link-btn" data-cross-step-close="${esc(r.step)}" title="List these functions">${r.close.toLocaleString()}</button>` : '0'}</td><td>${r.unbuilt.toLocaleString()}</td><td>${r.checks.toLocaleString()}</td></tr>`).join('')}</tbody></table></div>`;
+  }
+  box.onclick = e => {
+    const sortBy = (state, key) => { state.descending = state.key === key ? !state.descending : true; state.key = key; };
+    const fn = e.target.closest("button[data-transfer-function]");
+    if (fn) return openNoted(fn.dataset.slug, fn.dataset.transferFunction);
+    const stepSort = e.target.closest("[data-cross-step-sort]"), closeSort = e.target.closest("[data-cross-close-sort]");
+    if (stepSort) sortBy(view.sort, stepSort.dataset.crossStepSort);
+    else if (closeSort) sortBy(view.closeSort, closeSort.dataset.crossCloseSort);
+    else if (e.target.closest("[data-cross-step-close]")) view.step = e.target.closest("[data-cross-step-close]").dataset.crossStepClose;
+    else if (e.target.closest("[data-cross-steps-back]")) view.step = null;
+    else return;
+    renderCrossGameSteps(ov, report);
+  };
 }
 function renderCrossGameProgress(p) {
   const known=p.total>0 && p.done!=null;

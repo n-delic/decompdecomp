@@ -1192,7 +1192,11 @@ alike their closest donor is, compares compiler profiles by the flags that chang
 renames donors with another relocation layout from their aligned instruction runs, tries another game's donor with that
 game's profile the same way as a donor in its own game, and sends a new match to its look-alikes in the user's other active
 games at once. A transfer that doesn't build is tried once more with the donor header's missing types. Still ROM mode
-and MIPS only (project mode: the paragraph above); idle games get a new match on their next pass, not at once.
+and MIPS only (project mode: the paragraph above); an idle game keeps a new match in a queue in the catalog and tries
+it first on its next pass. Struct fields at other offsets are moved (`decomprepair.field_offsets`: `p->f`, `p->a.b`,
+`a[i].f`, each dereference of a chain), calls are fitted to this game's prototypes (`call_arity`), numbers that differ
+between several games' C are set from the target's instructions (`similar_matches.consensus`), and the results drawer
+shows what each step found ("What each similar-code step found"). Planned: a callee inlined in one game but not the other.
 
 Cross-game C++ constructor entry replay currently covers N64 overlays with IDO. Main-ROM linking and owned-build
 projects need their own verified constructor-entry selection and export handling before this retry can reach them.
