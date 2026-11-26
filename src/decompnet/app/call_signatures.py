@@ -306,10 +306,17 @@ def check(name, source, header='', callee_sources=None, caller_sources=None, asm
             theirs = [s for s in sites if s['callee'] == callee]
             if len(mine) != len(theirs):
                 continue  # inlined, duplicated or reordered calls: no pairing
+            # A float result comes back in $f0, so whether the target reads $v0 after the call says nothing about
+            # it: a ray test's six `func_X(n, ...)` dot products (f32) were each reported "overwritten unread".
+            ret = (matched.get(callee) or header_protos.get(callee) or source_protos.get(callee) or {}).get('ret')
+            float_result = CANON.get(' '.join(w for w in (ret or '').split() if w not in ('const', 'volatile'))) in (
+                'f32', 'f64')
             for call, site in zip(mine, theirs):
                 n = len(call['args'])
                 where = f"line {call['line']}: {callee}({_arg_list(call['args'])})"
                 definition = matched.get(callee)
+                if float_result:
+                    site = dict(site, result=None)
                 if site['arg_regs'] > n and not definition and n < 4:
                     add('target-argument', callee, call['line'],
                         f"{where} passes {n}; the target sets {ARG_REGS[site['arg_regs'] - 1]} just before the call: "

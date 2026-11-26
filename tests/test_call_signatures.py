@@ -87,6 +87,24 @@ def test_a_result_read_in_the_next_calls_delay_slot_is_read():
     assert not {k for k in kinds(cs.check("w", source, "", {}, {}, asm)) if k[0] == "result-unread"}
 
 
+def test_a_float_result_is_not_judged_by_v0():
+    """A dot product returns f32 in $f0: the target overwriting $v0 after the call does not make the used result
+    "unread" (a ray test got six such findings, each telling the agent to drop a result it needs)."""
+    asm = """glabel w
+/* */ jal dot
+/* */ nop
+/* */ addiu $v0, $zero, 1
+/* */ jal ival
+/* */ nop
+/* */ addiu $v0, $zero, 1
+/* */ jr $ra
+/* */ nop
+"""
+    source = "void w(void) {\n    d = dot(a, b);\n    k = ival();\n}\n"
+    found = cs.check("w", source, "f32 dot(f32 *, f32 *);\ns32 ival(void);\n", {}, {}, asm)
+    assert [(f["kind"], f["callee"]) for f in found] == [("result-unread", "ival")]
+
+
 def test_return_width_from_the_header_against_the_matched_definition():
     found = cs.check("f", "void f(void) {\n    x = get();\n}\n", "s32 get(void);\nu32 put(void);",
                      {"get": "s16 get(void) {\n    return 1;\n}\n"})
