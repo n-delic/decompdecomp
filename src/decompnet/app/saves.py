@@ -816,7 +816,7 @@ def _manifest_from_rows(net, proj, cfg: dict, rows, folder: Path) -> tuple[dict,
         # naming it sent the port's build looking for a header the save never wrote
         "function_headers": {r["name"]: r["unit"] for r in rows if r["unit"].startswith(PRIVATE_HEADERS) and r["unit"] in units},
         "layout": [{"name": r["name"], "vram": r["vram"], "size": r["size"],
-                    "status": "asm" if r["status"] == "asm" else "open"} for r in rows if r["size"] > 0],
+                    "status": "asm" if r["status"] == "asm" else "open"} for r in rows if (r["size"] or 0) > 0],  # (no size recorded: not part of the layout)
         "symbols": net.layout_symbols(pid),
         # the C types given to data (Globals tab), by address: an untouched D_ name is not in `symbols`
         "global_types": [{"address": r["address"], "type": r["c_type"], "source": r["type_source"] or ""}
