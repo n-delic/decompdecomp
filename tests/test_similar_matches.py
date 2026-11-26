@@ -796,3 +796,56 @@ def test_a_donor_whose_struct_fields_sit_elsewhere_is_tried_with_them_moved(pair
     sm.run(pair.twins, 'destination', Job())
     assert any('char _pad0[0x4];' in source and 'int new(Actor *a)' in source for source in seen)
     assert any('(*(s16 *)((char *)a + 0x6))' in source for source in seen)
+
+
+def test_step_report_counts_matches_close_misses_and_failed_builds_per_step(pair):
+    rows = [(2, 'miss', 'similar code (95%); transfer; donor source x; score 40'),
+            (2, 'miss', "similar code (95%); typed transfer; donor source x; it didn't build"),
+            (2, 'miss', 'similar code (95%); fields; donor source x; score 300'),
+            (2, 'skip', 'similar code (95%); transfer; donor source x; skip')]
+    with pair.store.tx() as db:
+        db.executemany("INSERT INTO cross_game_attempts(project_id,function_id,source_project_id,source_function_id,"
+                       "outcome,reason,created_at) VALUES(2,?,1,1,?,?,0)", rows)
+    report = sm.step_report(pair, pair._project('destination'))
+    steps = {s['step']: s for s in report['steps']}
+    assert steps['transfer'] == {'step': 'transfer', 'label': 'Donor C as it is', 'checks': 1, 'functions': 1,
+                                 'matched': 0, 'rate': 0.0, 'close': 1, 'unbuilt': 0}
+    assert steps['typed transfer']['unbuilt'] == 1 and steps['fields']['close'] == 0  # 300 of 800: under 90%
+    assert report['close'] == [{'step': 'transfer', 'function': 'new', 'percent': 95.0, 'similarity': 95,
+                                'donor': 'old', 'donor_slug': 'source', 'game': 'source'}]
+    assert 'similar_steps' in pair.twins.cross_game_results('destination', all_matches=True)
+    assert 'similar_steps' not in pair.twins.cross_game_results('destination')  # the overview's polling stays light
+
+
+def test_numbers_that_differ_between_donors_are_set_from_the_targets_instructions(pair):
+    # Three games' C for one helper: the 60 varies (60, 70), the 4 is the same in each.
+    source = 'int new(int x) { return (x + 60) * 4; }'
+    others = ['int new(int x) { return (x + 70) * 4; }', 'int new(int x) { if (x) return 1; return 0; }']
+    compiled = code(60)
+    report = {'candidate_target': compiled.hex(), 'candidate_relocs': '[]'}
+    target = {'target': code(61), 'relocs': '[]'}
+    assert sm.consensus(source, others, report, target, True) == 'int new(int x) { return (x + 61) * 4; }'
+    assert sm.consensus(source, [others[1]], report, target, True) == ''  # no donor written alike
+    assert sm.consensus(source, ['int new(int x) { return (x + 60) * 4; }'], report, target, True) == ''
+
+
+def test_a_donor_calling_with_another_argument_count_is_fitted_not_skipped(pair, monkeypatch):
+    with pair.store.tx() as db:
+        db.execute("UPDATE context_versions SET header='void helper(s32 a, s32 b);' WHERE project_id=2")
+        db.execute("UPDATE functions SET matched_source='int old(int x) { helper(x); return x + 60; }' WHERE id=1")
+    seen = []
+    monkeypatch.setattr(pair.twins, '_attempt_twin', lambda agent, proj, a, b, source, **kw:
+                        (seen.append(source) or 'miss', 'score 20'))
+    sm.run(pair.twins, 'destination', Job())
+    assert seen and all('helper(x, 0);' in source for source in seen)
+
+
+def test_matches_wait_in_the_catalog_for_an_idle_game_and_lead_its_next_pass(pair, monkeypatch):
+    with pair.store.tx() as db:
+        db.execute("UPDATE functions SET status='open',matched_source=NULL WHERE id=1")
+        db.execute("UPDATE functions SET status='matched',matched_source='int new(int x) { return x + 61; }' WHERE id=2")
+    assert sm.enqueue(pair, pair._project('destination'), [2], lambda slug: False) == 1
+    assert sm.enqueue(pair, pair._project('destination'), [2], lambda slug: True) == 0  # active: tried at once instead
+    others = {2: pair._project('destination')}
+    assert sm.queued(pair, pair._project('source'), others) == {1: 1.5}
+    assert sm.queued(pair, pair._project('source'), others) == {}  # read once, then gone
