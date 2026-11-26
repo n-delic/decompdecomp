@@ -372,3 +372,22 @@ def test_kmc_cse_hoist_probe_turns_both_block_options_off_for_a_hoisted_address(
     assert kmc_cse_hoist_probe(own, [rows[1], rows[2], ('|', 'move $a0, $v1', 'move $a0, $s2')]) is None  # built once
     assert kmc_cse_hoist_probe({'toolchain': 'ido-7.1', 'flags': ['-O2']}, rows) is None
     assert kmc_cse_hoist_probe({'toolchain': 'gcc-2.7.2-kmc', 'flags': ['-O2', '-fno-cse-skip-blocks']}, rows) is None
+
+
+def test_deep_climb_tries_the_jump_threader_off_under_the_closest_kmc_level(monkeypatch):
+    own = {'toolchain': 'gcc-2.7.2-kmc', 'flags': ['-O2']}
+    monkeypatch.setattr(cf, 'ranked', lambda *a, **k: [(0, {'toolchain': 'gcc-2.7.2-kmc', 'flags': ['-O1']})])
+    search = Search({})
+    search.net.cfg = lambda p: {'compiler': own}
+    search.net.project_store = lambda ident: SimpleNamespace(all=lambda *a: [])
+    tried = []
+
+    def judge(proj, fn, toolchain, flags, source):
+        tried.append(list(flags))
+        score = 0 if flags == ['-O1', '-fno-thread-jumps'] else 10 if flags == ['-O1'] else 500
+        return score == 0, SimpleNamespace(score=score), ''
+
+    search.net._judge_with = judge
+    exact = {'toolchain': 'gcc-2.7.2-kmc', 'flags': ['-O1', '-fno-thread-jumps']}
+    assert profile_climb.lead(search, None, PROJ, FN, FN['best_source'], 155) == (exact, 0)
+    assert tried == [['-O1'], ['-O1', '-fno-thread-jumps']]

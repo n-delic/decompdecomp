@@ -76,6 +76,20 @@ def lead(search, agent, proj, fn, source, own_score, *, check=None):
             best = (profile, score)
         if floor is not None and agree is not None and agree > floor and (closer is None or score < closer[1]):
             closer = (profile, score)
+    # The jump threader off, under the closest profile so far: one KMC state routine was exact under -O1 only with it,
+    # its single differing row a branch the threader sent past a later test of the same value.
+    lead_profile = best[0] if best else own
+    if (proj['arch'] == 'mips' and lead_profile['toolchain'] == 'gcc-2.7.2-kmc'
+            and not any(flag in lead_profile['flags'] for flag in ('-fno-thread-jumps', '-fthread-jumps'))
+            and search.tested < search.limit):
+        check()
+        profile = dict(lead_profile, flags=[*lead_profile['flags'], '-fno-thread-jumps'])
+        score = _judge(search, proj, fn, profile, source)
+        if score == 0:
+            return profile, score
+        if score is not None and score < (best[1] if best else own_score):
+            search.log(f"Profile {profile['toolchain']} {' '.join(profile['flags'])} on the current C: score {score}")
+            best = (profile, score)
     if search.tested < search.limit:
         check()
         profile = neighbour_profile(search.net, proj, cfg, fn, [own, *(p for _, p in ranked)])
