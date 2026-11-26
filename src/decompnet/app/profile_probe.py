@@ -11,7 +11,8 @@ does it where the permuter and the autopilot already are, with no model:
    matched neighbours were built with, which profiles are plausible. No evidence, no compile: a function with nothing
    pointing anywhere is not tried. `Console.profile_probes` adds the console's own (consoles/n64/profile_probes.py:
    SN 2.7.2 builds and KMC for libultra); the MIPS GCC ones that depend only on flags (`-mfp32`, `-G`, and both) and the
-   neighbours' vote are here. The -O levels need no evidence (opt_levels.py): every function's own flags at each other
+   neighbours' vote are here, and so is `-fforce-addr` for a target that reads offsets off a held symbol address.
+   The -O levels need no evidence (opt_levels.py): every function's own flags at each other
    level of its compiler, on any processor.
 2. judge (`run`): each profile through deep_profiles.probe, the same call the permuter's profile sweep uses, so a result
    is cached durably per (function, saved C, build inputs, profile) and never compiled twice, and an EXACT pair is
@@ -49,7 +50,12 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Callable
 
-from ..arch.mips_profile_evidence import float_pool_through_at, keeps_frame_pointer, words_of
+from ..arch.mips_profile_evidence import (
+    float_pool_through_at,
+    keeps_frame_pointer,
+    reads_through_held_address,
+    words_of,
+)
 
 MAX_PROBES = 10  # profiles the evidence names, judged per function and saved C (the -O levels come on top)
 NEIGHBOUR_MIN = 3  # matched neighbours on one other profile that make it the first profile to judge
@@ -65,7 +71,8 @@ RESERVE = 3  # compiles left in a search's allowance before one more profile: it
 # verdicts need no compile)
 # v4: every -O level of the function's compiler is judged, so passes finished without them run again
 # v5: the draft's record arrays are judged under -O1 too (judge_record_arrays)
-SIGNATURE = 'profile-probe-v5:'
+# v6: -fforce-addr for targets that read offsets off a held symbol address
+SIGNATURE = 'profile-probe-v6:'
 FP_FLAGS = ('-mfp32', '-mfp64')
 # libultra's own names: osXxx, __osXxx, __rmon*, __sc*, the routines whose compiler was the library's, not the game's
 LIBRARY_NAME = re.compile(r'^_{0,2}(?:os[A-Z]|rmon|sc[A-Z])')
@@ -133,7 +140,22 @@ def mips_gcc(facts) -> list[dict]:
             both = small_data_fingerprints.with_threshold(fp, 8)
             out.append(probe({'toolchain': own['toolchain'], 'flags': both}, 'small_data_fp',
                              'the target reads its float pool through $at (small data) and uses the other FP register file'))
+    out += force_addr(facts, flags)
     return out
+
+
+def force_addr(facts, flags) -> list[dict]:
+    """`-fforce-addr`, under the function's own level and under `-O1`, for a target that reads offsets off a held symbol
+    address: a rectangle-filling routine read `2($a2)`, `4($a2)`, `6($a2)` where every spelling under `-O1` and `-O2`
+    gave absolute `%lo(sym + 2)` reads, and its plain C was exact under `-O1 -fforce-addr`."""
+    if '-fforce-addr' in flags or not reads_through_held_address(facts.words):
+        return []
+    variants = [[*flags, '-fforce-addr']]
+    lowered = ['-O1' if re.fullmatch(r'-O[23s]?', f) else f for f in flags]
+    if lowered != flags:
+        variants.append([*lowered, '-fforce-addr'])
+    return [probe({'toolchain': facts.own['toolchain'], 'flags': variant}, 'force_addr',
+                  'the target reads offsets off a register holding a symbol\'s address') for variant in variants]
 
 
 def float_profile_hint(arch, own, code, big_endian=True) -> str:
