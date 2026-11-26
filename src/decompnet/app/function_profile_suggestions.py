@@ -148,11 +148,9 @@ def accept_all(net, slug, log):
         results.append({'id':item['id'], 'applied':reason is None, 'reason':reason})
         log(f"{index}/{len(items)}: suggestion #{item['id']}: {reason or 'applied'}")
         publish(item, {'phase':'Suggestion skipped' if reason else 'Settings and scores saved'})
-    publish(current={'phase':'Saving project progress'})
-    net.progress.sync(slug, force=True, logger=log)
-    log.check_cancel()
-    publish(current={'phase':'Refreshing project overview'})
-    return {'overview':net.overview(slug), 'results':results,
+    # Each change is saved in the database already; autosave publishes it, and the page reads the overview itself.
+    # Doing both here kept a finished one-suggestion run busy for another 50 seconds.
+    return {'results':results,
             'applied':sum(r['applied'] for r in results), 'skipped':sum(not r['applied'] for r in results)}
 
 

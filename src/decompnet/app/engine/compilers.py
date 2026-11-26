@@ -1107,15 +1107,24 @@ class CompilerMixin:
 
     def resolve_suggestion(self, slug: str, sid: int, apply: bool, guard: bool = False, log=lambda line: None) -> None:
         """The user's answer to a suggestion: apply it (a compiler: the project switches to it) or dismiss it."""
-        hit = next((s for s in self.cfg(self._project(slug)).get("suggestions", []) if s["id"] == sid), None)
+        # Saved-file watching owns imports and exports: a forced folder check around every step here made one
+        # single-function suggestion take over a minute on a 2,000-function project.
+        with self.progress.view() if hasattr(self, 'progress') else nullcontext():
+            hit = next((s for s in self.cfg(self._project(slug)).get("suggestions", []) if s["id"] == sid), None)
         if hit is None:
             raise NetworkError(f"no suggestion {sid}")
         from .. import function_profile_suggestions
-        bundle = function_profile_suggestions.saved(self, self._project(slug), hit) if apply and hit['toolchain'] and not self.fork_slug(slug) else None
+        with self.progress.view() if hasattr(self, 'progress') else nullcontext():
+            bundle = function_profile_suggestions.saved(self, self._project(slug), hit) if apply and hit['toolchain'] and not self.fork_slug(slug) else None
         if bundle:
+            from ..restore_effects import batched as defer_effects
             agent, _ = self.local_agent('you')
             log('Rechecking exact source/header/profile for '+bundle['function']+' only…')
-            function_profile_suggestions.apply(self, agent, self._project(slug), bundle, hit['toolchain'], hit['flags'])
+            judging = (self.progress.judging(slug, synchronize=False, publish=False)
+                       if hasattr(self, 'progress') else nullcontext())
+            with self.progress.view() if hasattr(self, 'progress') else nullcontext(), judging:
+                defer_effects(function_profile_suggestions.apply)(
+                    self, agent, self._project(slug), bundle, hit['toolchain'], hit['flags'])
             log('Exact source/header/profile saved for '+bundle['function']+' only.')
         elif apply and hit["toolchain"] and hit.get("ranges") and self.fork_slug(slug):  # (its files: each if it holds)
             self.forks.set_compiler_ranges(slug, hit["ranges"], hit["toolchain"], log=log)
@@ -1124,7 +1133,7 @@ class CompilerMixin:
         elif apply and hit["toolchain"]:
             self.set_compiler(slug, hit["toolchain"], hit["flags"], guard=guard, log=log)
         self._update_cfg(slug, lambda cfg: next(s for s in cfg["suggestions"] if s["id"] == sid).__setitem__(
-            "status", "applied" if apply else "dismissed"))
+            "status", "applied" if apply else "dismissed"), synchronize=False)
 
     @batched
     def apply_function_compiler(self, slug: str, function: str, toolchain: str, flags: list[str],

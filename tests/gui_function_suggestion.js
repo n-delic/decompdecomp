@@ -16,12 +16,13 @@ assert.match(context.suggestionHtml({...item,ranges:[[1,4]]}),/Scope: selected a
  const nodes=new Map();const node=s=>{if(!nodes.has(s))nodes.set(s,{textContent:'',innerHTML:'',value:0,max:1});return nodes.get(s);};
  let dialogHtml='',cleaned=0; const requested=[];const env={S:{slug:'game'},esc:context.esc,
  dialog:(_title,html)=>{dialogHtml=html;return {querySelector:node};},beginWork:log=>{log._workBar={};log._workStatus={};return()=>cleaned++;},showJobError:(_log,msg)=>{node('[data-batch-error]').textContent=msg;},
- api:async(url,options)=>{requested.push(options.body);return {job:1};},
+ api:async(url,options)=>{requested.push(options?options.body:url);return {job:1};},
  followJob:async(job,log,update)=>{update([],{progress:{phase:'Applying waiting suggestions',done:2,total:2,applied:1,skipped:1}});return {applied:1,skipped:1,results:[{id:1,applied:true},{id:2,applied:false,reason:'Busy <function>'}],overview:{}};},
- renderStats:()=>{},renderProjectSettings:()=>{}};
+ renderStats:()=>{},renderProjectSettings:()=>{},toast:()=>{},encodeURIComponent};
  vm.createContext(env);vm.runInContext(source.slice(source.indexOf('function renderSuggestionBatchProgress(')),env);
  await env.acceptWaitingSuggestions({});
  assert.equal(requested[0].action,'apply-all');
+ assert.equal(requested[1],'/api/project?slug=game');
  assert.equal(node('[data-batch-checked]').textContent,'2 / 2');
  assert.equal(node('[data-batch-applied]').textContent,1);
  assert.equal(node('[data-batch-skipped]').textContent,1);
