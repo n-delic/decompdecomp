@@ -51,7 +51,7 @@ Do not search the data home or project folders with `grep`/`find`: `next` alread
 
 - Never add fences (`do {} while (0)`), `volatile`, padding, `__repair_` names, or arrays that exist only to pad the
   stack. `try` refuses what you add. What the C you started from (saved C, near-miss, draft, twin) already has may stay
-  while you improve it, but an exact C is only saved as a match without any: remove it piece by piece. Never add dead
+  while you improve it and in an exact match; say in your report that the match keeps it. Never add dead
   code or wrong stores to lower a score.
 - A lower score is closer; 0 is a match. Only the app saying MATCHED counts.
 - Never print `connection.json`. Do not run other judges in parallel, the Deep Permuter or `scratch_run.py`.
