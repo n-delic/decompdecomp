@@ -120,3 +120,13 @@ def test_ido_float_to_unsigned_fence_becomes_a_truncation():
     assert "trunc.w.s $ft1, $fv0" in out and "mfc1 $t9, $ft1" in out and "jr $ra" in out
     keep = asm.replace("  jr $ra", "  b .L8020D050")  # a label the rest of the function branches to stays
     assert seeds.float_unsigned_conversions(keep) == keep
+
+
+def test_ido_double_to_unsigned_fence_becomes_a_double_truncation():
+    from decompnet import seeds
+    asm = "\n".join([
+        "glabel f", "  cfc1       $t3, $31", "  ctc1       $s3, $31", "  cvt.w.d    $ft2, $ft1", "  cfc1       $s3, $31",
+        "  nop", "  andi       $s3, $s3, 0x78", "  beql       $s3, $zero, .L80032298", "  mfc1       $s3, $ft2",
+        ".L80032298:", "  nop", "  ctc1       $t3, $31", "  jr $ra"])
+    out = seeds.float_unsigned_conversions(asm)
+    assert "cfc1" not in out and "trunc.w.d $ft2, $ft1" in out and "mfc1 $s3, $ft2" in out

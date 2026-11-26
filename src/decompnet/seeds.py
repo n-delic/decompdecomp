@@ -696,7 +696,7 @@ _LABEL_LINE = re.compile(r"^[ \t]*(\.?L\w+):[ \t]*$")
 
 
 def float_unsigned_conversions(asm_text: str) -> str:
-    """IDO's float-to-unsigned conversion is a fenced sequence (`cfc1 $t8, $31` ... a `cvt.w.s`, a check of the FPU's
+    """IDO's float-to-unsigned conversion is a fenced sequence (`cfc1 $t8, $31` ... a `cvt.w.s` (`cvt.w.d` for a double), a check of the FPU's
     exception bits, a second `cvt.w.s` of the value less 2^31, `ctc1 $t8, $31`), and m2c reads the control register
     as an unknown instruction: 124 functions of 60 games had no draft. The whole fence is the C cast, so it is written
     as the truncation it converts with (`trunc.w.s` and the move to the result register), which m2c reads as a cast."""
@@ -717,12 +717,13 @@ def float_unsigned_conversions(asm_text: str) -> str:
                 inside = range(i, end + 1)
                 names = {m[1] for k in inside if (m := _LABEL_LINE.match(lines[k]))}
                 outside = "\n".join(lines[k] for k in range(len(lines)) if k not in inside)
-                convert = next((ops[k][1] for k in inside if ops[k][0] == "cvt.w.s"), None)
+                width = next((ops[k][0][-1] for k in inside if ops[k][0] in ("cvt.w.s", "cvt.w.d")), None)
+                convert = next((ops[k][1] for k in inside if ops[k][0] == f"cvt.w.{width}"), None)
                 result = next((re.split(r"\s*,\s*", ops[k][1])[0] for k in inside if ops[k][0] == "andi"), None)
                 if (convert and result and not any(re.search(rf"(?<![\w.]){re.escape(n)}(?!\w)", outside) for n in names)
                         and "$31" not in "".join(ops[k][1] for k in inside if ops[k][0] not in ("cfc1", "ctc1"))):
                     fregs = re.split(r"\s*,\s*", convert)
-                    out += [f"trunc.w.s {fregs[0]}, {fregs[1]}", f"mfc1 {result}, {fregs[0]}"]
+                    out += [f"trunc.w.{width} {fregs[0]}, {fregs[1]}", f"mfc1 {result}, {fregs[0]}"]
                     i, keep, changed = end + 1, False, True
         if keep:
             out.append(lines[i])
