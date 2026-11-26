@@ -76,11 +76,13 @@ void f(int *p, int a, int b)
 """
     judge = SimpleNamespace(arch="mips", asm="", compiler={"flags": ["-O2"]}, header="")
     children = prove_chain.generator(judge, "f")(source)
-    assert {"allocation_lever", "identical_arm_collapse"} <= {family for family, _ in children}
-    # scoring by length makes the arm collapse the chain's first step
-    final, best, chain = prove_chain.prove(source, prove_chain.generator(judge, "f"), len, {"identical_arm_collapse"},
+    assert "allocation_lever" in {family for family, _ in children}
+    # the arm collapse is labelled by whichever library family proposes it first (identical_arm_collapse until
+    # float_block_normal_form wrote the same text); scoring by length makes a family that collapses it the first step
+    collapsed = next(family for family, child in children if "else" not in child and "do" not in child)
+    final, best, chain = prove_chain.prove(source, prove_chain.generator(judge, "f"), len, {collapsed},
                                            steps=1, log=lambda _: None)
-    assert chain and chain[0][0] == "identical_arm_collapse" and best < len(source)
+    assert chain and chain[0][0] == collapsed and best < len(source)
 
 
 def test_a_source_saved_before_a_rename_is_proposed_under_the_current_name():

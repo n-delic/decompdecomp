@@ -196,3 +196,40 @@ def test_fast_judge_flags_adds_to_the_functions_own_without_replacing_them(tmp_p
     assert "flags=-O2\n" in capsys.readouterr().out
     fast.main(base + ["--flags", "-fno-strength-reduce -fno-schedule-insns"])
     assert "flags=-O2 -fno-strength-reduce -fno-schedule-insns" in capsys.readouterr().out
+
+
+STUB_PROFILE = STUB_FLAGS.replace('"flags=%s" % " ".join(r["compiler"]["flags"])',
+                                  '"used=%s %s" % (r["compiler"]["toolchain"], " ".join(r["compiler"]["flags"]))')
+
+
+def test_fast_judge_names_the_compiler_replaces_flags_and_says_what_it_judged_with(tmp_path, monkeypatch, capsys):
+    path = tmp_path / "decomp"
+    path.write_text(STUB_PROFILE.format(python=sys.executable))
+    path.chmod(path.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("DECOMP_BIN", str(path))
+    monkeypatch.delenv("DD_EXTRA_FLAGS", raising=False)
+    fast = load("fast_judge")
+    source = tmp_path / "c.c"
+    source.write_text("int f1(void){return 1;}")
+    base = [str(source), "--slug", "game", "--function", "f1", "--diff"]
+    fast.main(base + ["--toolchain", "ido-7.1", "--replace-flags", "-O1 -mips2"])
+    out = capsys.readouterr()
+    assert "used=ido-7.1 -O1 -mips2\n" in out.out and out.out.splitlines()[0] == "30"
+    assert "judged with ido-7.1 -O1 -mips2" in out.err and "--replace-flags" in out.err
+    monkeypatch.setenv("DD_EXTRA_FLAGS", "-mfp32")  # the environment's flags count when --flags isn't given
+    fast.main(base)
+    out = capsys.readouterr()
+    assert "used=t -O2 -mfp32\n" in out.out and "added: -mfp32" in out.err
+    fast.main(base + ["--replace-flags=-O1"])
+    assert "used=t -O1\n" in capsys.readouterr().out
+
+
+def test_a_copy_of_the_scripts_finds_the_decomp_of_the_venv_running_it(tmp_path, monkeypatch):
+    fast = load("fast_judge")
+    for name in ("DECOMP_BIN", "UV_PROJECT_ENVIRONMENT"):
+        monkeypatch.delenv(name, raising=False)
+    (tmp_path / "venv" / "bin").mkdir(parents=True)
+    (tmp_path / "venv" / "bin" / "decomp").write_text("")
+    monkeypatch.setattr(fast.sys, "prefix", str(tmp_path / "venv"))
+    monkeypatch.setattr(fast.sys, "base_prefix", "/usr")
+    assert fast.find_decomp() == str(tmp_path / "venv" / "bin" / "decomp")

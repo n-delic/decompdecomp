@@ -5,6 +5,11 @@ It returns exactly the score the app gives (a candidate judged 1090 in the app j
 needs no claim, and opens the project attach-only so it runs beside the app without changing its state.
 
     fast_judge.py FILE.c [FILE.c ...] --slug twine --function func_8002D240 [--diff [--rows N|all]] [--header]
+                  [--toolchain ID] [--flags='-mfp32' | --replace-flags='-O2 ...']
+
+The profile is the function's own unless told otherwise: `--toolchain` names another compiler, `--flags` ADDS to the
+function's flags, `--replace-flags` judges with exactly those flags (use it with another compiler or optimisation level,
+or once a match has changed the function's own profile). stderr says which compiler and flags were judged with.
 
 Only the project and the function are needed: the worker's `function` op supplies the target bytes, the function's
 own compiler profile and the project's header (typedefs and externs, which the judge prepends to every candidate:
@@ -17,7 +22,7 @@ to identical instructions get a hint (invariant.py): their difference is not wha
     j = Judge(slug, name); j.score(source); j.judge(source, diff=True)["diff"]; j.header
 
 Needs a `decomp` command: $DECOMP_BIN, else $UV_PROJECT_ENVIRONMENT/bin/decomp (a setup.py session exports it), else
-the checkout's .venv. DECOMP_HOME names the app's data home (default ~/Decomp-RetroReversing-dev). Reads the project
+the venv running this script, else the checkout's .venv. DECOMP_HOME names the app's data home (default ~/Decomp-RetroReversing-dev). Reads the project
 only; never copies a ROM. Score 0 is a match; None means it did not compile (test `is None`, never `score or BIG`).
 The old explicit form still works: Judge(slug, name, vram, target_hex, toolchain, flags).
 """
@@ -49,6 +54,8 @@ def find_decomp(explicit=None):
     here = os.path.abspath(os.path.join(os.path.dirname(__file__), *[".."] * 4))
     private = os.environ.get("UV_PROJECT_ENVIRONMENT")
     candidates = [explicit, os.environ.get("DECOMP_BIN"), private and os.path.join(private, "bin", "decomp"),
+                  # a copy of the scripts outside a checkout, run with the session's python: that venv's decomp
+                  sys.prefix != sys.base_prefix and os.path.join(sys.prefix, "bin", "decomp"),
                   os.path.join(here, ".venv", "bin", "decomp")]
     return next((c for c in candidates if c and os.path.exists(c)), candidates[-1])
 
@@ -117,6 +124,15 @@ class Judge:
             self.proc.kill()
 
 
+def profile_line(judge, toolchain=None, replaced=None):
+    """Which compiler and flags the scores that follow are of, and where they came from."""
+    came = [f"compiler {'from --toolchain' if toolchain else 'of the function'}",
+            f"flags {'from --replace-flags' if replaced is not None else 'of the function'}"]
+    if judge.extra_flags:
+        came.append(f"added: {' '.join(judge.extra_flags)}")
+    return f"judged with {judge.compiler['toolchain']} {' '.join(judge.compiler['flags'])}  ({', '.join(came)})"
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("source", nargs="+", help="candidate C files, each scored in turn")
@@ -126,19 +142,28 @@ def main(argv=None):
     ap.add_argument("--rows", default=str(DIFF_ROWS), metavar="N|all",
                     help=f"with --diff: print the first N rows (default {DIFF_ROWS}) or `all`; the rest is counted")
     ap.add_argument("--header", action="store_true", help="print the project header the judge prepends, and exit")
-    ap.add_argument("--flags", default="", metavar="'-fno-strength-reduce ...'",
+    ap.add_argument("--toolchain", help="judge with this compiler instead of the function's own")
+    ap.add_argument("--replace-flags", metavar="'-G0 -mips3 -O2 ...'",
+                    help="judge with exactly these flags instead of the function's own ($DD_EXTRA_FLAGS is ignored)")
+    ap.add_argument("--flags", metavar="'-fno-strength-reduce ...'",
                     help="extra compiler flags added to the function's own, to probe another profile without changing "
-                         "it (a diagnostic: the app records nothing; the function's profile is changed with `suggest`)")
+                         "it (default $DD_EXTRA_FLAGS; a diagnostic: the app records nothing; the function's profile is "
+                         "changed with `suggest`)")
     ap.add_argument("--vram", type=int, help="the address, when the name is shared by overlays")
     ap.add_argument("--home")
     a = ap.parse_args(argv)
     claimlost.warn()  # a lost claim is said first, before minutes of scoring
     limit = rows_wanted(a.rows)
-    judge = Judge(a.slug, a.function, vram=a.vram, home=a.home, extra_flags=a.flags.split())
+    replaced = a.replace_flags.split() if a.replace_flags is not None else None
+    added = a.flags.split() if a.flags is not None else ([] if replaced is not None else None)  # None: $DD_EXTRA_FLAGS
+    # vram and target stay unset: the worker's `function` op supplies them, with the header
+    judge = Judge(a.slug, a.function, vram=a.vram, home=a.home, extra_flags=added, toolchain=a.toolchain,
+                  flags=replaced)
     try:
         if a.header:
             print(judge.header)
             return
+        print(profile_line(judge, a.toolchain, replaced), file=sys.stderr, flush=True)
         codes = []
         for path in a.source:
             with open(path) as f:

@@ -111,7 +111,10 @@ def run(argv):
     arguments = parse_arguments(rest[1] if len(rest) == 2 else "")
     check_values(tool, arguments)
     try:
-        print(gateway.call(name, arguments))
+        text = gateway.call(name, arguments)
+        if arguments.get("function"):  # a match made here is this session's own, not a lost claim
+            setup.note_verdict(setup.session_dir(holder), arguments["function"], text)
+        print(text)
     except setup.McpError as error:
         hints = "; ".join(f"{k}: {', '.join(map(str, v))}" for k, v in choices(tool.get("inputSchema")).items())
         sys.exit(f"{error}" + (f"\nvalid values - {hints}" if name == "report_repair" and hints else ""))

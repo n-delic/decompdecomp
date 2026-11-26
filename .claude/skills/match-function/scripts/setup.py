@@ -18,7 +18,8 @@ read a function's status.
                                                         the session's own MCP connection, which holds the claim) and print
                                                         the app's verdict; FUNC defaults to the claimed function
     setup.py check HOLDER                               ask the app now whether this session still holds its function (also
-                                                        `status`); exit 1 and a loud warning when not. Run it every 20 minutes
+                                                        `status`); exit 1 and a loud warning when not (a function this
+                                                        session matched is said quietly, exit 0). Run it every 20 minutes
                                                         and before long isolated work. Every command here (and fast_judge,
                                                         prove_chain, grid) prints the same warning while a LOST file exists
     setup.py env HOLDER                                 print `export UV_PROJECT_ENVIRONMENT=... DECOMP_HOME=... DECOMP_PORT=...`
@@ -31,7 +32,7 @@ read a function's status.
     setup.py reclaim HOLDER [FUNC] [--random] [--max-size N]
                                                         claim another function (FUNC, or the nearest/random one, as at
                                                         start) and renew that one from now on; a released function is
-                                                        refused
+                                                        refused; the previous function's start/ files are removed
     setup.py stop HOLDER                                stop the renewal (SIGTERM, then SIGKILL, checked gone), revoke the connection (that frees its
                                                         claim, even with no compile yet), remove /tmp/dd-HOLDER/
 
@@ -49,6 +50,7 @@ It prints the environment to use. Release with notes through MCP (`release_funct
 ever *adds* a worktree there (never pulls, checks out or syncs).
 """
 import argparse
+import difflib
 import json
 import os
 import re
@@ -90,6 +92,8 @@ STOP_GRACE_SECONDS = 5  # `stop`: SIGTERM, this long, then SIGKILL
 CLAIMED = re.compile(r"^## CLAIMED: [^/\s]+/(\S+)", re.M)
 UNCHANGED = re.compile(r"You still hold the unchanged claim: [^/\s]+/(\S+?)\.?(?:\s|$)")
 CLAIMED_BY = re.compile(r"is claimed by (.+?)(?: for another|$)", re.M)
+MATCHED_BY = re.compile(r"^MATCHED by (\S+)", re.M)  # the app's brief of a matched function (ROM mode)
+COMMANDS = ("check", "status", "sync", "try", "env", "release", "reclaim", "stop")
 RENEW_CALL_SECONDS = 120  # one renewal attempt waits this long for the app; the loop tries again
 RENEW_RETRIES = 4  # a failed renewal is tried again at once this many times, RETRY_SECONDS apart
 RETRY_SECONDS = 10
@@ -446,6 +450,37 @@ def renew_loop(root, interval):
     (root / "renew.pid").unlink(missing_ok=True)
 
 
+def note_verdict(root, function, text):
+    """Remember that a verdict this session received was its match of `function` (the app credits the submitter)."""
+    if not text.lstrip().startswith("\u2705 MATCH!"):
+        return
+    try:
+        info = json.loads((root / "connection.json").read_text())
+    except (OSError, ValueError):
+        return
+    info["matched_here"] = sorted({*info.get("matched_here", []), function})
+    write_connection(root, info)
+
+
+def matched_by_us(info, function, gateway):
+    """Did this session match `function`? Its own verdict said so, or the app credits the session's connection (a match
+    made by `mcp.py ... suggest`). False also when the app won't say: then the loud warning stands."""
+    if function in info.get("matched_here", []):
+        return True
+    try:
+        text = gateway.call("get_function", {"function": function, "section": "all"}, wait=RENEW_CALL_SECONDS)
+    except McpError:
+        return False
+    found = MATCHED_BY.search(text)
+    return bool(found) and found[1] == info.get("connection_name")
+
+
+def mark_matched(root, current, function, gateway, reason="matched"):
+    ours = matched_by_us(current, function, gateway)
+    claimlost.write(root, function, reason, matched=True, ours=ours)
+    return ours
+
+
 def renew_once(root, current, app, gateway, last_good, stop=(), pause=None):
     """One renewal of the session's function, retried promptly when the app is slow or errors. Returns "renewed",
     "matched", "lost" (someone else holds it: recorded in LOST, never claimed again by retrying) or "failed" (the app
@@ -456,7 +491,7 @@ def renew_once(root, current, app, gateway, last_good, stop=(), pause=None):
     for attempt in range(RENEW_RETRIES):
         try:
             if app.function(current["slug"], function).get("status") == "matched":
-                claimlost.write(root, function, "matched", matched=True)
+                mark_matched(root, current, function, gateway)
                 print(f"{function} matched; the claim needs no renewing", flush=True)
                 return "matched"
             claim(gateway, function, wait=RENEW_CALL_SECONDS)
@@ -472,7 +507,7 @@ def renew_once(root, current, app, gateway, last_good, stop=(), pause=None):
                 print(time.strftime("%H:%M:%S"), f"CLAIM LOST: {function} is held by {owner}", flush=True)
                 return "lost"
             if "already matched" in error:
-                claimlost.write(root, function, error[:300], matched=True)
+                mark_matched(root, current, function, gateway, error[:300])
                 print(f"{function} is matched; the claim needs no renewing", flush=True)
                 return "matched"
         except (SystemExit, OSError, ValueError) as problem:
@@ -518,6 +553,10 @@ def reclaim_session(holder, function="", strategy="nearest", max_insns=NEAREST_M
         sys.exit(f"{claimed} was released by this session and was claimed again; release it with its claim token and "
                  f"ask for another function")
     info = read_session(root)  # fresh: the claim took a while
+    if claimed != info.get("function") and (root / "start").exists():
+        # the previous function's orientation (best.c is handoff.py's default source) must not pass for this one's
+        shutil.rmtree(root / "start", ignore_errors=True)
+        print(f"removed {root / 'start'} (the previous function's files)", flush=True)
     info["function"], info["started"] = claimed, time.time()
     write_connection(root, info)
     claimlost.clear(root)
@@ -561,6 +600,8 @@ def submit(holder, source, function="", again="the same command"):
         sys.exit("the session has no claimed function; name it: setup.py try HOLDER CAND.c FUNC")
     marker = claimlost.read(root)
     if claimlost.taken(marker) and marker.get("function") == name:
+        if marker.get("ours"):
+            sys.exit(f"not submitted: {name} is already matched by this session.")
         sys.exit(claimlost.warning(root) + "not submitted: someone else holds this function now.")
     gateway = Gateway(info["gateway_url"], info["token"])
     pending_file = root / "try-pending.json"
@@ -573,12 +614,15 @@ def submit(holder, source, function="", again="the same command"):
         if earlier and (earlier["function"], earlier["source"]) != (name, source):
             print(f"an earlier submission for {earlier['function']} was still in flight; collecting its verdict first "
                   f"(a second source is never sent while one is running)", flush=True)
-            print(gateway.call("compile_and_diff", {"function": earlier["function"], "source": earlier["source"]}))
+            verdict = gateway.call("compile_and_diff", {"function": earlier["function"], "source": earlier["source"]})
+            note_verdict(root, earlier["function"], verdict)
+            print(verdict)
             pending_file.unlink(missing_ok=True)
             print("--- the earlier submission's verdict is above; now your new candidate ---", flush=True)
         pending_file.write_text(json.dumps({"function": name, "source": source}))
         text = gateway.call("compile_and_diff", {"function": name, "source": source})
         pending_file.unlink(missing_ok=True)  # answered: nothing is in flight any more
+        note_verdict(root, name, text)
     except AppSlow as error:
         sys.exit(f"{error}\nThe submission is still in flight and is kept: `{again}` again collects its "
                  f"verdict (a different candidate is held back until then).")
@@ -620,7 +664,10 @@ def check_claim(holder):
               if any(e.get("expires_at") for e in held) else f"{holder}: {function} is claimed by this session")
         return 0
     if status.get("status") == "matched":
-        claimlost.write(root, function, "matched", matched=True)
+        if mark_matched(root, info, function, gateway):
+            claimlost.warn(root)  # one quiet line, the first time
+            print(f"{holder}: {function} is matched by this session; `setup.py reclaim {holder}` takes the next one")
+            return 0
     else:
         owner = next((status[key] for key in ("claimed_by", "claim_holder", "holder") if isinstance(status.get(key), str)), "")
         claimlost.write(root, function, "the app no longer lists the claim as this session's", holder=owner)
@@ -785,7 +832,16 @@ def resumable(root, args):
     return info
 
 
+def mistyped_command(word):
+    """Is `word`, given where a project name goes, a command mistyped (`stop-nothing`, `recliam`)? It once built a
+    session of a project by that name."""
+    return word.split("-")[0].split("_")[0] in (*COMMANDS, "help") or bool(difflib.get_close_matches(word, COMMANDS, 1, 0.8))
+
+
 def start(args):
+    if mistyped_command(args.slug):
+        sys.exit(f"{args.slug!r} is not a command ({', '.join(COMMANDS)}) and reads like one, so no session was made; "
+                 f"`setup.py --help` shows the usage")
     holder = holder_name(args.holder)
     root = session_dir(holder)
     info = resumable(root, args) if root.exists() else None
