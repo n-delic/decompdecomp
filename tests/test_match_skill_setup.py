@@ -228,6 +228,23 @@ def test_the_renewal_ends_by_itself_once_the_function_matches(world):
     setup.main(["stop", "claude-t3"])
 
 
+def test_reclaim_after_a_match_starts_the_renewal_again(world):
+    setup, app, home, primary = world
+    app.status = "matched"
+    assert start(setup, home, primary, "--holder", "claude-t3r", "func_9000") == 0
+    root = setup.session_dir("claude-t3r")
+    try:
+        assert wait_for(lambda: not (root / "renew.pid").exists())  # matched: the renewal ended
+        app.status = "open"
+        assert setup.main(["reclaim", "claude-t3r", "func_9100"]) == 0
+        assert (root / "renew.pid").exists()
+        mark = len(app.claims)
+        assert wait_for(lambda: len(app.claims) >= mark + 2)  # the next function is renewed
+        assert {c.get("function") for c in app.claims[mark:]} == {"func_9100"}
+    finally:
+        setup.main(["stop", "claude-t3r"])
+
+
 def test_a_failed_claim_revokes_the_connection_and_leaves_nothing_behind(world, monkeypatch):
     setup, app, home, primary = world
 

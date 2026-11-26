@@ -499,6 +499,12 @@ def reclaim_session(holder, function="", strategy="nearest", max_insns=NEAREST_M
     info["function"], info["started"] = claimed, time.time()
     write_connection(root, info)
     claimlost.clear(root)
+    # The renewal ends by itself once its function matches: a session that matched one and claimed the next had no
+    # renewal at all, and its next claims lapsed after ten minutes (three functions in one session, 26 November 2026).
+    pid_file = root / "renew.pid"
+    pid = int(pid_file.read_text() or 0) if pid_file.exists() else 0
+    if not renewers(root, pid):
+        start_renewal(root, int(info.get("renew_interval") or RENEW_SECONDS))
     print(f"{holder}: claimed {claimed}; the renewal now renews it", flush=True)
     return 0
 
@@ -797,6 +803,7 @@ def start(args):
             info["function"] = claim(gateway, asked["function"], strategy, asked["max_size"])
         info.pop("claim_pending", None)
         info["started"] = time.time()  # the hand-off clock's start (clock.py HOLDER)
+        info["renew_interval"] = args.interval  # reclaim restarts the renewal with it after a match ended it
         write_connection(root, info)
         info["renew_pid"] = start_renewal(root, args.interval)
         print(f"[setup] {phase.summary()}", file=sys.stderr, flush=True)
