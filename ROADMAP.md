@@ -886,6 +886,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Verified cleanup of rare compiler profiles | ✓ ROM mode | ✓ ROM mode | ✓ ROM mode | — | — | ✓ ROM mode | — | — | — | — | — | — |
 | Deep Permuter detects a near-match's compiler (`profile_detection`: its saved C under every installed profile, matched neighbours, the compiler map, code habits; told and tried first) | ✓ demo; copies of three real games | ✓ shared ROM path, unchecked | ✓ shared ROM path, unchecked | ✓ judge and neighbours, unchecked (code habits: MIPS only) | — | ✓ shared ROM path, unchecked | — | — per-file compilers: planned | — per-file compilers: planned | — per-file compilers: planned | — per-file compilers: planned | — the project's build |
 | Profile probe: the few per-function profiles an open function's target points to (`-mfp32`, `-G8`, SN 2.7.2's builds, the 0001 + 0004-assembler pack for any `ldc1` target, KMC for libultra, the profile most matched neighbours use, the project's most used per-function profiles), judged once per saved C by the Deep Permuter and the autopilot's saved-source pass, an exact pair applied for that function only (`profile_probe`) | ✓ demo; the rules from ~1,000 hand matches of one SN 2.8.1 game | ✓ flag and neighbour rules (`-G`), unchecked | ✓ flag and neighbour rules (`-G`), unchecked | ✓ flag and neighbour rules, unchecked | — | ✓ flag and neighbour rules, unchecked | — | — per-file compilers: planned | — per-file compilers: planned | — per-file compilers: planned | — per-file compilers: planned | — the project's build |
+| Repair rules learnt from the Deep Permuter's matches (`mined_rules`): a statement-sized change that made two different matches becomes a rule, tried first on other functions (C only) | ✓ unit tests; extraction measured on saved matches | ✓ shared, unchecked | ✓ shared, unchecked | ✓ shared, unchecked | ✓ shared, unchecked | ✓ shared, unchecked | ✓ shared, unchecked | ✓ shared, unchecked | ✓ shared, unchecked | ✓ shared, unchecked | ✓ shared, unchecked | ✓ shared, unchecked |
 | Flag search (`search_flags`) | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — (the project's flags only) | per source file (/Oy- on 32-bit, /O1, /Ob1) | per source file | — (the project's flags only) | the project's build |
 | Compiler map and the judge's survey | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ from scratch: per source file (its own compilers, nearest first); else the project's build | ✓ per source file, Rich header | the XDK build's compiler (no Rich header: one per game) | ✓ from scratch: per source file (its own compilers, nearest first); else the project's build | — |
 | Range checks: a range applies after its neighbours confirm it | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ from scratch: per source file; else the project's build | ✓ over source files | ✓ | ✓ from scratch: per source file; else the project's build | — |
@@ -2381,6 +2382,12 @@ function alone under another compiler. Next: score the unit under the compilers 
 `try_compiler` path, `app/filecompilers.py`), and use the files around it as the neighbours. Offer a file compiler
 change as the same review-only suggestion. Every project-mode console: GameCube, Wii, Windows PC, Xbox, DS. PS4 and
 GBA ROM projects have no compiler choice to detect yet.
+
+### Learnt repair rules: more kinds of match
+
+Rules are learnt only from the Deep Permuter's matches whose starting C is still saved (`app/mined_rules.py`), and only
+for C (the rewrites leave C++ classes alone). Next: learn from agents' and hand matches, from changes in two places, and
+check the pass on each console in the table, GBA, PS4 and project mode included.
 
 ### Profile probes for project mode
 

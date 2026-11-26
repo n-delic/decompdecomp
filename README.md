@@ -1338,6 +1338,11 @@ repairs paused for the random probe, the search gives them any remaining budget 
 The current diff prioritises relevant repair families and limits speculative
 storage, declaration order and global type trials.
 
+A search also learns from earlier matches. When the same statement-sized change made two different matches (a load
+made `volatile`, two declarations swapped), it is saved as a repair rule in the home's `.decomp/repair-rules` folder
+(`mined_*.json`), and later searches try those first. Rules only propose C: the judge still decides. Delete a file to
+drop its rule; it is not written again.
+
 **Threads per function** runs independent candidate paths concurrently; targeted repairs are divided
 between workers and random paths use different seeds. The project pass also has **Functions at a time**
 (the former Parallel threads setting). For example, 2 functions × 4 threads uses up to 8 search workers.
