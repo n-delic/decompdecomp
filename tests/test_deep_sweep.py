@@ -1388,3 +1388,22 @@ def test_status_sends_the_first_rewrite_rows_and_the_export_all_of_them(sweep, m
     assert obj.status('game')['recipes_total'] == 5  # cached for a few seconds: the window does not need the last trial
     obj.reset_metrics('game')
     assert obj.status('game')['recipes_total'] == 0  # a reset shows at once
+
+
+def test_a_missing_package_stops_the_pass_and_keeps_the_queue_instead_of_marking_errors(sweep, monkeypatch):
+    obj,net,calls,_=sweep
+    def broken(*args):
+        raise RuntimeError("No module named 'decomprepair'")
+    monkeypatch.setattr(deep_permuter,'run',broken)
+    with pytest.raises(Exception, match='could not load part of itself'):
+        obj.run('game',1,10,Log())
+    assert obj.status('game')['errors']==0
+    assert obj.history('game',net._function('f0','game'))['state']=='pending'
+
+
+def test_import_errors_from_earlier_passes_are_requeued(sweep):
+    obj,net,*_=sweep
+    fn=net.store.one("SELECT * FROM functions WHERE name='f0'")
+    obj.record(fn,'old-scope','error',1,10,error="RuntimeError: No module named 'decomprepair'")
+    obj.recover_room_transport('game')
+    assert net.store.one('SELECT state,error FROM deep_permutation_passes WHERE function_id=?',fn['id'])['state']=='pending'

@@ -62,17 +62,29 @@ def _overlay(net,sql,columns,rows,profile,focus,prefix):
     return [kept[family] for family in sorted(kept)]
 
 
+def _has_table(net,name):
+    """Whether the table exists. Once it does it stays, so only a miss is asked again (every ranking asked)."""
+    if getattr(net,'_sequence_has',{}).get(name):return True
+    found=bool(net.store.one("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",name))
+    if found:net.__dict__.setdefault('_sequence_has',{})[name]=True
+    return found
+
+
 def outcome_rows(net,profile,focus,prefix):
-    """The outcome rows of one profile, focus and prefix as a flush then a read would give them (table, then queue)."""
-    stored=[dict(r) for r in net.store.all('SELECT * FROM repair_sequence_outcomes WHERE profile=? AND focus=? AND prefix=?',
-        profile,focus,json.dumps(list(prefix)))] if net.store.one("SELECT 1 FROM sqlite_master WHERE type='table' AND name='repair_sequence_outcomes'") else []
+    """The outcome rows of one profile, focus and prefix as a flush then a read would give them (table, then queue).
+    The table is read at most once a second (trial_bookkeeping.stored): rankings ask before every batch of candidates."""
+    encoded=json.dumps(list(prefix))
+    stored=trial_bookkeeping.stored(net.store,('sequence-outcomes',profile,focus,encoded),lambda:[dict(r) for r in net.store.all(
+        'SELECT * FROM repair_sequence_outcomes WHERE profile=? AND focus=? AND prefix=?',profile,focus,encoded)]
+        ) if _has_table(net,'repair_sequence_outcomes') else []
     return _overlay(net,OUTCOMES_COUNT,OUTCOMES_COLUMNS,stored,profile,focus,prefix)
 
 
 def listing(net,profile,focus,prefix):
-    if not net.store.one("SELECT 1 FROM sqlite_master WHERE type='table' AND name='repair_sequence_costs'"):return []
-    stored=[dict(r) for r in net.store.all('SELECT * FROM repair_sequence_costs WHERE profile=? AND focus=? AND prefix=? ORDER BY family',
-                                         profile,focus,json.dumps(list(prefix)))]
+    if not _has_table(net,'repair_sequence_costs'):return []
+    encoded=json.dumps(list(prefix))
+    stored=trial_bookkeeping.stored(net.store,('sequence-costs',profile,focus,encoded),lambda:[dict(r) for r in net.store.all(
+        'SELECT * FROM repair_sequence_costs WHERE profile=? AND focus=? AND prefix=? ORDER BY family',profile,focus,encoded)])
     return _overlay(net,COSTS_COUNT,COSTS_COLUMNS,stored,profile,focus,prefix)
 
 
@@ -102,7 +114,7 @@ def brief(net,profile,focus,prefix=()):
 
 
 def order_families(net,profile,focus,prefix,families):
-    if not net.store.one("SELECT 1 FROM sqlite_master WHERE type='table' AND name='repair_sequence_outcomes'") and not trial_bookkeeping.pending_counters(net.store,OUTCOMES_COUNT):return families
+    if not _has_table(net,'repair_sequence_outcomes') and not trial_bookkeeping.pending_counters(net.store,OUTCOMES_COUNT):return families
     rows={r['family']:r for r in outcome_rows(net,profile,focus,prefix)}
     return [r['family'] for r in rank(net,profile,focus,prefix,
         [rows.get(f,dict(family=f,improved=0,exact=0)) for f in families])]

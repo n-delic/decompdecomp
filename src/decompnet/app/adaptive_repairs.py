@@ -155,23 +155,39 @@ def policy_rows(net, key, focus):
 def pooled_rows(net, key, focus):
     """One row per family summed over the profile's OTHER mismatch kinds (not `focus`, and never a `kind@shape` key:
     each trial is counted under both, so adding them would count it twice), with what this search has counted and not
-    yet written, like `policy_rows`."""
+    yet written, like `policy_rows`.
+
+    A profile's stored rows run to tens of thousands and this ran before every batch of candidates (a fifth of a
+    lane's CPU): they are summed once per read of the table, in total and per mismatch kind, and the kind asked about
+    is subtracted."""
     stored = trial_bookkeeping.stored(net.store, ('policy-profile', key), lambda: [dict(row) for row in net.store.all(
         'SELECT * FROM repair_policy WHERE profile=?', key)])
-    rows = [dict(row) for row in stored]
-    for (profile, queued_focus, family), args in trial_bookkeeping.pending_counters(net.store, POLICY_COUNT).items():
-        if profile == key:
-            rows.append({'profile': key, 'focus': queued_focus, 'family': family,
-                         **dict(zip(POLICY_COLUMNS, args[3:]))})
-    pooled = {}
-    for row in rows:
-        if row['focus'] == focus or '@' in row['focus']:
-            continue
-        total = pooled.setdefault(row['family'], {'profile': key, 'focus': '', 'family': row['family'],
-                                                  **dict.fromkeys(POLICY_COLUMNS, 0)})
-        for column in POLICY_COLUMNS:
-            total[column] += row[column]
-    return [pooled[family] for family in sorted(pooled)]
+    cache = net.__dict__.setdefault('_pooled_totals', {})
+    kept = cache.get(key)
+    if kept is None or kept[0] is not stored:
+        total, by_kind = {}, {}
+        for row in stored:
+            if '@' in row['focus']:
+                continue
+            for table, at in ((total, row['family']), (by_kind, (row['focus'], row['family']))):
+                counts = table.setdefault(at, dict.fromkeys(POLICY_COLUMNS, 0))
+                for column in POLICY_COLUMNS:
+                    counts[column] += row[column]
+        kept = cache[key] = (stored, total, by_kind)
+    _, total, by_kind = kept
+    pooled = {family: dict(counts) for family, counts in total.items()}
+    for family, counts in pooled.items():
+        own = by_kind.get((focus, family))
+        if own:
+            for column in POLICY_COLUMNS:
+                counts[column] -= own[column]
+    for (queued_profile, queued_focus, family), args in trial_bookkeeping.pending_counters(net.store, POLICY_COUNT).items():
+        if queued_profile == key and queued_focus != focus and '@' not in queued_focus:
+            counts = pooled.setdefault(family, dict.fromkeys(POLICY_COLUMNS, 0))
+            for column, amount in zip(POLICY_COLUMNS, args[3:]):
+                counts[column] += amount
+    return [{'profile': key, 'focus': '', 'family': family, **pooled[family]}
+            for family in sorted(pooled) if any(pooled[family].values())]
 
 
 def _weight(row, typical, ceiling):

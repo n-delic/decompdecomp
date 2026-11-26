@@ -100,6 +100,11 @@ def stored(store, key, load):
     return rows
 
 
+def written():
+    """A transaction outside a Batch changed rows `stored` may be keeping: drop every kept copy."""
+    _FLUSHES[0] += 1
+
+
 def pending_counters(store, sql):
     """The counter rows `count` has queued for `store` under this exact SQL and not yet written: {key arguments: the
     queued arguments}. A reader that needs the totals can add these to the stored rows instead of flushing the batch,
