@@ -3,7 +3,8 @@
 import hashlib
 import re
 
-STRUCTURAL = ('scratch_role_reuse','scalar_storage_reuse','row_number_staging','explicit_loop_backedge','integer_array_pointer_phase','inferred_record_layout','scalar_normalization_scope')
+STRUCTURAL = ('scratch_role_reuse','scalar_storage_reuse','row_number_staging','explicit_loop_backedge','integer_array_pointer_phase','inferred_record_layout','scalar_normalization_scope',
+              'm2c_field_record_view')  # (a short draft pass cut it off for half the m2c drafts it applies to)
 GUARDED = ('matched_zero_argument_call', 'zero_argument_parameter_alias', 'matched_integer_prototype', 'mips_debug_break','live_return_address','live_return_address_initializers', 'kmc_address_operand_order', 'kmc_float_comparison_order',
            'callee_array_extent', 'callee_buffer_extent', 'loop_sentinel_placement')
 
