@@ -2,7 +2,7 @@
 title: tail call label copied into each arm
 kind: function
 compiler: gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O1
-evidence: exact match
+evidence: verified
 date: 2026-11-26
 ---
 
