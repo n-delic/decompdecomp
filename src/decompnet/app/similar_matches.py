@@ -295,6 +295,26 @@ def compiler_trial(net, agent, proj, fn, candidate, settings):
             db.execute('DELETE FROM claims WHERE function_id=? AND agent_id=?', (fn['id'], agent.id))
 
 
+SEARCHED = ('profile', 'literals')  # trial kinds that run lookalike_profiles' compile-guided literal search
+
+
+def _noted(candidate, a, other, proj):
+    origin = '' if other['id'] == proj['id'] else f" in {other['name']}"
+    return f"/* adapted from similar verified C in {a['name']}{origin} (matched), with its names changed by decompdecomp */\n" + candidate
+
+
+def _measured(report, b):
+    """The plain transfer's compiled body as a search's starting point, so it isn't compiled again."""
+    from .lookalike_profiles import Measure, differing
+    if not report or not report.get('candidate_target') or report.get('score') is None:
+        return None
+    code = bytes.fromhex(report['candidate_target'])
+    relocated = ({int(r[0]) for r in json.loads(report.get('candidate_relocs') or '[]')}
+                 | {int(r[0]) for r in json.loads(b['relocs'] or '[]')})
+    return Measure(bool(report.get('matched')), report['score'], code, relocated,
+                   differing(code, b['target'] or b'', relocated))
+
+
 def destination_supported(net, proj):
     # Project mode still needs object-relocation alignment and per-file source adaptation.
     slug = proj['slug']
@@ -304,6 +324,41 @@ def destination_supported(net, proj):
 def donor_projects(net, proj):
     from .shared_reuse import compatible
     return {p['id']: p for p in [*compatible(net, proj), proj] if net.is_rom(p)}
+
+
+AFTER_MATCH_LOOKALIKES = 12  # a new match's closest look-alikes read, of which the open ones are tried
+
+
+def lookalikes(net, proj, fid) -> list[int]:
+    """The open functions whose instructions are close to the matched function `fid`'s."""
+    store = net.project_store(proj['id'])
+    fn = store.one("SELECT * FROM functions WHERE id=? AND status='matched'", fid)
+    if fn is None or not fn['target'] or not MIN_BYTES <= len(fn['target']) <= MAX_BYTES:
+        return []
+    out = []
+    for row, score in net.similar(proj, fn, top=AFTER_MATCH_LOOKALIKES):
+        if row['status'] == 'open' and score >= MIN_SIMILARITY:
+            found = store.one("SELECT id FROM functions WHERE project_id=? AND name=? AND vram=? AND status='open'",
+                              proj['id'], row['name'], row['vram'])
+            if found:
+                out.append(found['id'])
+    return out
+
+
+def after_match(twins, proj, fids) -> int:
+    """Functions just matched: their open look-alikes get their C now, with their profile and the literal search,
+    rather than at the next autopilot start (one N64 game's agents matched a dozen look-alikes by hand within the
+    hour after their donors matched, while the pass waited). Bounded like a pass; misses are cached as usual."""
+    from .twins import Job
+    net = twins.net
+    proj = net.project_row(proj['slug'], sync=False)
+    if not destination_supported(net, proj):
+        return 0
+    ids = sorted({b for fid in fids for b in lookalikes(net, proj, fid)})
+    if not ids:
+        return 0
+    twins.index_project(proj)  # the new donors, before the shortlist reads the index
+    return run(twins, proj['slug'], Job(), function_ids=ids)
 
 
 def run(twins, slug: str, job, *, function_ids=None) -> int:
@@ -337,12 +392,14 @@ def run(twins, slug: str, job, *, function_ids=None) -> int:
     layouts = {pid: regional_layouts.learn(net, proj, other) for pid, other in others.items()}
     maps = {pid: regional_names(twins, proj, other) for pid, other in others.items()}
     cursor = 0
-    if not manual:
+    # A run over chosen functions (a lane, or the look-alikes of a new match) leaves the pass's place alone.
+    keeps_place = not manual and function_ids is None
+    if keeps_place:
         saved = net.project_store(proj['id']).one('SELECT function_id FROM reuse_cursors WHERE project_id=?', proj['id'])
         cursor = saved['function_id'] if saved else 0
 
     def resume(fid):
-        if not manual:
+        if keeps_place:
             with net.project_store(proj['id']).tx() as db:
                 db.execute('INSERT OR REPLACE INTO reuse_cursors VALUES(?,?)', (proj['id'], fid))
     attempted = matched = 0
@@ -353,7 +410,7 @@ def run(twins, slug: str, job, *, function_ids=None) -> int:
 
     feedback = {}
 
-    def attempt(a, b, other, score, candidate, settings, kind, names, header):
+    def attempt(a, b, other, score, candidate, settings, kind, names, header, first=None):
         nonlocal attempted, matched
         feedback.clear()
         current = net.project_store(proj['id']).one('SELECT status FROM functions WHERE id=?', b['id'])
@@ -362,7 +419,9 @@ def run(twins, slug: str, job, *, function_ids=None) -> int:
         from decomprepair.repair_preflight import invalid_call
         if invalid_call(candidate, b['name'], header):
             return 'skip', 'Generated call disagrees with a fixed prototype'
-        signature = trial_key(candidate, header, settings, b, [names, symbol_state])
+        # (the compile-guided trials are keyed apart: a lead or a miss cached for the same C and profile was
+        # judged without the literal search, and never with the profile applied)
+        signature = trial_key(candidate, header, settings, b, [names, symbol_state] + ([kind] if kind in SEARCHED else []))
         previous = net.project_store(proj['id']).one("SELECT * FROM reuse_trials WHERE function_id=? AND signature=? AND outcome!='match'",
                                  b['id'], signature)
         if previous:
@@ -376,6 +435,12 @@ def run(twins, slug: str, job, *, function_ids=None) -> int:
         job.reuse_attempts += 1
         if kind == 'compiler':
             outcome, why = compiler_trial(net, agent, proj, b, candidate, settings)
+        elif kind in SEARCHED:
+            from . import lookalike_profiles
+            outcome, why, compiles = lookalike_profiles.trial(
+                net, agent, proj, b, _noted(candidate, a, other, proj), None if kind == 'literals' else settings,
+                first=first, budget=max(0, min(lookalike_profiles.SEARCH_COMPILES, job.reuse_limit - job.reuse_attempts)))
+            job.reuse_attempts += max(0, compiles - 1)
         else:
             outcome, why = twins._attempt_twin(agent, proj, a, b, candidate,
                 origin=f" in {other['name']}", similar=True, feedback=feedback, mapping=names)
@@ -450,7 +515,8 @@ def run(twins, slug: str, job, *, function_ids=None) -> int:
                      pb.key, own_key)
         rows = donors.candidates(*shortlist, MAX_POOL, near=b['vram'], eligible=lambda row, exact=phase == 0,
                                  key=own_key, tc=own_toolchain: (
-            row['project_id'] in others and (row['compiler'] == key if exact else _toolchain(row['compiler']) == tc)))
+            row['project_id'] in others and (row['compiler'] == key if exact else (
+                _toolchain(row['compiler']) == tc or row['project_id'] == proj['id']))))
         # Keep an independent shortlist for other compiler builds. Rows from a
         # large same-compiler library would otherwise fill the size-based cap.
         alternate = donors.candidates(*shortlist, OTHER_COMPILER_POOL, eligible=lambda row, tc=own_toolchain: (
@@ -496,15 +562,17 @@ def run(twins, slug: str, job, *, function_ids=None) -> int:
             if pa is None:
                 continue
             learned = maps[other['id']]
+            # In its own game an address is the same thing on both sides: only another game's names are looked up
+            theirs = syms_b if other['id'] != proj['id'] else None
             aligned = [(o, t) for o, t, _ in relocations(a)] == layout
             if wide and not aligned:
                 left, right = _aligned_prints(a, b, pa, pb, ops_cache[a['id']], ops)
-                local = rom_renames(syms_a, a['matched_source'], left, right, a['name'], b['name'], syms_b)
+                local = rom_renames(syms_a, a['matched_source'], left, right, a['name'], b['name'], theirs)
                 # Keep established mappings when a shifted instruction offers conflicting evidence.
                 if local is not None:
                     local = {**local, **learned}
             else:
-                local = rom_renames(syms_a, a['matched_source'], pa, pb, a['name'], b['name'], syms_b) if aligned else {}
+                local = rom_renames(syms_a, a['matched_source'], pa, pb, a['name'], b['name'], theirs) if aligned else {}
             names = None if local is None else {**learned, **local, a['name']: b['name']}
             if names is None:
                 continue
@@ -519,28 +587,49 @@ def run(twins, slug: str, job, *, function_ids=None) -> int:
                                                     for v in parameter_sources] + parameter_sources))
             donor = json.loads(a['compiler'])
             literals = literal_variants(source, a, b, big)
-            variants = [(v, own, 'parameter transfer') for v in parameter_sources]
-            variants += [(v, own, 'transfer') for v in
-                        [source, *literals, *regional_layouts.variants(source, a, b, layouts[other['id']], big)]]
-            # The destination build gets first chance. An installed compiler of this console can
-            # supply a second opinion with the donor's measured flags, even when the flags match.
+            transfers = [(v, own, 'transfer') for v in
+                         [source, *literals, *regional_layouts.variants(source, a, b, layouts[other['id']], big)]]
+            variants = [(v, own, 'parameter transfer') for v in parameter_sources] + transfers[:1]
             donor_toolchain = donor.get('toolchain')
             flags_differ = donor.get('flags', []) != own.get('flags', [])
             compiler_differs = donor_toolchain != own_toolchain
-            if (donor_toolchain and not donor.get('cmd') and not own.get('cmd')
+            same_game = other['id'] == proj['id']
+            # A look-alike in its own game is built with its donor's profile as often as with the default (one N64
+            # game: 326 functions at -O1 beside an -O2 default, and SN builds): the donor's C is tried with the
+            # donor's profile and the compile-guided literal search, and an exact match makes the profile this
+            # function's own (lookalike_profiles.py). The function's own profile keeps the first try.
+            if (same_game and donor_toolchain and (flags_differ or compiler_differs) and not donor.get('cmd')
+                    and not own.get('cmd') and toolchains.installed(donor_toolchain)):
+                variants.append((source, donor, 'profile'))
+            variants += transfers[1:]
+            variants.append((source, own, 'literals'))
+            # Another game's profile stays a lead to review (compiler_trial): an installed compiler of this
+            # console can supply a second opinion with the donor's measured flags, even when the flags match.
+            if (not same_game and donor_toolchain and not donor.get('cmd') and not own.get('cmd')
                     and ((not compiler_differs and flags_differ) or (wide and donor_toolchain in supported_compilers and compiler_differs))
                     and toolchains.installed(donor_toolchain)):
                 variants.append((source, donor, 'compiler'))
                 if wide and compiler_differs:
                     variants.extend((v, donor, 'compiler') for v in literals)
+            plain = None
             for variant, settings, kind in variants:
                 if exhausted():
                     return matched
                 if transfers_exhausted():
                     incomplete = True
                     break
+                first = None
+                if kind == 'literals':
+                    # Only a plain transfer that built the target's shape, wrong in constants alone, is searched:
+                    # its compiled body (fresh or cached) is the search's start, so nothing is compiled twice.
+                    first = _measured(plain, b)
+                    if first is None or first.exact or not mips_immediates.value_pairs(
+                            first.code, b['target'] or b'', first.relocated, big):
+                        continue
                 candidate = prelude + variant
-                outcome, why = attempt(a, b, other, score, candidate, settings, kind, names, header_b)
+                outcome, why = attempt(a, b, other, score, candidate, settings, kind, names, header_b, first=first)
+                if kind == 'transfer' and variant == source:
+                    plain = dict(feedback)
                 # Easy transfers get the first pass through the budget. Then repair the closest compiled misses.
                 close = re.fullmatch(r'score (\d+)', why or '')
                 percent = feedback.get('percent', 100 * (1 - int(close[1]) / max(1, (b['n_insns'] or 0) * 100)) if close else 0)

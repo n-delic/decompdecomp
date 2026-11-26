@@ -261,6 +261,17 @@ def rom_renames(syms, source: str, a: Print, b: Print, a_name: str, b_name: str,
     for in_a, in_b in zip(a.addrs, b.addrs):
         if in_a == in_b and syms_b is None:
             continue
+        # A name the C writes for exactly this address that the symbol table doesn't hold (`extern u8 D_801C7469;`)
+        # is its base: walking down to the nearest named symbol found the function itself, and a global both
+        # look-alikes share then had to be both functions' names, so no mapping was made at all.
+        auto = next((f"{prefix}{in_a:08X}" for prefix in ("D_", "func_") if f"{prefix}{in_a:08X}" in words), None)
+        if auto is not None and (syms.by_addr.get(in_a) is None or syms.by_addr[in_a].name not in words):
+            to = in_b
+            other = (syms_b or syms).by_addr.get(to)
+            name = other.name if other is not None else f"{auto.split('_')[0]}_{to:08X}"
+            if out.setdefault(auto, name) != name:
+                return None
+            continue
         below = bisect.bisect_right(syms.starts, in_a) - 1
         base = None
         for k in range(below, max(-1, below - LABELS_BACK), -1):  # back to the symbol the C writes
@@ -928,7 +939,25 @@ class Twins:
             source = self.source_for(proj, a, b)
         except (NetworkError, OSError, ValueError):
             return False
-        return bool(source) and self._missed(b_id, source, project_id=proj['id'])
+        return bool(source) and self._missed(b_id, self._keyed(proj, a, b, source), project_id=proj['id'])
+
+    def donor_profile(self, proj, a, b) -> dict | None:
+        """a's compiler profile, when its own game builds it otherwise than b (a per-function `-O1` beside the
+        default, an SN build): its twin's C is tried with it too, and an exact match makes it b's
+        (lookalike_profiles.py)."""
+        if not self.net.is_rom(proj) or self.net.fork_slug(proj['slug']) or b['rom_offset'] is None:
+            return None
+        cfg = self.net.cfg(proj)
+        theirs, mine = compiler_for(cfg, a['vram'], a), compiler_for(cfg, b['vram'], b)
+        if theirs.get('cmd') or mine.get('cmd') or all(theirs.get(k) == mine.get(k) for k in ('toolchain', 'flags')):
+            return None
+        return {'toolchain': theirs['toolchain'], 'flags': list(theirs.get('flags', []))}
+
+    def _keyed(self, proj, a, b, source: str) -> str:
+        """What a miss is remembered by: a's code, and a's profile when it is tried too (a miss cached before
+        that was tried with b's profile only, so it is no reason to skip the pair)."""
+        profile = self.donor_profile(proj, a, b)
+        return source if profile is None else source + '\n/* also with ' + json.dumps(profile, sort_keys=True) + ' */'
 
     def _refresh_overlay_metadata(self, proj, job):
         cfg = self.net.cfg(proj)
@@ -1620,7 +1649,7 @@ class Twins:
                     and self.net.forks.mark_asm(b, a["name"])):
                 return "asm"
             return "skip"
-        if self._missed(b["id"], source, project_id=proj["id"]):
+        if self._missed(b["id"], source if partial else self._keyed(proj, a, b, source), project_id=proj["id"]):
             return "known"
         if partial:
             feedback = {}
@@ -1630,10 +1659,19 @@ class Twins:
                 outcome = 'improved'
         else:
             outcome, why = self._attempt_twin(agent, proj, a, b, source)
+            if outcome == 'miss' and (profile := self.donor_profile(proj, a, b)):
+                from . import lookalike_profiles
+                note = f"/* identical to {a['name']} (matched), with its names changed by decompdecomp */\n"
+                tried, said, _ = lookalike_profiles.trial(self.net, agent, proj, b, note + source, profile, budget=8)
+                if tried == 'match':
+                    outcome = 'match'
+                elif tried == 'miss':
+                    why = said
         if outcome in ('miss', 'improved'):
+            key = source if partial else self._keyed(proj, a, b, source)
             with self.net.project_store(proj['id']).tx() as db:
                 db.execute("INSERT OR REPLACE INTO twin_misses(function_id, source_hash, project_id, at, why) "
-                           "VALUES(?,?,?,?,?)", (b["id"], self._miss_key(source), proj["id"], time.time(), why))
+                           "VALUES(?,?,?,?,?)", (b["id"], self._miss_key(key), proj["id"], time.time(), why))
         return outcome
 
     def miss_why(self, b_id: int, *, project_id=None) -> str | None:
@@ -1821,6 +1859,9 @@ class Twins:
                                 self.run(proj["slug"], only=batch)
                                 # Leave the full pass's ordering in place while it is still running.
                                 self.update_boosts(proj, pending=self._full_running(proj["slug"]))
+                            # and their look-alikes: the donor's C with their names, constants and its profile
+                            from . import similar_matches
+                            similar_matches.after_match(self, proj, batch)
                     except Exception as e:
                         log.info("twins after a match: %s", e)
             finally:
