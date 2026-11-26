@@ -13,6 +13,7 @@ from __future__ import annotations
 import functools
 import hashlib
 import json
+import logging
 import os
 import posixpath
 import secrets
@@ -25,6 +26,10 @@ import threading
 import time
 from pathlib import Path, PureWindowsPath
 
+log = logging.getLogger("decompnet.wsl")
+# The first copy of a compiler and its dependencies into WSL reads every file from a Windows drive: agbcc brings the
+# whole Arm toolchain, which took longer than the two minutes this once had and failed the first saved project opened.
+COPY_SECONDS = 1800
 INSTALL = "In PowerShell as administrator: wsl --install (then restart Windows and open Ubuntu once to finish)"
 _lock = threading.Lock()
 _status: tuple[bool, str, float] | None = None
@@ -164,8 +169,14 @@ def prepare_tools(directories: tuple[Path, ...]) -> tuple[str, ...]:
             lines += [f'  python3 {q(path(helper))} hydrate "$stage" {q(cache)} {q(runtime)} || exit 1']
         lines += ['  touch "$stage/.ready" || exit 1',
                   f'  mv -T "$stage" {q(cache)} 2>/dev/null || [ -f {q(cache + "/.ready")} ] || exit 1', "fi"]
+        log.info("Copying %s into WSL (only on first use; this can take several minutes)",
+                 ", ".join(directory.name for directory in directories))
         with tempfile.TemporaryDirectory(prefix="decomp-wsl-tools-") as work:
-            copied = run(["sh", "-c", "\n".join(lines)], Path(work), 120)
+            try:
+                copied = run(["sh", "-c", "\n".join(lines)], Path(work), COPY_SECONDS)
+            except subprocess.TimeoutExpired:
+                raise OSError(f"WSL didn't finish copying the compiler within {COPY_SECONDS // 60} minutes. Check that "
+                              "WSL starts (PowerShell: wsl -e true), run `wsl --shutdown`, then try again") from None
         if copied.returncode:
             raise OSError(f"WSL couldn't copy the compiler to its Linux filesystem: {copied.stderr[-400:]}")
         _prepared_tools.add(cache)

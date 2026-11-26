@@ -83,7 +83,8 @@ def startup_program() -> Path | None:
     if exe := install(log=log.info):
         return exe
     raise RuntimeError("No MCP gateway build is available. Install a packaged decompdecomp release, "
-                       "or set DECOMP_MCP_GATEWAY to a gateway executable.")
+                       "set DECOMP_MCP_GATEWAY to a gateway executable, or set DECOMP_MCP_GATEWAY=0 to start without "
+                       "the gateway.")
 
 
 def built() -> Path | None:

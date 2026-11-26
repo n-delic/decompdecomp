@@ -9,6 +9,9 @@ upstream decompdecomp. An explicit DECOMP_HOME environment variable still works.
 To move your work to another computer, copy that data folder as well as the app.
 
 The native window needs .NET Framework 4.8 and Microsoft Edge WebView2 Runtime.
+If the app says these are missing although they are installed, Windows has
+blocked the downloaded files: delete the extracted folder, right-click the ZIP,
+choose Properties, tick Unblock, and extract it again.
 Windows Update normally provides .NET. If WebView2 is missing, install Microsoft's
 runtime from https://developer.microsoft.com/microsoft-edge/webview2/ .
 The setup download can install these prerequisites for you; the portable app

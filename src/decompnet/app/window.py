@@ -64,6 +64,17 @@ def _distro_family() -> str | None:
     return None
 
 
+def _unblock(folder: Path) -> None:
+    """Remove the "downloaded from the internet" mark from the portable ZIP's own libraries. Explorer gives it to
+    every file it extracts, and .NET Framework refuses to load a marked assembly, so the window's check failed with
+    both runtimes installed."""
+    for library in folder.rglob("*.dll"):
+        try:
+            os.remove(f"{library}:Zone.Identifier")
+        except OSError:  # not marked (the usual case), or a folder we can't write to: the check reports it
+            pass
+
+
 @functools.cache
 def missing() -> str | None:
     """Why the window can't open here (what to install, and how), or None when it can."""
@@ -71,7 +82,10 @@ def missing() -> str | None:
         if importlib.util.find_spec("webview") is None:
             return ("decompdecomp's Windows window needs pywebview and the Microsoft Edge WebView2 Runtime. "
                     "Install the app's dependencies again, then start decompdecomp.")
-        packages = repr(str(Path(__file__).resolve().parents[2]))
+        folder = Path(__file__).resolve().parents[2]
+        if os.environ.get("DECOMP_PORTABLE") == "1":
+            _unblock(folder)
+        packages = repr(str(folder))
         probe = (f'import site; site.addsitedir({packages}); '
                  'import os, clr; from webview.util import interop_dll_path; '
                  'os.environ["PATH"] += os.pathsep + interop_dll_path("win-x64"); '
@@ -79,14 +93,19 @@ def missing() -> str | None:
                  'from Microsoft.Web.WebView2.Core import CoreWebView2Environment; '
                  'CoreWebView2Environment.GetAvailableBrowserVersionString()')
         try:
-            ready = subprocess.run([sys.executable, "-I", "-c", probe], capture_output=True, timeout=CHECK_SECONDS,
-                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).returncode == 0
-        except (OSError, subprocess.TimeoutExpired):
-            ready = False
+            done = subprocess.run([sys.executable, "-I", "-c", probe], capture_output=True, timeout=CHECK_SECONDS,
+                                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            ready = done.returncode == 0
+            lines = (getattr(done, "stderr", None) or b"").decode("utf-8", "replace").strip().splitlines()
+            why = "" if ready else lines[-1][-300:] if lines else f"exit code {done.returncode}"
+        except (OSError, subprocess.TimeoutExpired) as error:
+            ready, why = False, str(error)[-300:]
         if not ready:
+            # The runtimes may well be installed: say what actually failed, so it can be reported.
             return ("decompdecomp needs the Microsoft Edge WebView2 Runtime and .NET Framework 4.8. "
                     "Install WebView2 from https://developer.microsoft.com/microsoft-edge/webview2/ "
-                    "and any Windows updates, then start decompdecomp again.")
+                    "and any Windows updates, then start decompdecomp again.\n\n"
+                    f"If both are installed, the check failed with: {why}")
         return None
     if IS_MACOS:
         if any(importlib.util.find_spec(name) is None for name in ("AppKit", "WebKit")):

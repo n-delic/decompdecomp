@@ -16,6 +16,7 @@ import uuid
 from contextlib import contextmanager
 
 from ..network import IN_BUILD, NetworkError
+from .instance_lock import alive
 
 
 def member(net, slug):
@@ -199,9 +200,8 @@ def edit_lock(net, gid, owner):
         # Never expire a live compiler's lease; recover only a process known to have exited.
         held = db.execute('SELECT process_id FROM variant_edit_locks WHERE game=?', (gid,)).fetchone()
         if held:
-            try:os.kill(held['process_id'], 0)
-            except ProcessLookupError:db.execute('DELETE FROM variant_edit_locks WHERE game=?', (gid,))
-            else:raise NetworkError('Another shared-source edit is being verified. Wait for it to finish.')
+            if alive(held['process_id']):raise NetworkError('Another shared-source edit is being verified. Wait for it to finish.')
+            db.execute('DELETE FROM variant_edit_locks WHERE game=?', (gid,))
         db.execute('INSERT INTO variant_edit_locks VALUES(?,?,?,?)', (gid, token, owner, os.getpid()))
     try:
         yield
