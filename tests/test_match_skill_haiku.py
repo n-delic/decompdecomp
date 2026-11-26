@@ -1,13 +1,15 @@
 """haiku.py, the small-model matching loop: `next` claims and shows one screen, `try` judges under every profile and
 saves a match under another profile for that function only, `done` keeps the work and releases. The app and its judge
 are stand-ins; match_brief (what the judge worker reads) runs on a small real project."""
+import hashlib
 import json
+import time
 from types import SimpleNamespace
 
 import pytest
 
-from decompnet import hosted_judge
-from decompnet.app import match_brief
+from decompnet import hosted_judge, toolchains
+from decompnet.app import compiler_experiments, match_brief
 from tests.test_hosted import project
 from tests.test_match_skill_setup import load
 
@@ -36,8 +38,14 @@ def test_ordinary_c_is_not_refused():
     assert haiku.faults(source) == []
 
 
+def revision(source):
+    return hashlib.sha256(source.encode()).hexdigest()[:20]
+
+
 class Gateway:
     calls, held = [], True
+    current = "// saved"  # the session's candidate in the app
+    notice = []  # texts the gateway puts on top of the next get_claims replies
 
     def __init__(self, *args):
         pass
@@ -48,7 +56,14 @@ class Gateway:
     def call(self, tool, arguments, wait=None):
         Gateway.calls.append((tool, arguments))
         if tool == "get_claims":
-            return json.dumps({"claims": [{"function": "f1", "claim_token": "tok"}] if Gateway.held else []})
+            reply = json.dumps({"claims": [{"function": "f1", "claim_token": "tok"}] if Gateway.held else []})
+            return Gateway.notice.pop(0).replace("REPLY", reply) if Gateway.notice else reply
+        if tool == "get_candidate":
+            return (f"note\nclaim_token: tok\nCandidate revision {revision(Gateway.current)}\n```c\n"
+                    f"{Gateway.current}\n```\nmore")
+        if tool == "compiler_experiments":
+            assert arguments["revision"] == revision(Gateway.current)
+            return "1: score 7; diagnostic; trial_id=abc123; compiler=x"
         if tool == "release_function":
             Gateway.held = False
         if tool == "suggest":
@@ -84,6 +99,7 @@ class Worker:
 @pytest.fixture
 def session(tmp_path, monkeypatch):
     Gateway.calls, Gateway.held, App.status, App.best = [], True, "open", 50
+    Gateway.current, Gateway.notice = "// saved", []
     sent, stopped = [], []
     root = tmp_path / "dd-small"
     root.mkdir()
@@ -136,17 +152,101 @@ def test_a_refused_source_is_never_judged(session):
     assert session.sent == [] and Gateway.calls == []
 
 
-def test_done_keeps_the_best_candidates_writes_the_note_and_releases_with_the_token(session, capsys, monkeypatch):
-    # a worse own-profile score is never submitted by try, but the closest under another profile is kept at the end
+def test_done_keeps_the_near_miss_as_a_trial_writes_the_note_and_releases_with_the_token(session, capsys):
+    # a worse own-profile score is never submitted, but the closest under another profile is recorded as a trial
     haiku.main(["try", "small", session.write("// own=90 other=7")])
     assert session.sent == []
     assert haiku.main(["giveup", "small", "--note", "a register swap is left"]) == 0
-    assert session.sent == ["// own=90 other=7"]
-    assert tools() == ["add_note", "get_claims", "release_function", "get_claims"]
+    assert session.sent == []
+    assert tools() == ["get_candidate", "compiler_experiments", "add_note", "get_claims", "release_function",
+                       "get_claims"]
+    trial = dict(Gateway.calls)["compiler_experiments"]
+    assert trial["revision"] == revision("// saved")
+    assert trial["trials"] == [{"compiler": "gcc-2.7.2-kmc", "flags": "-O1", "old": "// saved",
+                                "new": "// own=90 other=7"}]
+    assert "suggest" not in tools()
     release = dict(Gateway.calls)["release_function"]
     assert release["claim_token"] == "tok" and release["move_on"] is True
     assert "best 7 under gcc-2.7.2-kmc -O1" in release["notes"] and "register swap" in release["notes"]
+    assert "trial abc123" in release["notes"]
     assert session.stopped == ["small"] and "not matched" in capsys.readouterr().out
+
+
+def test_a_near_miss_no_better_than_the_kept_one_is_not_recorded_again(session):
+    state = haiku.read_state(session.root)
+    haiku.write_state(session.root, dict(state, kept=7))
+    haiku.main(["try", "small", session.write("// own=90 other=7")])
+    haiku.main(["done", "small"])
+    assert "compiler_experiments" not in tools()
+
+
+def test_a_refused_trial_keeps_the_near_miss_in_the_note(session, monkeypatch):
+    def refuse(self, tool, arguments, wait=None, real=Gateway.call):
+        if tool == "compiler_experiments":
+            raise haiku.setup.McpError("not offered")
+        return real(self, tool, arguments)
+    monkeypatch.setattr(Gateway, "call", refuse)
+    haiku.main(["try", "small", session.write("// own=90 other=7")])
+    assert haiku.main(["done", "small"]) == 0
+    assert "// own=90 other=7" in dict(Gateway.calls)["release_function"]["notes"]
+
+
+def test_done_survives_a_notice_or_a_broken_reply_on_the_claim_check(session):
+    # the gateway puts an acknowledged release's answer on top of the next reply
+    Gateway.notice = ["not json", "decompdecomp has now finished your earlier add_note call ({a}): ok\n\nREPLY",
+                      "release_function accepted {\n", "REPLY"]
+    haiku.main(["try", "small", session.write("// own=90 other=95")])
+    assert haiku.main(["done", "small"]) == 0
+    assert session.stopped == ["small"] and "release_function" in tools()
+    assert not Gateway.notice
+
+
+def test_the_screen_shows_the_near_miss_and_the_twin(tmp_path):
+    brief = {"name": "f1", "n_insns": 4, "asm": "jr $ra", "best": "// own=60 other=70", "draft": "// own=80",
+             "best_score": 60, "profiles": [OWN, OTHER], "declarations": [], "neighbours": [],
+             "trials": [{"score": 3, "toolchain": "gcc-2.7.2-kmc", "flags": ["-O1"], "source": "// do other=1\n// other=7"}],
+             "twin": {"name": "f9", "similarity": 0.9, "toolchain": "gcc-2.7.2-kmc", "flags": ["-O1"],
+                      "source": "void f9(void) {}"}}
+    out = []
+    results, kept = haiku.screen(tmp_path, {"holder": "small", "slug": "game"}, brief, Worker({}), write=out.append)
+    text = "\n".join(out)
+    assert "near-miss kept from an earlier session: score 3" in text and "void f9(void) {}" in text
+    assert "MATCHED twin f9: 90%" in text and "(twin)" in text
+    assert f"cp {tmp_path}/start/near.c {tmp_path}/work.c" in text and kept == 7
+    assert (tmp_path / "start" / "twin.c").read_text() == "void f9(void) {}"
+
+
+def test_the_brief_offers_trials_and_the_matched_twin_and_picks_fresh_functions_first(tmp_path):
+    net = project(tmp_path)
+    pid = net.project_row("game")["id"]
+    store = net.project_store(pid)
+    with store.tx() as db:
+        db.execute("UPDATE functions SET seed='void ' || name || '(void) {}' WHERE project_id=?", (pid,))
+        db.execute("UPDATE functions SET target=X'27BDFFE8AFBF00140C000000000000008FBF001403E00008' "
+                   "WHERE name IN ('f8','f29')")
+        db.execute("UPDATE functions SET status='matched', matched_source='void f29(void) {}' WHERE name='f29'")
+        db.execute("UPDATE functions SET best_score=1, best_source='x' WHERE name IN ('f5','f6','f7')")
+        db.execute("UPDATE functions SET name='osThing', best_score=0 WHERE name='f6'")
+        db.execute("UPDATE functions SET abandons=3 WHERE name='f7'")
+        ids = {row["name"]: row["id"] for row in db.execute("SELECT id, name FROM functions").fetchall()}
+        db.execute("INSERT INTO events(project_id,agent_id,kind,detail,created_at) VALUES(?,?,?,?,?)",
+                   (pid, 999, "release", "f5", time.time()))
+    items = match_brief.candidates(net, "game", max_insns=10)
+    names = [item["name"] for item in items]
+    assert "osThing" not in names and names.index("f7") < names.index("f5")
+    assert next(item for item in items if item["name"] == "f5")["worked"] > 0
+    fn = store.one("SELECT * FROM functions WHERE name='f8'")
+    compiler_experiments.save_trial(net, fn, "t1", {
+        "agent": 1, "source": "void f8(void) {}", "compiler": "gcc-2.7.2-kmc", "flags": "-O1",
+        "result": {"score": 12, "exact": False}})
+    assert ids["f8"] == fn["id"]
+    brief = match_brief.brief(net, "game", "f8")
+    assert brief["trials"] == [{"score": 12, "toolchain": "gcc-2.7.2-kmc", "flags": ["-O1"],
+                                "source": "void f8(void) {}"}]
+    assert brief["twin"]["name"] == "f29" and brief["twin"]["similarity"] == 1.0
+    assert brief["twin"]["source"] == "void f29(void) {}"
+    if toolchains.installed("gcc-2.7.2-kmc"):
+        assert any(p["flags"] == ["-O1"] for p in brief["profiles"])
 
 
 def test_the_worker_lists_candidates_and_briefs_a_function_without_writing(tmp_path):

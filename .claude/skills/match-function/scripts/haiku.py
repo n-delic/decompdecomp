@@ -3,13 +3,17 @@
 
     haiku.py next SLUG [FUNC] [--repo CHECKOUT] [--home DIR] [--holder NAME] [--max-size N]
                          start a session (setup.py: private worktree, venv, MCP connection, claim renewal), claim FUNC or
-                         the most promising open function of at most N=150 instructions, and print one screen: assembly,
-                         saved C, a fresh machine draft, every candidate profile's score, neighbours' signatures
+                         the most promising open function of at most N=150 instructions (recently tried ones and
+                         library names last or never), and print one screen: assembly, saved C, a fresh machine draft,
+                         an earlier worker's near-miss under another profile, every candidate profile's score, the
+                         matched twin's C, neighbours' signatures
     haiku.py try HOLDER CAND.c
                          judge CAND.c under every candidate profile; submit it when it beats the saved score; when it is
                          exact, make it the match (under another profile: `suggest`, for this function only)
     haiku.py done HOLDER [--note TEXT]     (also: giveup)
-                         submit the best candidate seen, write the note, release the claim, remove the session
+                         submit the best candidate seen, keep a better one under another profile as a compiler trial
+                         (compiler_experiments: nothing is applied; the next `next` shows it), write the note, release
+                         the claim, remove the session
 
 ROM projects only (project mode has no isolated judge). It never changes a compiler range or the project default, never
 prints the connection token, and keeps every file in the session folder (/tmp/dd-HOLDER/).
@@ -34,6 +38,7 @@ import setup  # noqa: E402  (sessions, the gateway, submissions)
 MAX_SIZE = 150
 TRIES = 15
 ASM_LINES, C_LINES, ROW_LINES = 160, 70, 40
+TWIN_LINES = 100
 LINE_WIDTH = 240
 PICK_ATTEMPTS = 5
 RELEASE_WAIT_SECONDS = 600
@@ -132,12 +137,13 @@ def rank(worker, items):
     instruction, discounted for matched neighbours to learn from."""
     ranked = []
     for item in items:
-        found = [s["score"] for source in dict.fromkeys((item["best"], item["draft"])) if source
+        found = [s["score"] for source in dict.fromkeys((item["best"], item["draft"], item.get("near"))) if source
                  for s in scores(worker, item, item["profiles"], source)]
         found = [s for s in found + [item["best_score"]] if s is not None]
         if found:
             value = min(found) / max(1, item["n_insns"] or 1) / (1 + 0.25 * min(4, item["matched_near"]))
-            ranked.append((value, item["n_insns"], item["name"]))
+            value *= 1 + item.get("abandons", 0)
+            ranked.append((item.get("worked", 0), value, item["n_insns"], item["name"]))
     return [name for *_, name in sorted(ranked)]
 
 
@@ -192,12 +198,21 @@ def write_state(root, state):
     (root / "haiku.json").write_text(json.dumps(state, indent=1))
 
 
+def same_profile(one, other):
+    return (one["toolchain"], list(one["flags"])) == (other["toolchain"], list(other["flags"]))
+
+
 def screen(root, info, brief, worker, write=print):
+    """Print the one screen; returns (the scores per profile, the kept near-miss's score under its profile now)."""
     folder = root / "start"
     folder.mkdir(exist_ok=True)
-    files = {"asm": folder / "asm.s", "best": folder / "best.c", "draft": folder / "draft.c"}
+    near = next((t for t in brief.get("trials") or [] if not faults(t["source"])), None)
+    twin = brief.get("twin")
+    sources = {"best": brief["best"], "draft": brief["draft"], **({"near": near["source"]} if near else {})}
+    files = {key: folder / f"{key}.c" for key in sources}
+    files["asm"] = folder / "asm.s"
     for key, path in files.items():
-        path.write_text(brief[key] or "")
+        path.write_text((brief["asm"] if key == "asm" else sources[key]) or "")
     holder, profiles = info["holder"], brief["profiles"]
     write(f"=== {brief['name']} ({info['slug']}), {brief['n_insns']} instructions   holder {holder}\n"
           f"Write your C in {root}/work.c, then: haiku.py try {holder} {root}/work.c\n"
@@ -205,23 +220,36 @@ def screen(root, info, brief, worker, write=print):
     write(f"\n--- target assembly\n{clipped(brief['asm'], ASM_LINES, files['asm'])}")
     write(f"\n--- saved best C (app score {brief['best_score']})\n{clipped(brief['best'], C_LINES, files['best'])}")
     write(f"\n--- fresh machine draft\n{clipped(brief['draft'], C_LINES, files['draft'])}")
-    write("\n--- scores per profile (0 = exact; 'own' is what the app uses now)\n      saved    draft  profile")
+    if near:
+        write(f"\n--- near-miss kept from an earlier session: score {near['score']} under {label(near)}\n"
+              f"{clipped(near['source'], C_LINES, files['near'])}")
+    if twin:
+        path = folder / "twin.c"
+        path.write_text(twin["source"])
+        write(f"\n--- MATCHED twin {twin['name']}: {round(twin['similarity'] * 100)}% the same instructions, "
+              f"built with {label(twin)}. Copy it and change names and constants.\n"
+              f"{clipped(twin['source'], TWIN_LINES, path)}")
+    keys = list(sources)
+    write("\n--- scores per profile (0 = exact; 'own' is what the app uses now)\n    "
+          + "".join(f"{'saved' if key == 'best' else key:>11}" for key in keys) + "  profile")
     results = []
     for index, profile in enumerate(profiles):
-        pair = [worker.score(brief, profile, brief[key])["score"] for key in ("best", "draft")]
+        pair = [worker.score(brief, profile, sources[key])["score"] for key in keys]
         results.append(pair)
-        write(f"  {index}  {shown(pair[0]):>9} {shown(pair[1]):>8}  {label(profile)}"
-              f"{'  (own)' if profile['own'] else ''}  [{profile['uses']} matched]")
-    ranked = [(score, i, key) for i, pair in enumerate(results) for key, score in zip(("best", "draft"), pair)
-              if score is not None]
+        write(f"  {index} " + "".join(f"{shown(score):>11}" for score in pair) + f"  {label(profile)}"
+              f"{'  (own)' if profile['own'] else ''}{'  (twin)' if twin and same_profile(twin, profile) else ''}"
+              f"  [{profile['uses']} matched]")
+    ranked = [(score, i, key) for i, pair in enumerate(results) for key, score in zip(keys, pair) if score is not None]
     if ranked:
         score, index, key = min(ranked)
-        write(f"Closest start: the {'saved C' if key == 'best' else 'draft'} under profile {index} ({shown(score)}).")
-        rows = worker.score(brief, profiles[index], brief[key], rows=True).get("diff")
+        name = {"best": "saved C", "draft": "draft", "near": "near-miss"}[key]
+        write(f"Closest start: the {name} under profile {index} ({shown(score)}): "
+              f"cp {files[key]} {root}/work.c")
+        rows = worker.score(brief, profiles[index], sources[key], rows=True).get("diff")
         if rows:
             (folder / "rows.txt").write_text(rows)
             write(f"Its differing rows (target | yours):\n{differing(rows, folder / 'rows.txt')}")
-        problems = faults(brief[key] or "")
+        problems = faults(sources[key] or "")
         if problems:
             write("It contains scaffolding you must remove before `try`: " + "; ".join(problems))
     if brief.get("declarations"):
@@ -230,7 +258,9 @@ def screen(root, info, brief, worker, write=print):
     write("\n--- nearest matched neighbours")
     write("\n".join(f"{n['signature'] or n['name']};  // {n['name']}, {', '.join(n['relations'])}"
                     for n in brief.get("neighbours") or []) or "(none matched yet)")
-    return results
+    kept = next((pair[keys.index("near")] for profile, pair in zip(profiles, results)
+                 if near and same_profile(near, profile)), None)
+    return results, kept
 
 
 def next_function(args):
@@ -256,11 +286,11 @@ def next_function(args):
     try:
         brief = worker.ask({"op": "brief", "name": info["function"]})
         first = not (root / "haiku.json").exists()
-        results = screen(root, info, brief, worker)
+        results, kept = screen(root, info, brief, worker)
         if first:
             write_state(root, {"function": {k: brief[k] for k in ("name", "vram", "target")},
                                "profiles": brief["profiles"], "tries": 0, "best": {}, "submitted": [],
-                               "start": results, "app_score": brief["best_score"]})
+                               "start": results, "app_score": brief["best_score"], "kept": kept})
     finally:
         worker.close()
     return 0
@@ -382,42 +412,84 @@ def try_source(holder, path):
 
 # --- done -------------------------------------------------------------------------------------------------------------
 
-def summary(state, note):
+def summary(state, note, near=""):
     """The release note: how far each profile got."""
     profiles = state["profiles"]
     lines = [f"Small-model attempt at {state['function']['name']}: {state['tries']} tries."]
     for index, kept in sorted(state["best"].items(), key=lambda item: item[1]["score"]):
         lines.append(f"  best {kept['score']} under {label(profiles[int(index)])}")
+    if near:
+        lines.append(near)
     if note:
         lines.append(note)
     return "\n".join(lines)
 
 
 def keep_work(holder, root, info, state):
-    """Send the best C seen that the app doesn't have yet, before anything is removed: the best under the own
-    profile, and the closest one under another profile, when they beat the saved score (the app keeps both in the
-    function's attempts)."""
-    if not state["best"]:
-        return
+    """Send the best C seen under the own profile when the app doesn't have it yet, before anything is removed."""
     own = str(next(i for i, p in enumerate(state["profiles"]) if p["own"]))
-    saved = app_function(info, state["function"]["name"]).get("best")
-    wanted = []
     mine = state["best"].get(own)
-    if mine and (saved is None or mine["score"] < saved):
-        wanted.append(mine)
-    index, closest = min(state["best"].items(), key=lambda item: item[1]["score"])
-    if index != own and (saved is None or closest["score"] < saved) and (not mine or closest["score"] < mine["score"]):
-        wanted.insert(0, closest)  # first, so the own-profile best stays the latest candidate
-    for kept in wanted:
-        source = Path(kept["path"]).read_text()
-        if digest(source) not in state["submitted"]:
-            print(f"submitting the best candidate ({kept['score']}) before ending")
-            try:
-                submit(holder, root, state, source)
-            except SystemExit as error:  # refused: end anyway. Still in flight: stop here, nothing is removed.
-                if not str(error).startswith("not submitted"):
-                    raise
-                print(error)
+    if not mine:
+        return
+    saved = app_function(info, state["function"]["name"]).get("best")
+    source = Path(mine["path"]).read_text()
+    if (saved is None or mine["score"] < saved) and digest(source) not in state["submitted"]:
+        print(f"submitting the best candidate ({mine['score']}) before ending")
+        try:
+            submit(holder, root, state, source)
+        except SystemExit as error:  # refused: end anyway. Still in flight: stop here, nothing is removed.
+            if not str(error).startswith("not submitted"):
+                raise
+            print(error)
+
+
+def candidate(gateway, name):
+    """(revision, source) of the C the app currently holds for this session, checked against the revision."""
+    text = gateway.call("get_candidate", {"function": name})
+    found = re.search(r"Candidate revision ([0-9a-f]{20})\n```c\n", text)
+    if found:
+        rest = text[found.end():]
+        for end in re.finditer(r"\n```", rest):
+            source = rest[:end.start()]
+            if hashlib.sha256(source.encode()).hexdigest()[:20] == found[1]:
+                return found[1], source
+    raise setup.McpError(f"get_candidate gave no candidate to experiment on: {text[:200]}")
+
+
+def keep_near(holder, root, info, state):
+    """Keep the closest candidate of another profile where it survives the session: a `compiler_experiments` trial
+    records the C, the profile and the score with the function and applies nothing; the next `next` shows it. Returns
+    the note's line about it, or "". (Small-model runs lost dozens of -O1 near-misses of -O2 functions: only an
+    own-profile improvement was ever submitted.)"""
+    profiles = state["profiles"]
+    others = [(kept["score"], int(i)) for i, kept in state["best"].items() if not profiles[int(i)]["own"]]
+    if not others:
+        return ""
+    score, index = min(others)
+    mine = next((kept["score"] for i, kept in state["best"].items() if profiles[int(i)]["own"]), None)
+    if (mine is not None and score >= mine) or (state.get("kept") is not None and score >= state["kept"]):
+        return ""
+    name, profile = state["function"]["name"], profiles[index]
+    source = Path(state["best"][str(index)]["path"]).read_text()
+    try:
+        gateway = setup.Gateway(info["gateway_url"], info["token"])
+        gateway.start()
+        revision, current = candidate(gateway, name)
+        if not current:  # an experiment patches the candidate, and there is none yet
+            submit(holder, root, state, source)
+            revision, current = candidate(gateway, name)
+        # the whole candidate is replaced by ours, so the trial is exactly the C that scored
+        trial = {"compiler": profile["toolchain"], "flags": " ".join(profile["flags"]),
+                 **({} if current == source else {"old": current, "new": source})}
+        text = gateway.call("compiler_experiments", {"function": name, "revision": revision, "trials": [trial]})
+        found = re.search(r"trial_id=([0-9a-f]+)", text)
+        if not found:
+            raise setup.McpError(text[:300])
+    except (setup.McpError, SystemExit) as error:
+        print(f"the near-miss could not be recorded as a trial ({error}); it goes into the note instead")
+        return f"Near-miss {score} under {label(profile)}:\n{source[:3000]}"
+    print(f"kept the near-miss ({score} under {label(profile)}) as compiler trial {found[1]}; nothing was applied")
+    return f"Near-miss {score} under {label(profile)} kept as compiler trial {found[1]} (not applied)."
 
 
 def done(holder, note=""):
@@ -430,14 +502,16 @@ def done(holder, note=""):
     name = state["function"]["name"]
     current = app_function(info, name)
     lost = claimlost.taken(claimlost.read(root))
+    near = ""
     if current.get("status") != "matched" and not lost:
         keep_work(holder, root, info, state)
+        near = keep_near(holder, root, info, state)
         current = app_function(info, name)
     if current.get("status") == "matched":
         setup.stop_session(holder)
         print(f"RESULT {name}: MATCHED")
         return 0
-    text = summary(state, note)
+    text = summary(state, note, near)
     try:
         gateway = setup.Gateway(info["gateway_url"], info["token"])
         gateway.start()
