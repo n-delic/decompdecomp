@@ -719,3 +719,22 @@ def test_the_drafts_record_arrays_are_judged_under_the_old_level(monkeypatch, ex
     monkeypatch.setattr(global_offset_records, 'variants', lambda source, name, header: [('f', 'RECORDS')])
     assert profile_probe.run(search, None, PROJ, {**FN, 'seed': 'DRAFT'}, 'C', climb=False) is exact
     assert sources[:3] == ['C', 'DRAFT', 'RECORDS']
+
+
+# lw $a3,0($a0); lui $a2,0x800E; addiu $a2,$a2,-0x2D10; lhu $v1,0($a2); lhu $v0,4($a2); lhu $v0,2($a2); jr $ra; nop
+HELD_ADDRESS = [0x8C870000, 0x3C06800E, 0x24C6D2F0, 0x94C30000, 0x94C20004, 0x94C20002, 0x03E00008, 0]
+
+
+def test_offsets_read_off_a_held_symbol_address_point_to_force_addr():
+    assert evidence.reads_through_held_address(HELD_ADDRESS)
+    own = {'toolchain': 'gcc-2.7.2-kmc', 'flags': ['-G0', '-mips3', '-O2']}
+    planned = [p for p in profile_probe.mips_gcc(facts(own, words=HELD_ADDRESS)) if p['family'] == 'force_addr']
+    assert [p['flags'] for p in planned] == [['-G0', '-mips3', '-O2', '-fforce-addr'],
+                                             ['-G0', '-mips3', '-O1', '-fforce-addr']]
+
+
+def test_one_offset_or_a_redefined_register_is_no_force_addr_evidence():
+    one = HELD_ADDRESS[:5] + HELD_ADDRESS[6:]
+    reloaded = [*HELD_ADDRESS[:4], 0x8C860000, *HELD_ADDRESS[4:]]  # lw $a2,0($a0) before the offsets
+    assert not evidence.reads_through_held_address(one)
+    assert not evidence.reads_through_held_address(reloaded)

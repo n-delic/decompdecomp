@@ -47,3 +47,31 @@ def keeps_frame_pointer(words) -> bool:
     """The prologue copies `$sp` into `$fp`: GCC's unoptimised (`-O0`) code does it in every function, optimised code
     omits the frame pointer unless it needs one (`alloca`)."""
     return any(word in MOVE_FP_SP for word in words[:16])
+
+
+def reads_through_held_address(words) -> bool:
+    """A symbol's address built into a register (`lui r; addiu r, r`) and two or more other offsets read or written
+    through it before the next jump: GCC folds `sym + 4` into the instruction itself for a pointer that holds a
+    constant address, and keeps `4(r)` under `-fforce-addr`."""
+    for index, word in enumerate(words):
+        if word >> 26 != 0x0F:  # lui
+            continue
+        register = (word >> 16) & 31
+        built = next((at for at in range(index + 1, min(index + 3, len(words)))
+                      if words[at] >> 26 == 9 and (words[at] >> 21) & 31 == register == (words[at] >> 16) & 31), None)
+        if register in (1, 29) or built is None:
+            continue
+        offsets = set()
+        for after in words[built + 1:]:
+            op, base, rt = after >> 26, (after >> 21) & 31, (after >> 16) & 31
+            if op in (1, 2, 3, 4, 5, 6, 7, 0x14, 0x15, 0x16, 0x17) or (op == 0 and after & 63 in (8, 9)):
+                break
+            load, store = op in (0x20, 0x21, 0x23, 0x24, 0x25), op in (0x28, 0x29, 0x2B)
+            if base == register and (load or store or op in (0x31, 0x35, 0x39, 0x3D)) and after & 0xFFFF:
+                offsets.add(after & 0xFFFF)
+            written = (after >> 11) & 31 if op == 0 and after else rt if load or 8 <= op <= 15 else None
+            if written == register:
+                break
+        if len(offsets) >= 2:
+            return True
+    return False
