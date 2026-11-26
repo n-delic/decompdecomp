@@ -19,3 +19,7 @@ Failed experiments: `volatile` casts on single accesses (580 to 1505), an inline
 scaffolding scored 346; under `-O2` the same plain source scored 4053.
 
 Controlled and one-function evidence: one function.
+
+What the library already reached: from the typed machine draft (separate per-field symbols, the compared value already
+in a local) `store_reload_volatile` scored 0 in one step under `-O1`. `wrap_reread_member` is for the record-array
+spelling, where no family improved the 315.
