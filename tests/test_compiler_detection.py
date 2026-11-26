@@ -355,3 +355,20 @@ def test_kmc_priorities_offers_the_cse_skip_variant():
     load = 'lhu $a0, 0x24($t4)'
     rows = [(' ', load, load), ('>', '', load), ('>', '', load)]
     assert ('-O2',) in kmc_priorities(own, '', rows)
+
+
+def test_kmc_cse_hoist_probe_turns_both_block_options_off_for_a_hoisted_address():
+    from decompnet.app.profile_hypotheses import kmc_cse_hoist_probe
+
+    own = {'toolchain': 'gcc-2.7.2-kmc', 'flags': ['-O2']}
+    rows = [('r', 'lui $a0, %hi(D_800DE058)', 'lui $s2, %hi(D_800DE058)'),
+            ('>', '', 'addiu $s2, $s2, %lo(D_800DE058)'),
+            ('|', 'addiu $a0, $a0, %lo(D_800DE058)', 'move $a0, $s2'),
+            ('<', 'lui $a0, %hi(D_800DE058)', ''),
+            ('|', 'addiu $a0, $a0, %lo(D_800DE058)', 'move $a0, $s2')]
+    assert kmc_cse_hoist_probe(own, rows) == ['-O2', '-fno-cse-follow-jumps', '-fno-cse-skip-blocks']
+    # one copy, a target that builds it once too, or another compiler is no evidence
+    assert kmc_cse_hoist_probe(own, rows[:3]) is None
+    assert kmc_cse_hoist_probe(own, [rows[1], rows[2], ('|', 'move $a0, $v1', 'move $a0, $s2')]) is None  # built once
+    assert kmc_cse_hoist_probe({'toolchain': 'ido-7.1', 'flags': ['-O2']}, rows) is None
+    assert kmc_cse_hoist_probe({'toolchain': 'gcc-2.7.2-kmc', 'flags': ['-O2', '-fno-cse-skip-blocks']}, rows) is None

@@ -39,8 +39,11 @@ FLAG_LEVELS = {"gcc": ("-O1", "-O2", "-O3", "-Os"), "ee": ("-O1", "-O2", "-O3", 
 # (-fno-expensive-optimizations: a KMC GCC 2.7.2 record scan kept `andi $v1,$a3,0xffff` for a `(u16)` test of a
 # halfword-loaded key only with the flag on; at -O2 combine.c folds the cast. Matched at 0 where the default flags
 # stayed at 100 with every spelling.)
+# (-fno-cse-follow-jumps with -fno-cse-skip-blocks: an N64 dispatcher passing one global's address to two calls kept
+# it in a saved register at -O2; the target built it before each call. Both off matched plain C, one alone did not.)
 FLAG_EXTRAS = {"gcc": ("-fno-strength-reduce", "-fno-schedule-insns", "-fno-schedule-insns2",
-                       "-fno-expensive-optimizations", "-fno-schedule-insns -fno-schedule-insns2"),
+                       "-fno-expensive-optimizations", "-fno-schedule-insns -fno-schedule-insns2",
+                       "-fno-cse-follow-jumps -fno-cse-skip-blocks"),
                "ee": ("-fno-strength-reduce", "-fno-schedule-insns", "-fno-common"),
                "ido": (), "mwcps2": (), "snc": ("-Xsched=0",)}  # SNC's instruction scheduling off
 SMALL_DATA_SIZES = (0, 8)
