@@ -64,7 +64,9 @@ def test_repair_ranking_uses_time_without_disabling_exploration():
     weights=adaptive_repairs.factors(net,'compiler','register')
     assert weights['fast']>weights['slow']>=adaptive_repairs.MIN_FACTOR
     assert adaptive_repairs.factors(net,'other compiler','register')=={}
-    assert adaptive_repairs.factors(net,'compiler','call')=={}
+    # another mismatch kind borrows only what lifts a family, capped: the slow one's weight stays unmeasured there
+    borrowed=adaptive_repairs.factors(net,'compiler','call')
+    assert set(borrowed)=={'fast'} and 1<borrowed['fast']<=adaptive_repairs.POOLED_MAX_FACTOR
 
 
 def test_efficiency_preserves_token_categories_and_includes_failed_work():
