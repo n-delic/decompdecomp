@@ -1930,14 +1930,14 @@ def test_deep_sweep_routes_validate_start_stop_and_status(app, monkeypatch):
     calls = []
     monkeypatch.setattr(net.deep_sweeps, 'start', lambda *args: calls.append(args) or {'job':'sweep','enabled':True})
     monkeypatch.setattr(net.deep_sweeps, 'stop', lambda slug: {'enabled':False,'project':slug})
-    monkeypatch.setattr(net.deep_sweeps, 'status', lambda slug: {'project':slug,'completed':2})
+    monkeypatch.setattr(net.deep_sweeps, 'status', lambda slug, full=False: {'project':slug,'completed':2})
     assert client.get('/api/permuter/pass?slug=example').json()['completed'] == 2
     monkeypatch.setattr(net.deep_sweeps, 'reset_metrics', lambda slug: {'reset':slug})
     assert client.post('/api/permuter/pass', json={'slug':'example','action':'reset-metrics'}, headers={'X-Decomp':'1'}).json() == {'reset':'example'}
     response = client.post('/api/permuter/pass', json={'slug':'example','minutes':7,'max_variants':99,'repeat':True}, headers={'X-Decomp':'1'})
-    assert response.json()['job'] == 'sweep' and calls == [('example',7,99,True,0,1,False,1,False,0,False,'smart')]
+    assert response.json()['job'] == 'sweep' and calls == [('example',7,99,True,0,1,True,1,False,0,False,'smart')]  # (loops unless told otherwise)
     client.post('/api/permuter/pass', json={'slug':'example','threads':2,'threads_per_function':4,'rank_candidates':True}, headers={'X-Decomp':'1'})
-    assert calls[-1] == ('example',5,2500,False,2,1,False,4,False,0,True,'smart')  # (2,500 candidates a function unless told otherwise)
+    assert calls[-1] == ('example',5,750,False,2,1,True,4,False,0,True,'smart')  # (750 candidates a function unless told otherwise)
     assert not client.post('/api/permuter/pass', json={'slug':'example','action':'stop'}, headers={'X-Decomp':'1'}).json()['enabled']
     assert client.post('/api/permuter/pass', json={'slug':'example','repeat':'yes'}, headers={'X-Decomp':'1'}).status_code == 400
     assert client.post('/api/permuter/pass', json={'slug':'example','action':'unknown'}, headers={'X-Decomp':'1'}).status_code == 400
@@ -3174,7 +3174,7 @@ def test_deep_pass_controls_do_not_wait_for_progress_sync(app,monkeypatch):
         db.execute("INSERT INTO projects(slug,name,arch,root,config) VALUES('example','Example','mips','','{}')")
     def blocked(*args,**kwargs):pytest.fail('deep-pass controls must not synchronize the project')
     monkeypatch.setattr(net.progress,'sync',blocked)
-    def snapshot(slug,*args):
+    def snapshot(slug,*args,**kwargs):
         assert net.progress.viewing
         net.project_row(slug)
         return {'job':'local-search'}
