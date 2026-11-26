@@ -6,7 +6,6 @@ from types import SimpleNamespace
 import pytest
 
 from decompnet.app import agents, boundary_repairs, code_coverage, session_history
-from decompnet.network import NetworkError
 from tests.test_code_coverage import fixture as coverage_fixture
 from tests.test_compiler_default_test import net as compiler_fixture
 
@@ -42,8 +41,9 @@ def test_range_change_loads_only_affected_bodies_and_keeps_race_guard(compiler_n
         # inputs, target and offset, do); its function is rescored after the settings are saved.
         net._apply_compiler_config(proj,cfg)
     elif race:
-        with pytest.raises(NetworkError,match='changed during'):net._apply_compiler_config(proj,cfg)
-        assert net._project('game')['config']==proj['config']
+        # What a verdict depends on changed under the check: it is checked again, then saved.
+        net._apply_compiler_config(proj,cfg)
+        assert net.cfg(net._project('game'))['compiler_ranges']==cfg['compiler_ranges']
     else:
         net._apply_compiler_config(proj,cfg)
         assert net._function('f3','game')['best_score']==5

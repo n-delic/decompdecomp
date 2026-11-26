@@ -176,12 +176,16 @@ def replace_default(net, slug, selected, log=print):
     """Promote a profile, retaining the previous settings wherever a saved match needs them."""
     with net.progress.judging(slug):
         proj = net._project(slug)
+        tested_default = profile(json.loads(proj['config'])['compiler'])
+        result = run(net, slug, selected, log)
+        # Helpers keep matching during the trial (result['stale']). The commit below rechecks every match as it
+        # is now, so only another default makes this a different replacement.
+        proj = net._project(slug)
         cfg = json.loads(proj['config'])
+        if profile(cfg['compiler']) != tested_default:
+            raise NetworkError('The project default was changed during testing. Run the replacement again.')
         rows = net.project_store(proj['id']).all(
             'SELECT name,vram,rom_offset,size FROM functions WHERE project_id=? ORDER BY id', proj['id'])
-        result = run(net, slug, selected, log)
-        if result['stale']:
-            raise NetworkError('Code or settings changed during testing. Run the replacement again.')
         proposed = copy.deepcopy(cfg)
         old, target = profile(cfg['compiler']), profile(selected)
         proposed['compiler'] = dict(cfg['compiler'], toolchain=target[0], flags=list(target[1]))
@@ -195,7 +199,7 @@ def replace_default(net, slug, selected, log=print):
                 end = min([fn['vram'] + max(1, fn['size'])] + [v for v in starts if v > fn['vram']])
                 replace_range(proposed, fn['vram'], end, old)
         # The normal guarded commit rechecks all affected matches and rescoring, then publishes atomically.
-        net._apply_compiler_config(proj, proposed, log=log)
+        net._apply_compiler_config(proj, proposed, log=log, preserve_matches=True)
         log(f"Default replaced. {len(failures)} functions retained their previous compiler settings.")
         return {'replaced':True, 'preserved':len(failures)}
 

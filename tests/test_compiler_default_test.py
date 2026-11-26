@@ -182,12 +182,43 @@ def test_replacement_preserves_failed_default_matches_and_existing_profiles(net,
     assert result=={'replaced':True,'preserved':1}
 
 
-def test_replacement_rejects_stale_trial(net, monkeypatch):
+def test_replacement_applies_after_a_stale_trial(net, monkeypatch):
+    # Helpers matching during a long trial must not throw the whole check away.
     import contextlib
     monkeypatch.setattr(net.progress, 'judging', lambda slug:contextlib.nullcontext())
-    monkeypatch.setattr(trial, 'run', lambda *args:{'stale':True})
-    with pytest.raises(NetworkError, match='changed'):
-        trial.replace_default(net, 'game', PROFILE)
+    monkeypatch.setattr(trial, 'run', lambda *args:{'stale':True, 'failures':[]})
+    monkeypatch.setattr(net, 'regression_test', lambda proj, agent, only, **kwargs:[])
+    monkeypatch.setattr(net, '_judge_with', lambda *args:(True, NS(score=0), ''))
+    assert trial.replace_default(net, 'game', PROFILE)['replaced']
+    assert json.loads(net._project('game')['config'])['compiler']['flags'] == ['-O1']
+
+
+def test_match_made_during_the_check_keeps_its_settings(net, monkeypatch):
+    import contextlib
+
+    from decompnet.project import compiler_for
+    monkeypatch.setattr(net.progress, 'judging', lambda slug:contextlib.nullcontext())
+    monkeypatch.setattr(net, '_judge_with', lambda proj, fn, *args:(fn['name']=='f0', NS(score=20), ''))
+    checked = []
+    def regression(proj, agent, only, **kwargs):
+        names = [f['name'] for f in only]
+        checked.append(names)
+        if len(checked) == 1:  # a helper matches f1 with the old default while the check runs
+            with net.store.tx() as db:
+                db.execute("UPDATE functions SET status='matched', matched_source='int f1;' WHERE name='f1'")
+        return [(n, 'compiles but no longer matches') for n in names if n == 'f1']
+    monkeypatch.setattr(net, 'regression_test', regression)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='open', matched_source=NULL, best_source='int f1;' WHERE name='f1'")
+    before = net.cfg(net._project('game'))
+    fn = net._function('f1', 'game')
+    assert compiler_for(before, fn['vram'], fn) == before['compiler']
+    trial.replace_default(net, 'game', PROFILE)
+    cfg = net.cfg(net._project('game'))
+    assert trial.profile(cfg['compiler']) == trial.profile(PROFILE)
+    assert compiler_for(cfg, fn['vram'], fn)['flags'] == before['compiler']['flags']
+    assert net._function('f1', 'game')['status'] == 'matched'
+    assert checked == [['f0'], ['f1']]  # f0's verdict is reused
 
 
 def test_replacement_commits_through_normal_guard_and_preserves_matches(net, monkeypatch):

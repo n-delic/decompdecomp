@@ -7,6 +7,7 @@ import pytest
 from decompnet.app.engine import RomNetwork
 from decompnet.app.function_names import canonical_source
 from decompnet.network import NetworkError
+from decompnet.project import compiler_for
 
 
 @pytest.fixture
@@ -65,16 +66,22 @@ def test_a_helper_saving_an_attempt_mid_check_does_not_abort_the_change(net, mon
     assert net._function('f84', 'demo')['best_source'] == 'new code'
 
 
-def test_concurrent_match_prevents_publishing_old_verdicts(net, monkeypatch):
-    def regression(*a, **kw):
-        with net.store.tx() as db:
-            db.execute("UPDATE functions SET status='matched', matched_source='x' WHERE name='f84'")
-        return []
+def test_a_match_made_mid_check_is_checked_and_the_change_applied(net, monkeypatch):
+    checked = []
+    def regression(proj, header, only, **kw):
+        names = [f['name'] for f in only]
+        checked.append(names)
+        if len(checked) == 1:
+            with net.store.tx() as db:
+                db.execute("UPDATE functions SET status='matched', matched_source='x' WHERE name='f84'")
+        return [(n, 'mismatch') for n in names if n == 'f84']
     monkeypatch.setattr(net, 'regression_test', regression)
-    with pytest.raises(NetworkError, match='changed during'):
-        net.set_compiler('demo', 'ido-5.3', ['-O1'])
-    assert net.cfg(net.project_row('demo'))['compiler']['flags'] == ['-O2']
-    assert net._function('f84', 'demo')['status'] == 'matched'
+    net.set_compiler('demo', 'ido-5.3', ['-O1'])
+    cfg = net.cfg(net.project_row('demo'))
+    fn = net._function('f84', 'demo')
+    assert cfg['compiler']['flags'] == ['-O1'] and fn['status'] == 'matched'
+    assert compiler_for(cfg, fn['vram'], fn)['flags'] == ['-O2']  # it keeps what it matched with
+    assert checked[1] == ['f84']
 
 
 def test_range_changes_use_the_same_private_validation_and_rebase(net, monkeypatch):
