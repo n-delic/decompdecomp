@@ -226,3 +226,21 @@ def test_offline_alternate_profile_is_durable_and_not_a_review_error(monkeypatch
         deep_profiles.probe(search,AGENT,proj,fn,'exact C',{'toolchain':'other','flags':['-O2']})
     saved=room_matches.pending(net,'game','client')[0]
     assert saved['source']=='exact C' and saved['evidence']['compiler']['toolchain']=='other'
+
+
+def test_a_miss_queued_in_the_same_batch_keeps_its_score(monkeypatch):
+    # The Deep Permuter's profile sweep and the profile probe run in one buffered batch: the probe asking for a pair the
+    # sweep has just judged found only its queued outcome, so a scored probe returned None (816 of 837 neighbour
+    # probes of one game were recorded without a score).
+    from decompnet.app import trial_bookkeeping
+    net = setup(monkeypatch)
+    calls = []
+    net._judge_with = lambda *args:(calls.append(1) or (False, SimpleNamespace(score=37), ''))
+    fn = net.function(); proj = net.project_row('game')
+    search = deep_permuter.Search(net, 1, 20, Log(), fn)
+    profile = {'toolchain':'one','flags':['-O1']}
+    with trial_bookkeeping.scope():
+        assert deep_profiles.probe(search, AGENT, proj, fn, 'candidate', profile, scored=True) == 37
+        assert deep_profiles.probe(search, AGENT, proj, fn, 'candidate', profile, scored=True) == 37
+    assert deep_profiles.probe(search, AGENT, proj, fn, 'candidate', profile, scored=True) == 37
+    assert len(calls) == 1

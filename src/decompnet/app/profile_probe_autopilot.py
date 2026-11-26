@@ -9,7 +9,8 @@ import logging
 
 from . import deep_permuter, profile_probe
 
-PROBES = profile_probe.MAX_PROBES + 2 * profile_probe.RESERVE  # the plan, its widened sources' share, the apply rechecks
+# the plan for the saved C and for the machine draft, their widened sources' share, the apply rechecks
+PROBES = 2 * profile_probe.MAX_PROBES + 2 * profile_probe.RESERVE
 
 
 def run(net, agent, proj, fn):

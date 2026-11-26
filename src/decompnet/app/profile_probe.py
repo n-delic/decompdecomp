@@ -15,9 +15,10 @@ does it where the permuter and the autopilot already are, with no model:
 2. judge (`run`): each profile through deep_profiles.probe, the same call the permuter's profile sweep uses, so a result
    is cached durably per (function, saved C, build inputs, profile) and never compiled twice, and an EXACT pair is
    rechecked and applied for that function only through `suggest`, with the project's own rule for automatic compiler
-   changes (a project that doesn't apply them leaves the exact pair on the project page). Floating-point, small-data and
-   scheduling variants apply like any other profile here: the permuter's sweep leaves them to review, but they are what
-   this step is for, and only an exact, rechecked pair is ever applied.
+   changes (a project that doesn't apply them leaves the exact pair on the project page). The machine draft, when it is
+   not the saved C, is judged under each profile too: under another profile it is often the closer text. Floating-point,
+   small-data and scheduling variants apply like any other profile here: the permuter's sweep leaves them to review, but
+   they are what this step is for, and only an exact, rechecked pair is ever applied.
 3. say (`diagnose`): the best profile that was not exact is a note on the function ("-mfp32: 20 against 380") for the
    agent that picks it up next. It changes nothing: never a compiler range, never a non-exact profile.
 
@@ -43,7 +44,10 @@ NEIGHBOUR_MIN = 3  # matched neighbours on one other profile that make it the fi
 NEIGHBOUR_SHARE = 2 / 3
 NOTE_AT = 0.9  # a non-exact profile is told to the next agent when it scores at most this share of the saved C's own score
 RESERVE = 3  # compiles left in a search's allowance before one more profile: its own, and the two an exact apply rechecks with
-SIGNATURE = 'profile-probe-v1:'
+# v2: a v1 pass that ran in the Deep Permuter's batch right after the profile sweep kept no scores for the pairs the sweep
+# had just judged (deep_profiles.probe read only their queued outcome), and was still marked finished with no note: a
+# new signature redoes those passes once, from the judge's cache, so they need no compile
+SIGNATURE = 'profile-probe-v2:'
 FP_FLAGS = ('-mfp32', '-mfp64')
 # libultra's own names: osXxx, __osXxx, __rmon*, __sc*, the routines whose compiler was the library's, not the game's
 LIBRARY_NAME = re.compile(r'^_{0,2}(?:os[A-Z]|rmon|sc[A-Z])')
@@ -239,6 +243,8 @@ def run(search, agent, proj, fn, source) -> bool:
         return False
     if not planned:
         return False
+    seed = fn['seed'] if 'seed' in fn.keys() else None
+    draft = seed if seed and seed.strip() != source.strip() else None
     previous, search.phase = search.phase, 'profile probes'
     search.log(f'Profile probe: {len(planned)} per-function profile(s) the target points to: '
                + '; '.join(f"{p['toolchain']} {' '.join(p['flags'])} ({p['family']})" for p in planned) + '.')
@@ -255,6 +261,16 @@ def run(search, agent, proj, fn, source) -> bool:
                 matched = True
                 return True
             scores.append({**item, 'score': score})
+            if draft and search.limit - search.tested >= RESERVE:
+                # the machine draft under the same profile: a sweep of one KMC game's open functions found 26 of the 64
+                # that score at most half as much under -O1 through their draft, not their saved C
+                search.check()
+                drafted = deep_profiles.probe(search, agent, proj, fn, draft, profile, scored=True, review_variants=False)
+                if drafted == 0:
+                    matched = True
+                    return True
+                if drafted is not None:
+                    scores.append({**item, 'score': drafted, 'draft': True})
             if item['family'] in ('small_data', 'small_data_fp') and score is not None:
                 # the externs the target splits, declared as arrays above the threshold (extern_size_widen)
                 from . import small_data_fingerprints
@@ -285,7 +301,8 @@ def diagnose(search, agent, proj, fn, source, own, scores, complete) -> None:
     scored = [s for s in scores if s['score'] is not None]
     best = min(scored, key=lambda s: s['score'], default=None)
     record = {'own_score': fn['best_score'], 'probes': scores, 'complete': complete,
-              'best': best and {k: best[k] for k in ('toolchain', 'flags', 'family', 'score')}}
+              'best': best and {**{k: best[k] for k in ('toolchain', 'flags', 'family', 'score')},
+                                **({'draft': True} if best.get('draft') else {})}}
     if complete:
         with net.project_store(proj['id']).tx() as db:
             db.execute('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason,feedback) VALUES(?,?,?,?,?)',
@@ -293,8 +310,10 @@ def diagnose(search, agent, proj, fn, source, own, scores, complete) -> None:
     if best is None or fn['best_score'] is None or best['score'] > fn['best_score'] * NOTE_AT:
         return
     settings = f"{best['toolchain']} {' '.join(best['flags'])}"
-    line = (f"Profile probe: this saved C scores {best['score']} under {settings} ({best['why']}), "
-            f"{fn['best_score']} under its own settings; not exact. Nothing was changed.")
+    which = 'the machine draft (get_function section=draft)' if best.get('draft') else 'this saved C'
+    line = (f"Profile probe: {which} scores {best['score']} under {settings} ({best['why']}), "
+            f"{'the saved C scores ' if best.get('draft') else ''}{fn['best_score']} under its own settings; not exact. "
+            "Nothing was changed.")
     search.log(f"{fn['name']}: {line}")
     if complete and not any(s['score'] == 0 for s in scores):
         try:
