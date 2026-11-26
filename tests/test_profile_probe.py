@@ -477,3 +477,12 @@ def test_a_draft_that_is_the_saved_c_is_not_judged_twice(monkeypatch):
     search, seen = arrange(monkeypatch, {'-a': 300, '-b': None})
     assert profile_probe.run(search, None, PROJ, {**FN, 'seed': 'C\n'}, 'C') is False
     assert [n for n, _ in seen] == ['-a', '-b']
+
+
+def test_the_profiles_most_of_the_project_was_proven_under_are_planned_last():
+    o1 = ('gcc-2.7.2-kmc', ('-G0', '-mips3', '-O1'))
+    rare = ('gcc-2.7.2-kmc', ('-G0', '-mips2', '-O2'))
+    got = profile_probe.project_common(facts(common=Counter({o1: 12, rare: profile_probe.COMMON_MIN - 1})))
+    assert [(p['toolchain'], tuple(p['flags']), p['family']) for p in got] == [(*o1, 'project')]
+    own = {'toolchain': o1[0], 'flags': list(o1[1])}
+    assert profile_probe.project_common(facts(own=own, common=Counter({o1: 12}))) == []

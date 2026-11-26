@@ -43,11 +43,15 @@ MAX_PROBES = 10  # profiles judged per function and saved C: the plan is cut her
 NEIGHBOUR_MIN = 3  # matched neighbours on one other profile that make it the first profile to judge
 NEIGHBOUR_SHARE = 2 / 3
 NOTE_AT = 0.9  # a non-exact profile is told to the next agent when it scores at most this share of the saved C's own score
+COMMON_MIN = 5  # functions of the project on one per-function profile before it is worth judging under an unrelated one
+COMMON_PROBES = 2  # ... at most this many of them, the most used first
 RESERVE = 3  # compiles left in a search's allowance before one more profile: its own, and the two an exact apply rechecks with
 # v2: a v1 pass that ran in the Deep Permuter's batch right after the profile sweep kept no scores for the pairs the sweep
 # had just judged (deep_profiles.probe read only their queued outcome), and was still marked finished with no note: a
 # new signature redoes those passes once, from the judge's cache, so they need no compile
-SIGNATURE = 'profile-probe-v2:'
+# v3: the project's most used per-function profiles are planned too, so passes finished without them run again (cached
+# verdicts need no compile)
+SIGNATURE = 'profile-probe-v3:'
 FP_FLAGS = ('-mfp32', '-mfp64')
 # libultra's own names: osXxx, __osXxx, __rmon*, __sc*, the routines whose compiler was the library's, not the game's
 LIBRARY_NAME = re.compile(r'^_{0,2}(?:os[A-Z]|rmon|sc[A-Z])')
@@ -65,6 +69,7 @@ class Facts:
     sdk: bool = False  # library detection names it a library function
     votes: Counter = field(default_factory=Counter)  # matched neighbours per (toolchain, flags)
     read: int = 0  # neighbours read
+    common: Counter = field(default_factory=Counter)  # the project's functions per per-function (toolchain, flags)
     ready: Callable[[str], bool] = lambda toolchain: True  # whether a toolchain is installed and runs
     asm: str = ''
     source: str = ''
@@ -147,6 +152,17 @@ def neighbour(facts) -> list[dict]:
     return out
 
 
+def project_common(facts) -> list[dict]:
+    """The per-function profiles most functions of the whole project were proven under, wherever they sit. A game whose
+    default is `-O2` had a module's worth of `-O1` functions with no neighbour matched yet and nothing in their code
+    that a rule reads: a dozen near-misses of 5-250 under their own settings were exact under it, several with the
+    machine draft or the repairs alone."""
+    mine = key(facts.own)
+    used = [(other, count) for other, count in facts.common.most_common() if other != mine and count >= COMMON_MIN]
+    return [probe({'toolchain': other[0], 'flags': list(other[1])}, 'project',
+                  f'{count} functions of this project were built with it') for other, count in used[:COMMON_PROBES]]
+
+
 def plan(console, facts) -> list[dict]:
     """The profiles worth one judge compile each, in the order to judge them: [{toolchain, flags, family, why}]. Empty
     when nothing in the target points anywhere. Never the function's own profile, never one that isn't installed."""
@@ -155,7 +171,8 @@ def plan(console, facts) -> list[dict]:
     hints = console.profile_probes(facts)
     # a console's `lead` hint is a tell that settles the compiler's build outright (an `ldc1` and the assembler that
     # writes it): judged before the flag variants of the function's own compiler, which cannot fix a missing build
-    ordered = [*neighbour(facts), *(h for h in hints if h.get('lead')), *mips_gcc(facts), *(h for h in hints if not h.get('lead'))]
+    ordered = [*neighbour(facts), *(h for h in hints if h.get('lead')), *mips_gcc(facts), *(h for h in hints if not h.get('lead')),
+               *project_common(facts)]
     for item in ordered:
         k = key(item)
         if k in seen or not facts.ready(item['toolchain']):
@@ -189,6 +206,7 @@ def gather(net, proj, fn, source, own=None) -> Facts | None:
     arch = proj['arch'] if 'arch' in proj.keys() else 'mips'
     big = bool(proj['big_endian']) if 'big_endian' in proj.keys() else True
     votes, read = profile_detection.neighbours(net, proj, cfg, fn)
+    common = Counter(key(p) for p in (cfg.get('function_compilers') or {}).values() if p.get('toolchain'))
     sdk = bool(LIBRARY_NAME.match(row['name']))
     if not sdk:
         try:
@@ -199,7 +217,7 @@ def gather(net, proj, fn, source, own=None) -> Facts | None:
     context = net._context(proj['id'], row['unit']) if hasattr(net, '_context') else None
     return Facts(own=own, words=words_of(bytes(row.get('target') or b''), big), arch=arch, big_endian=big,
                  rows=profile_detection.saved_rows(net, proj, fn, own) if arch == 'mips' else [],
-                 name=row['name'], vram=row['vram'] or 0, sdk=sdk, votes=votes, read=read, ready=_ready,
+                 name=row['name'], vram=row['vram'] or 0, sdk=sdk, votes=votes, read=read, common=common, ready=_ready,
                  asm=row.get('asm') or '', source=source, header=context['header'] if context else '')
 
 
