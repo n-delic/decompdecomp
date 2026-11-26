@@ -430,6 +430,9 @@ def play(net, slug: str, log=print, *, adapter: Path | None = None, compare: boo
         log(f"playing has found {len(unlisted)} addresses the game runs that no function starts "
             f"({', '.join(f'{a:08X}' for a in unlisted[:4])}{'…' if len(unlisted) > 4 else ''}): Add missed functions "
             "(the project's Code coverage review) adds them as functions, without a reimport")
+    if compare:  # the saves as they are before the game runs: what a bookmark of this run starts from
+        from . import side_by_side
+        saves = side_by_side.read_saves(side_by_side.port_save_files(env, out))
     log_path = out / "play.log"
     with log_path.open("w", encoding="utf-8") as log_file:
         proc = subprocess.Popen([str(program), str(rom), "0"], cwd=out, env=env, stdout=log_file,
@@ -460,12 +463,14 @@ def play(net, slug: str, log=print, *, adapter: Path | None = None, compare: boo
         raise
     title = f"{cfg['rom'].get('title') or slug} (PC port)"
     if compare:
-        from . import side_by_side
         megabytes = int(memory or 8)  # "4" or "8" or a byte count, as the host reads it (host.c console_memory)
         megabytes = megabytes >> 20 if megabytes > 8 else megabytes
+        proc = side_by_side.Port(proc, [str(program), str(rom), "0"], out, env, log_path)  # (restartable: bookmarks)
+        proc.saves = saves
         try:  # the emulator has the Expansion Pak when the port's console does (the port defaults to it)
             session = side_by_side.Session(rom, url, out / "side-by-side", expansion_pak=megabytes != 4,
-                                           lockstep=True, symbols=project_symbols(net, slug), title=slug)
+                                           lockstep=True, symbols=project_symbols(net, slug), title=slug,
+                                           port=proc, keep=rom.parent / "side-by-side")
         except BaseException:
             end(proc)
             raise

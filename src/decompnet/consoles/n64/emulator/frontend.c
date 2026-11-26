@@ -18,7 +18,9 @@
    EMU_FROM=vi         report breakpoint hits only from this VI on
    EMU_MAX=n           report at most n hits (200)
    EMU_8MB=1           the Expansion Pak's 8 MB (default 4 MB, what the WebAssembly port's host gives a game)
-   EMU_CONFIG=folder   the core's configuration folder (a scratch one: nothing is saved between runs)
+   EMU_CONFIG=folder   the core's configuration folder (a scratch one: no setting is kept between runs)
+   EMU_SAVES=folder    the game's saves (else the core's usual folder in the user's home, kept between runs)
+   EMU_UNPACED         live, but as fast as the host allows (the viewer's gate paces it)
    EMU_INPUT           the input plugin's script (input.c); EMU_INPUT_CLOCK=frames times it in the game's frames
    EMU_FRAME_DUMP=n:path,…  RDRAM dumps, each as the game hands over its nth graphics task (the video plugin, video.c;
                        reported as "framedump <n> <path>")
@@ -259,6 +261,8 @@ int main(int argc, char **argv) {
         set_param(section, "DisableExtraMem", M64TYPE_BOOL, &no_extra);
         int off = 0;
         set_param(section, "OnScreenDisplay", M64TYPE_BOOL, &off);
+        const char *saves = getenv("EMU_SAVES"); /* the game's saves, in a folder of the caller's instead of the user's */
+        if (saves) set_param(section, "SaveSRAMPath", M64TYPE_STRING, saves);
         /* the same run every time: the core randomises interrupt timing by default */
         set_param(section, "RandomizeInterrupt", M64TYPE_BOOL, &off);
     }
@@ -285,7 +289,9 @@ int main(int argc, char **argv) {
     }
     live = live_map();
     set_vi_hook(on_vi);
-    int limiter = getenv("EMU_LIVE") != NULL; /* live (a person plays it beside the port): real time; otherwise as fast as the host allows */
+    /* live (a person plays it beside the port): real time, unless the viewer's gate paces it (EMU_UNPACED: it replays
+       to a bookmark faster than that); otherwise as fast as the host allows */
+    int limiter = getenv("EMU_LIVE") != NULL && getenv("EMU_UNPACED") == NULL;
     do_command(M64CMD_CORE_STATE_SET, M64CORE_SPEED_LIMITER, &limiter);
     m64p_error err = do_command(M64CMD_EXECUTE, 0, NULL);
     fprintf(stderr, "stopped %u\n", vi_count());

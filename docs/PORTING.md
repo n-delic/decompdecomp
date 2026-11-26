@@ -652,7 +652,15 @@ differ and the ones that are new at this retrace, latches the page's pad (a tap 
 one. The port still gets ahead in the game itself (it loads in no time and never drops a frame, the console takes
 retraces for both), so the page has **Port speed**: below 100% the port goes on for only that share of the console's
 retraces, and **held** parks it while the console catches up through a load. The two retrace numbers then differ and are
-both shown, and the RAM compared is each side's as it stands. The page has Pause, Step and the list; `--rate 50` for a PAL game, `--range START-END` (repeatable) to compare only the
+both shown, and the RAM compared is each side's as it stands. Neither side has save states (the
+port's N64 threads are the host's threads, so its RAM alone isn't where it is), so **Bookmark** keeps the run instead:
+what each side was given at every retrace (the pad, whether the port went on) and the saves the run started from.
+**Go to bookmark** starts both again on copies of those saves and replays it unpaced (about 3,400 retraces, a game's
+briefing screen, in 15 s), pauses there and says whether each side's RAM is as it was (checksums of every 256-byte
+block). On an unchanged build both were; after a rebuild the port's differ and the run can go another way. The saves
+written after going to a bookmark are the copies', not your own. Play keeps bookmarks and the console's saves in
+`side-by-side/` beside the project's ROM; the command line keeps them with `--keep DIR`. The viewer's console now
+saves there instead of in the emulator's folder in your home, so its first run starts without a save. The page has Pause, Step and the list; `--rate 50` for a PAL game, `--range START-END` (repeatable) to compare only the
 game's own data (the port's exception vectors and its stacks always differ),
 `--emulator-offset` if the two count retraces one apart. Measured on an N64 game's menu: both on the same screen, a Start press
 moved both on together, about 52 retraces a second.
