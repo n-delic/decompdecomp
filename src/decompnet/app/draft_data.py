@@ -8,6 +8,8 @@ MAX_BYTES = 4096
 MAX_TOTAL = 16384
 MAX_TABLES = 64
 MAX_CASES = 256
+# `lw $v0, %lo(D_80183198)($at)` followed by `jr $v0`: a dispatch through a table the symbol list calls data.
+_DISPATCH = re.compile(r'\blw\s+(\$\w+),\s*%lo\((D_[0-9A-Fa-f]{8})\)\(\$\w+\)[^\n]*\n(?:[^\n]*\n){0,2}?[^\n]*\bjr\s+\1(?!\w)')
 
 
 def case_target(word, instruction_addresses):
@@ -95,6 +97,10 @@ def read(net, proj, fn):
     # Tables first, outside the constants' limits: m2c can't decompile a function with any `jr` whose table is
     # missing, while a missing constant only costs a named global. A large state machine (a 4,399-instruction N64
     # function with 18 tables) got 4 of them after its constants and no draft at all.
+    # A table the splitter did not name `jtbl_` (it sits in data no segment lists, so it is only `D_80183198`) is
+    # still supplied under that name: seeds renames the draft's references to it. Without it m2c cut the switch.
+    dispatched = {'jtbl_' + found[2][2:]: found[2] for found in _DISPATCH.finditer(asm)}
+    names = [name for name in names if name not in dispatched.values()] + sorted(dispatched)
     names.sort(key=lambda name: not name.startswith('jtbl_'))
     count = tables = 0
     beside = []
