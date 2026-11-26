@@ -806,3 +806,68 @@ def test_a_refused_claim_at_start_prints_the_hint_and_leaves_nothing_behind(worl
     with pytest.raises(SystemExit, match="What to do: another agent"):
         start(setup, home, primary, "--holder", "claude-e2", "func_9")
     assert not setup.session_dir("claude-e2").exists()
+
+
+def test_a_function_this_session_matched_is_said_once_and_is_not_a_lost_claim(world, capsys):
+    setup, app, home, primary = world
+    assert start(setup, home, primary, "--holder", "claude-m1", "--interval", "3600") == 0
+    root = setup.session_dir("claude-m1")
+    claimlost = sys.modules["claimlost"]
+    try:
+        assert wait_for(lambda: (root / "renew.log").exists())
+        app.answers = ["✅ MATCH! func_8001 is byte-identical to the target (3 instructions). Credited to x."]
+        (root / "c.c").write_text("int f(void){return 0;}")
+        assert setup.main(["try", "claude-m1", str(root / "c.c")]) == 0
+        app.status, app.answers = "matched", ['{"claims": []}']
+        capsys.readouterr()
+        assert setup.main(["check", "claude-m1"]) == 0
+        out = capsys.readouterr()
+        assert "matched by this session" in out.out and "CLAIM LOST" not in out.out + out.err
+        assert out.err.count("MATCHED by this session") == 1
+        assert not claimlost.warn(root) and capsys.readouterr().err == ""  # said once
+        with pytest.raises(SystemExit, match="already matched by this session"):
+            setup.main(["try", "claude-m1", str(root / "c.c")])
+    finally:
+        setup.main(["stop", "claude-m1"])
+
+
+@pytest.mark.parametrize("author,ours", [("manual-abc", True), ("manual-other", False)])
+def test_a_match_with_no_verdict_is_attributed_by_the_apps_brief(world, capsys, author, ours):
+    """A match applied with `suggest` leaves no verdict behind: the app says who matched it."""
+    setup, app, home, primary = world
+    assert start(setup, home, primary, "--holder", "claude-m2", "--interval", "3600") == 0
+    root = setup.session_dir("claude-m2")
+    try:
+        assert wait_for(lambda: (root / "renew.log").exists())
+        app.status = "matched"
+        app.answers = ['{"claims": []}', f"## VIEW: demo/func_8001\nMATCHED by {author} 1 min ago:\n"]
+        capsys.readouterr()
+        assert setup.main(["check", "claude-m2"]) == (0 if ours else 1)
+        out = capsys.readouterr()
+        assert ("CLAIM LOST" in out.out + out.err) is (not ours)
+    finally:
+        setup.main(["stop", "claude-m2"])
+
+
+def test_reclaim_removes_the_previous_functions_start_files(world):
+    setup, app, home, primary = world
+    assert start(setup, home, primary, "--holder", "claude-s1") == 0
+    root = setup.session_dir("claude-s1")
+    try:
+        (root / "start").mkdir()
+        (root / "start" / "best.c").write_text("old")
+        assert setup.main(["reclaim", "claude-s1", "func_8001"]) == 0  # the same function keeps them
+        assert (root / "start" / "best.c").exists()
+        assert setup.main(["release", "claude-s1"]) == 0
+        assert setup.main(["reclaim", "claude-s1", "func_9100"]) == 0
+        assert not (root / "start").exists()
+    finally:
+        setup.main(["stop", "claude-s1"])
+
+
+@pytest.mark.parametrize("word", ["stop-nothing", "recliam", "help"])
+def test_a_mistyped_command_is_not_taken_as_a_project(world, word):
+    setup, app, home, primary = world
+    with pytest.raises(SystemExit, match="not a command"):
+        setup.main([word, "--home", str(home), "--repo", str(primary), "--no-sync"])
+    assert not list(setup.TMP.iterdir()) and not app.creates
