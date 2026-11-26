@@ -7,6 +7,7 @@ import copy
 import hashlib
 import json
 import re
+import sqlite3
 import sys
 import threading
 import time
@@ -985,6 +986,25 @@ class Search(Permuter):
         header = self.net.forks.permuter_header(fork, fn['name']) if fork else (context['header'] if context else '')
         reached = store_order_climb.run(self, agent, proj, dict(fn, best_score=best), source, header, fork)
         return best if reached is None else min(best, reached)
+
+    def mined_rule_pass(self, agent, proj, fn, best, fork):
+        """The changes that matched other functions, first (mined_rules.py). The score reached, or `best`."""
+        from . import mined_rules
+        source = _candidate_source(fn, best)
+        if not best or not source:
+            return best
+        candidates = mined_rules.variants(self.net, proj['arch'], source, fn['name'])
+        if candidates:
+            self.log(f'Trying rewrites learnt from earlier matches: {len(candidates)}.')
+        for family, candidate in candidates:
+            self.check()
+            with repair_trial({'kind': 'deep local repair', 'family': family, 'lineage': [family],
+                               'base_source_sha256': hashlib.sha256(source.encode()).hexdigest(),
+                               'source_sha256': hashlib.sha256(candidate.encode()).hexdigest()}):
+                score = self._score(agent, proj, fn, candidate, best, fork)
+            if score is not None and score < best:
+                return score     # the rest were made from the old C: the next round makes them from the new one
+        return best
 
     def measured_winner(self, fn, source):
         if self.winner_diff is None or self.winner_source is None:
@@ -2358,6 +2378,13 @@ def _full_run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, 
     lock = net.__dict__.setdefault('_deep_run_locks', {}).setdefault(fn['id'], threading.Lock())
     if not lock.acquire(blocking=False):
         raise NetworkError('A deep search is already running for this function.')
+    if slug not in net.links:
+        from . import mined_rules
+        try:
+            with looking(net):
+                mined_rules.refresh(net, net.project_row(slug), log, log.check_cancel)
+        except (OSError, ValueError, sqlite3.Error) as error:  # advice for the search, never a reason not to run it
+            log(f'Could not learn rules from earlier matches: {error}')
     previous_pool = getattr(log, 'compile_pool', None)
     pool = previous_pool or deep_compilation.Pool(deep_throughput.width(maximum_throughput, compile_slots), maximum=maximum_throughput)
     log.compile_pool = pool
@@ -2574,6 +2601,9 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
                         fn = net._function(name, slug)
                     if baseline and not fork and (lane is None or lane.index == 0):
                         baseline = search.draft_restart_pass(agent, proj, fn, state, baseline)
+                        fn = net._function(name, slug)
+                    if baseline and (lane is None or lane.index == 0):
+                        baseline = search.mined_rule_pass(agent, proj, fn, baseline, fork)
                         fn = net._function(name, slug)
                     measured_baseline = baseline
                     relabel = baseline and not fork and search.can_relabel_switch(fn)

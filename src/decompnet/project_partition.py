@@ -2,6 +2,7 @@
 import json
 
 SHARED = set('''agents helpers pairings sdk_shapes sdk_sources sdk_signatures expression_recipes
+mined_rewrites mined_rules mined_cursors
 repair_policy repair_policy_coverage repair_sequences repair_sequence_outcomes repair_promotions
 agent_tool_usage agent_tool_task_usage room_membership_effects activity_events
 variant_games game_variants logical_functions variant_bindings variant_sources variant_edit_locks variant_jobs'''.split())
