@@ -10,6 +10,7 @@ decompdecomp's: everything it needs comes in its arguments and environment.
   helpers that are working stop or keep working in the background. Without an answer from the page, it just closes.
 - The app talks to it on stdin, one word per line: "present" (bring it to the front), "close".
 - Links to other sites open in the user's own browser.
+- The app's exports (files the page builds, or answers marked as attachments) ask where to save them.
 """
 
 import argparse
@@ -29,6 +30,11 @@ PAGE_SAYS_CLOSE = "close"  # decompClose()'s answer when the window may close no
 ASK_PAGE = 'typeof decompClose === "function" ? String(decompClose()) : "close"'
 
 
+def export_url(origin: list[str], url: str) -> bool:
+    """Whether url is the app's own to save: its pages, or a file its page built (blob:http://host:port/id)."""
+    return url.removeprefix("blob:").split("/", 3)[:3] == origin
+
+
 class AppWindow:
     def __init__(self, args):
         self.origin = args.url.split("/", 3)[:3]
@@ -46,6 +52,7 @@ class AppWindow:
         settings.set_enable_developer_extras(args.dev)
         settings.set_enable_write_console_messages_to_stdout(True)  # the page's errors reach the app's log
         self.view.connect("decide-policy", self.on_policy)
+        self.view.get_context().connect("download-started", self.on_download)  # WebKit saves nothing on its own
         self.window.add(self.view)
         self.window.connect("delete-event", self.on_close_request)
         self.window.connect("key-press-event", self.on_key)
@@ -56,16 +63,51 @@ class AppWindow:
         self.window.show_all()
 
     def on_policy(self, _view, decision, kind):
-        """Pages of other sites open in the user's browser, never in this window."""
+        """Pages of other sites open in the user's browser, never in this window; the app's exports are downloads."""
+        if kind == WebKit2.PolicyDecisionType.RESPONSE:
+            headers = decision.get_response().get_http_headers()
+            disposition = headers.get_one("Content-Disposition") if headers else None
+            if (disposition or "").lower().startswith("attachment"):
+                decision.download()
+                return True
+            return False
         if kind not in (WebKit2.PolicyDecisionType.NAVIGATION_ACTION, WebKit2.PolicyDecisionType.NEW_WINDOW_ACTION):
             return False
         uri = decision.get_navigation_action().get_request().get_uri()
+        if uri.startswith("blob:") and export_url(self.origin, uri):  # an export, not a page to go to
+            decision.download()
+            return True
         if uri.split("/", 3)[:3] == self.origin and kind == WebKit2.PolicyDecisionType.NAVIGATION_ACTION:
             return False
         decision.ignore()
         if uri.startswith(("http://", "https://")):
             Gio.AppInfo.launch_default_for_uri(uri, None)
         return True
+
+    def on_download(self, _context, download):
+        download.connect("decide-destination", self.on_destination)
+
+    def on_destination(self, download, suggested):
+        target = self.choose_destination(os.path.basename(suggested or "") or "export")
+        if target is None:
+            download.cancel()
+        else:
+            download.set_allow_overwrite(True)  # the dialog has already asked about replacing a file
+            download.set_destination(target)
+        return True
+
+    def choose_destination(self, name: str) -> str | None:
+        """Ask where to save an export; the chosen file's address, or None when the user cancels."""
+        dialog = Gtk.FileChooserNative.new("Save", self.window, Gtk.FileChooserAction.SAVE, None, None)
+        dialog.set_do_overwrite_confirmation(True)
+        folder = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD)
+        if folder:
+            dialog.set_current_folder(folder)
+        dialog.set_current_name(name)
+        try:
+            return dialog.get_uri() if dialog.run() == Gtk.ResponseType.ACCEPT else None
+        finally:
+            dialog.destroy()
 
     def on_key(self, _window, event):
         """F5 or Ctrl+R reloads the page, as in a browser (the window has no toolbar to do it with)."""
