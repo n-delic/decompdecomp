@@ -205,7 +205,8 @@ def test_manual_search_tries_wider_donor_with_shifted_references(pair, monkeypat
     assert len(seen) == 1
 
 
-def test_manual_search_reserves_another_compilers_donor_and_surfaces_exact_trial(pair, monkeypatch):
+def test_manual_search_reserves_another_compilers_donor_and_tries_its_profile(pair, monkeypatch):
+    from decompnet.app import lookalike_profiles
     cfg = json.loads(pair._project('source')['config'])
     cfg['compiler']['toolchain'] = 'ido-7.1'  # The donor and destination both use -O2.
     with pair.store.tx() as db:
@@ -215,22 +216,24 @@ def test_manual_search_reserves_another_compilers_donor_and_surfaces_exact_trial
                    (code(62),))
     monkeypatch.setattr(sm, 'MAX_POOL', 1)
     monkeypatch.setattr(sm.toolchains, 'installed', lambda tc: tc == 'ido-7.1')
+    monkeypatch.setattr(type(pair.console(pair._project('destination'))), 'compilers_for',
+                        lambda self, cfg: (type('C', (), {'id': 'ido-7.1'})(),))
     tested = []
 
-    def judge(proj, fn, toolchain, flags, source):
-        tested.append((toolchain, flags, source))
-        return True, None, ''
+    def trial(net, agent, proj, fn, source, settings, **kw):
+        tested.append((settings, source))
+        return 'miss', 'score 30', 1
 
-    monkeypatch.setattr(pair, '_judge_with', judge)
+    monkeypatch.setattr(lookalike_profiles, 'trial', trial)
     monkeypatch.setattr(pair.twins, '_attempt_twin', lambda *args, **kw: ('miss', 'not close'))
     assert sm.run(pair.twins, 'destination', Job()) == 0
-    assert not tested
+    assert not [t for t in tested if t[0]]
     manual = Job()
     manual.cross_exhaustive = True
     sm.run(pair.twins, 'destination', manual)
-    assert len(tested) == 1 and tested[0][:2] == ('ido-7.1', ['-O2'])
-    assert 'int new(int x)' in tested[0][2]
-    assert pair.twins.cross_game_results('destination')['counts']['compiler'] == 1
+    with_donor = [t for t in tested if t[0]]
+    assert len(with_donor) == 1 and with_donor[0][0]['toolchain'] == 'ido-7.1'
+    assert 'int new(int x)' in with_donor[0][1]
     assert pair._function('new', 'destination')['status'] == 'open'
     assert pair.cfg(pair._project('destination'))['compiler']['toolchain'] == 'gcc-2.7.2-kmc'
 
@@ -407,7 +410,10 @@ def test_regional_map_uses_only_current_verified_unambiguous_pairs(pair):
     assert sm.regional_names(pair.twins, pair._project('destination'), pair._project('source')) == {'old': 'new'}
 
 
-def test_donor_flags_are_trials_not_silent_configuration_changes(pair, monkeypatch):
+def test_another_games_donor_profile_is_a_scoped_trial_not_a_configuration_change(pair, monkeypatch):
+    """A byte match under another game's profile goes through lookalike_profiles.trial, which publishes the profile
+    for this function alone on an exact recheck: never the project's default, never a "review" note."""
+    from decompnet.app import lookalike_profiles
     cfg = json.loads(pair._project('destination')['config'])
     cfg['compiler']['flags'] = ['-O0']
     with pair.store.tx() as db:
@@ -415,31 +421,124 @@ def test_donor_flags_are_trials_not_silent_configuration_changes(pair, monkeypat
     monkeypatch.setattr(sm.toolchains, 'installed', lambda tc: True)
     monkeypatch.setattr(pair.twins, '_attempt_twin', lambda *args, **kwargs: ('miss', 'score 20'))
     seen = []
-    def judge(proj, fn, tc, flags, source):
-        assert pair.store.one('SELECT 1 FROM claims WHERE function_id=?', fn['id'])
-        seen.append((tc, flags))
-        return True, None, ''
-    monkeypatch.setattr(pair, '_judge_with', judge)
+    def trial(net, agent, proj, fn, source, settings, **kw):
+        if settings:
+            seen.append((settings['toolchain'], settings['flags']))
+        return 'miss', 'score 5', 1
+    monkeypatch.setattr(lookalike_profiles, 'trial', trial)
     job = Job()
     assert sm.run(pair.twins, 'destination', job) == 0
     assert seen == [('gcc-2.7.2-kmc', ['-O2'])]
-    assert job.cross_matched == 0 and 3 <= job.cross_tried <= 11
     assert pair.cfg(pair._project('destination'))['compiler']['flags'] == ['-O0']
-    assert pair.store.one('SELECT text FROM notes WHERE function_id=2')['text'].startswith('byte match with')
-    assert not pair.store.one('SELECT 1 FROM claims WHERE function_id=2')
+    assert not pair.store.one('SELECT 1 FROM notes WHERE function_id=2')
     sm.run(pair.twins, 'destination', Job())
-    assert len(seen) == 1
+    assert len(seen) == 1  # cached
 
 
-def test_compiler_trial_releases_claim_on_failure_and_never_installs(pair, monkeypatch):
-    def failed(*args):
-        raise sm.toolchains.ToolchainError('missing runtime')
-    monkeypatch.setattr(pair, '_judge_with', failed)
-    agent, _ = pair.local_agent('autopilot')
-    outcome, _ = sm.compiler_trial(pair, agent, pair._project('destination'), pair._function('new', 'destination'),
-                                   'int new(void) { return 1; }', {'toolchain': 'gcc-2.7.2-kmc'})
-    assert outcome == 'skip'
-    assert not pair.store.one('SELECT 1 FROM claims WHERE function_id=2')
+def test_byte_exact_leads_are_pinned_first_and_tried_with_the_donors_profile(pair, monkeypatch):
+    from decompnet.app import lookalike_profiles
+    cfg = json.loads(pair._project('destination')['config'])
+    cfg['compiler']['flags'] = ['-O0']
+    with pair.store.tx() as db:
+        db.execute('UPDATE projects SET config=? WHERE id=2', (json.dumps(cfg),))
+        db.execute("INSERT INTO cross_game_attempts(project_id,function_id,source_project_id,source_function_id,"
+                   "outcome,reason,created_at) VALUES(2,2,1,1,'compiler','byte match with gcc -O2',0)")
+    assert sm.byte_exact_leads(pair, pair._project('destination'), {1: None}) == {2: [1]}
+    monkeypatch.setattr(sm, 'MAX_POOL', 0)  # the shortlist alone would offer nothing
+    monkeypatch.setattr(sm.toolchains, 'installed', lambda tc: True)
+    monkeypatch.setattr(pair.twins, '_attempt_twin', lambda *args, **kwargs: ('miss', 'score 20'))
+    seen = []
+    def trial(net, agent, proj, fn, source, settings, **kw):
+        if settings:
+            seen.append(settings['flags'])
+            with pair.store.tx() as db:
+                db.execute("UPDATE functions SET status='matched',matched_source=? WHERE id=2", (source,))
+            return 'match', 'byte match', 1
+        return 'miss', 'score 5', 1
+    monkeypatch.setattr(lookalike_profiles, 'trial', trial)
+    assert sm.run(pair.twins, 'destination', Job()) == 1
+    assert seen == [['-O2']]
+
+
+def test_codegen_key_ignores_warnings_defines_and_order_but_not_code_flags():
+    a = {'toolchain': 'ido-7.1', 'timeout': 20, 'flags': ['-O2', '-mips2', '-G', '0', '-Xcpluscomm',
+                                                          '-Wab,-r4300_mul', '-woff', '649,838,712']}
+    b = {'toolchain': 'ido-7.1', 'flags': ['-G', '0', '-O2', '-mips2', '-Wab,-r4300_mul', '-DNON_MATCHING']}
+    assert sm.codegen_key(a) == sm.codegen_key(json.dumps(b))
+    assert sm.codegen_key(a) != sm.codegen_key({**b, 'flags': ['-G', '0', '-O1', '-mips2', '-Wab,-r4300_mul']})
+    assert sm.codegen_key(a) != sm.codegen_key({**b, 'flags': ['-G', '0', '-O2', '-mips2']})
+    assert sm.codegen_key(a) != sm.codegen_key({**b, 'toolchain': 'ido-5.3'})
+
+
+def test_shingle_index_finds_alike_code_whatever_its_size_and_orders_by_likeness():
+    from decompnet import similarity
+    body = [0x24820000 | i for i in range(1, 30)]
+    alike = similarity.mips_shape(b''.join(w.to_bytes(4, 'big') for w in body + [0x03e00008, 0]))
+    other = similarity.mips_shape(b''.join(w.to_bytes(4, 'big') for w in [0x8c820000 | i for i in range(30)] + [0x03e00008, 0]))
+    index = similarity.ShingleIndex()
+    index.add('other', other)
+    index.add('alike', alike)
+    assert index.query(alike, 5)[0] == 'alike'
+    assert index.best(alike) == 1.0 and index.estimate(alike) == 1.0
+    assert index.estimate(other[:4] + alike[4:]) < 1.0
+
+
+def test_content_hits_come_before_the_size_ordered_shortlist(pair, monkeypatch):
+    from decompnet.app.reuse_donors import Donors
+    with pair.store.tx() as db:
+        # Same size as the destination but unlike code; the real look-alike is larger.
+        db.execute("INSERT INTO functions(id,project_id,name,size,n_insns,target,relocs,vram,unit,status,matched_source) "
+                   "VALUES(3,1,'unlike',32,8,?,'[]',2147491840,'','matched','int unlike(void){return 4;}')",
+                   (b''.join((0x8c820000 | i).to_bytes(4, 'big') for i in range(8)),))
+        db.execute("UPDATE functions SET size=36,target=? WHERE id=1", (code(60) + (0x24420007).to_bytes(4, 'big'),))
+    pair.twins.index_project(pair._project('source'))
+    donors = Donors(pair, pair._project('destination'))
+    plain = donors.candidates(32, 0, 3200, '', '', 1)
+    assert plain[0]['id'] == 3
+    found = donors.candidates(32, 0, 3200, '', '', 1, code=pair._function('new', 'destination')['target'])
+    assert found[0]['id'] == 1
+
+
+def test_best_first_orders_open_functions_by_their_closest_donor(pair, monkeypatch):
+    with pair.store.tx() as db:
+        # id 3: no donor like it; id 2 (the look-alike of the matched donor) has a higher id but goes first.
+        db.execute("UPDATE functions SET id=9 WHERE id=2")
+        db.execute("INSERT INTO functions(id,project_id,name,size,n_insns,target,relocs,vram,unit,status) "
+                   "VALUES(3,2,'lonely',32,8,?,'[]',2147491840,'','open')",
+                   (b''.join((0x8c820000 | i).to_bytes(4, 'big') for i in range(8)),))
+    order = []
+    monkeypatch.setattr(pair.twins, '_attempt_twin', lambda agent, proj, a, b, source, **kw:
+                        (order.append(b['id']) or 'miss', 'score 20'))
+    monkeypatch.setattr(sm.similarity, 'rank', lambda ops, cands, **kw: [(k, 1.0) for k in cands])
+    sm.run(pair.twins, 'destination', Job())
+    assert order and order[0] == 9
+
+
+def test_a_new_match_reaches_its_look_alikes_in_another_active_game(pair, monkeypatch):
+    with pair.store.tx() as db:
+        db.execute("UPDATE functions SET status='open',matched_source=NULL WHERE id=1")
+        db.execute("UPDATE functions SET status='matched',matched_source='int new(int x) { return x + 61; }' WHERE id=2")
+    assert sm.lookalikes_elsewhere(pair, pair._project('destination'), pair._project('source'), [2]) == [1]
+    ran = []
+    monkeypatch.setattr(sm, 'run', lambda twins, slug, job, function_ids=None: ran.append((slug, function_ids)) or 0)
+    sm.after_match(pair.twins, pair._project('destination'), [2])
+    assert ('source', [1]) in ran
+
+
+def test_a_transfer_that_does_not_build_is_tried_with_the_donors_missing_types(pair, monkeypatch):
+    with pair.store.tx() as db:
+        db.execute("UPDATE context_versions SET header='typedef struct Thing { int a; } Thing;' WHERE project_id=1")
+        db.execute("UPDATE functions SET matched_source='int old(Thing *t) { return t->a + 60; }' WHERE id=1")
+    seen = []
+    def attempt(agent, proj, a, b, source, feedback=None, **kw):
+        seen.append(source)
+        if feedback is not None:
+            feedback.update({'score': None} if 'typedef' not in source else {'score': 0})
+        return 'miss', "it didn't build"
+    monkeypatch.setattr(pair.twins, '_attempt_twin', attempt)
+    sm.run(pair.twins, 'destination', Job())
+    assert 'typedef' not in seen[0]
+    assert any('typedef struct Thing' in source and 'int new(Thing *t)' in source for source in seen)
 
 
 def test_explicit_memory_offsets_can_be_repaired_but_not_registers():

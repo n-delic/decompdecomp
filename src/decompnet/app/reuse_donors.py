@@ -10,6 +10,10 @@ from ..metadata_rows import rows as metadata_rows
 
 MAX_BODIES = 1024
 NEARBY_SLOTS = 32
+CONTENT_SLOTS = 48  # donors found by what their code looks like, ahead of the size-ordered rest
+# Donor shapes outlive a pass: a matched function's code never changes while its fingerprint stays the same.
+_SHAPES: dict = {}
+_SHAPES_LIMIT = 400_000
 # What ranking a donor needs (its code, relocations, place and size, and whether it has matched C), read from the
 # physical row. `SELECT *` went through the detail view, which decompresses every packed text column (assembly, seed,
 # best, matched and unpolished C) in a Python callback inside SQLite: the live app's top CPU use, 365 s of 397 s in
@@ -45,6 +49,53 @@ class Donors:
         self.sizes = [row['size'] for row in self.rows]
         self.bodies = OrderedDict()
         self.queries = {}  # project id -> its light row query (whether its database has packed text)
+        self.big = bool(proj['big_endian'])
+        self._index = None
+        self.by_id = {row['function_id']: row for row in self.rows}
+
+    def row(self, fid):
+        """One donor as `candidates` gives it (None when it is no longer a matched donor of this pass)."""
+        meta = self.by_id.get(fid)
+        if meta is None:
+            return None
+        body = self._light(meta['project_id'], fid)
+        return {**dict(body), 'compiler': meta['compiler'], 'fingerprint': meta['fingerprint']} if body else None
+
+    def index(self):
+        """The shingle index of every donor's code, built once per pass from shapes cached across passes."""
+        from .. import similarity
+        if self._index is not None:
+            return self._index
+        index = similarity.ShingleIndex()
+        by_id = {row['function_id']: row for row in self.rows}
+        missing = {}
+        for row in self.rows:
+            key = (row['project_id'], row['function_id'], row['fingerprint'])
+            if key not in _SHAPES:
+                missing.setdefault(row['project_id'], []).append(row['function_id'])
+        import json
+        for project_id, ids in missing.items():
+            for start in range(0, len(ids), 2000):
+                chunk = ids[start:start + 2000]
+                for r in self.net.project_store(project_id).all(
+                        'SELECT id,target FROM main.functions WHERE id IN (SELECT value FROM json_each(?))',
+                        json.dumps(chunk)):
+                    row = by_id.get(r['id'])
+                    if row is not None and r['target']:
+                        if len(_SHAPES) >= _SHAPES_LIMIT:
+                            _SHAPES.clear()
+                        _SHAPES[(project_id, r['id'], row['fingerprint'])] = similarity.mips_shape(r['target'], self.big)
+        for row in self.rows:
+            shape = _SHAPES.get((row['project_id'], row['function_id'], row['fingerprint']))
+            if shape:
+                index.add(row['function_id'], shape)
+        self._index = index
+        return index
+
+    def closest(self, code: bytes) -> float:
+        """How alike the most similar donor is to `code` (0..1): what orders a pass best-first."""
+        from .. import similarity
+        return self.index().best(similarity.mips_shape(code, self.big))
 
     def _light(self, project_id, fid):
         store = self.net.project_store(project_id)
@@ -54,19 +105,31 @@ class Donors:
                                         "FROM main.functions WHERE id=? AND status='matched'")
         return store.one(self.queries[project_id], fid)
 
-    def candidates(self, size, low, high, fingerprint, compiler, limit, *, near=None, eligible=None):
-        """Preserve the previous size/distance/id ordering and limit, without reloading cached source blobs."""
+    def candidates(self, size, low, high, fingerprint, compiler, limit, *, near=None, eligible=None, code=None):
+        """Preserve the previous size/distance/id ordering and limit, without reloading cached source blobs.
+        With `code` (the open function's target), the donors whose code looks most like it come first."""
         rows = self.rows[bisect_left(self.sizes, low):bisect_right(self.sizes, high)]
         # Filter before the size-ordered cap, while these are still metadata rows.
         rows = [row for row in rows if (row['fingerprint'] != fingerprint or row['compiler'] != compiler)
                 and (eligible is None or eligible(row))]
         rows.sort(key=lambda row: (abs(row['size']-size), row['function_id']))
+        content_count = 0
+        if code and limit > 0:
+            from .. import similarity
+            allowed = {row['function_id']: row for row in rows}
+            found = self.index().query(similarity.mips_shape(code, self.big), min(CONTENT_SLOTS, limit),
+                                       ratio=0.0, eligible=allowed.__contains__)
+            chosen = set(found)
+            rows = [allowed[fid] for fid in found] + [row for row in rows if row['function_id'] not in chosen]
+            content_count = len(found)
         if near is not None and limit > 0:
             # Reserve a small local slice before the global cap; keep the rest for other projects.
             nearby = sorted((r for r in rows if r['project_id'] == self.project_id and r['vram'] is not None),
                             key=lambda r: (abs(r['vram'] - near), abs(r['size'] - size), r['function_id']))[:min(NEARBY_SLOTS, limit)]
             selected = {r['function_id'] for r in nearby}
-            rows = nearby + [r for r in rows if r['function_id'] not in selected]
+            content = [r for r in rows[:content_count] if r['function_id'] not in selected]
+            selected |= {r['function_id'] for r in content}
+            rows = content + nearby + [r for r in rows if r['function_id'] not in selected]
         result = []
         for row in rows[:limit]:
             fid = row['function_id']
