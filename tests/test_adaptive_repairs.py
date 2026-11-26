@@ -129,3 +129,31 @@ def test_pooling_counts_a_trial_once_even_though_it_is_recorded_under_its_shape_
     assert row['attempted'] == row['matched'] == 5
     assert policy.pooled_rows(net, 'profile', 'call') == []
     assert policy.factors(net, 'profile', 'call@field')['narrow'] > 1   # a shape key keeps its own evidence and no pool
+
+
+def test_a_combinations_matches_credit_each_of_its_repairs():
+    net = FakeNet()
+    for _ in range(40):
+        policy.record(net, 'profile', 'call', 'hoist+sink', 20, 0, 10)
+    factors = policy.factors(net, 'profile', 'call')
+    assert factors['hoist'] > 1 and factors['sink'] > 1
+    assert policy.factors(net, 'profile', 'register')['hoist'] > 1  # and the profile's other mismatch kinds borrow it
+    assert 'hoist' not in policy.factors(net, 'other profile', 'call')
+
+
+def test_a_combinations_misses_never_demote_its_repairs():
+    net = FakeNet()
+    for _ in range(40):
+        policy.record(net, 'profile', 'call', 'hoist', 20, 0, 10)
+    alone = policy.factors(net, 'profile', 'call')['hoist']
+    for _ in range(500):
+        policy.record(net, 'profile', 'call', 'hoist+sink', 20, None, 10)
+    factors = policy.factors(net, 'profile', 'call')
+    assert factors['hoist'] >= alone
+    assert 'sink' not in factors  # only ever seen missing in a pair: still unmeasured, not poor
+
+
+def test_a_repair_applied_twice_counts_that_trial_once():
+    [row] = policy._credited([{'family': 'hoist+hoist', 'attempted': 3, 'improved': 1, 'matched': 1,
+                               'failed': 0, 'elapsed_ms': 30}])
+    assert (row['family'], row['attempted'], row['matched']) == ('hoist', 3, 1)
