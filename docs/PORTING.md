@@ -649,7 +649,10 @@ a port given by `--port-url` needs `PORT_LOCKSTEP=1 PORT_VTIME=1`) the viewer is
 `port_live_gate`, before each retrace) and the emulator (the shared file's gate, frontend.c) park at every retrace, the
 viewer reads both RAMs there (`GET /ram?vi=N` on the port, the file's second RAM block on the console), lists the regions that
 differ and the ones that are new at this retrace, latches the page's pad (a tap stays down four retraces) and lets both go on
-one. The page has Pause, Step and the list; `--rate 50` for a PAL game, `--range START-END` (repeatable) to compare only the
+one. The port still gets ahead in the game itself (it loads in no time and never drops a frame, the console takes
+retraces for both), so the page has **Port speed**: below 100% the port goes on for only that share of the console's
+retraces, and **held** parks it while the console catches up through a load. The two retrace numbers then differ and are
+both shown, and the RAM compared is each side's as it stands. The page has Pause, Step and the list; `--rate 50` for a PAL game, `--range START-END` (repeatable) to compare only the
 game's own data (the port's exception vectors and its stacks always differ),
 `--emulator-offset` if the two count retraces one apart. Measured on an N64 game's menu: both on the same screen, a Start press
 moved both on together, about 52 retraces a second.
