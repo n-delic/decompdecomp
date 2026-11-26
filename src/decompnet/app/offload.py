@@ -42,9 +42,15 @@ APP_SUFFIX = '_repairs'
 ORIGINALS = {}
 
 
+def _is_function(function):
+    """A Python function, or one compiled with Cython: `inspect.isfunction` says no to a compiled one, and the repair
+    families the app compiles (app/native_library.py) then ran in the server instead of the subprocess."""
+    return inspect.isfunction(function) or type(function).__name__ == 'cython_function_or_method'
+
+
 def selected(module, name, function):
     """Whether `module.name` is an entry point to run in the subprocess."""
-    if not inspect.isfunction(function) or function.__module__ != module or name.startswith('_'):
+    if not _is_function(function) or function.__module__ != module or name.startswith('_'):
         return False
     if inspect.isgeneratorfunction(function) or getattr(function, '__offloaded__', False):
         return False

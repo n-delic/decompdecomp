@@ -6,8 +6,8 @@ runs it itself, in two parts:
 
 - `ensure_kernels`, as the app starts and before anything imports the library (its modules choose between a kernel and
   the plain Python once, when imported): the typed kernels, seconds.
-- `Compiler`, afterwards in the background: the plain modules the library lists, at low priority on a few cores.
-  That is a minute or two the first time and only what changed after an update. Processes that start later (the
+- `Compiler`, afterwards in the background: every other module, at low priority on a few cores, then linked into the
+  library's one compiled file. That is about ten minutes the first time and only what changed after an update. Processes that start later (the
   repair proposals, permuter workers) use them as they arrive; the app itself from its next start.
 
 Nothing here is needed for correct results: without a C compiler, in a copy that can't be written to, or with
@@ -148,9 +148,12 @@ class Compiler:
                 if self.stopping.is_set():
                     return
                 group = names[start:start + size]
-                _run(_command(self.package, "--only", ",".join(group), "--missing"), BATCH_SECONDS, self.jobs)
+                # object files only: linking after every batch would write the whole library each time
+                _run(_command(self.package, "--only", ",".join(group), "--missing", "--no-link"), BATCH_SECONDS,
+                     self.jobs)
                 self.done += len(group)
-            if names:
+            if names and not self.stopping.is_set():
+                _run(_command(self.package, "--all", "--missing"), BATCH_SECONDS, self.jobs)  # links them
                 left = missing(self.package, everything=True)
                 log.info("compiled %d of %d repair library modules", len(names) - len(left), len(names))
         except Exception:  # an optional speed-up: its thread says why and ends

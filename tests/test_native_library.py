@@ -22,7 +22,8 @@ if "--list-missing" in sys.argv:
     print("\\n".join(names))
 elif "--missing" in sys.argv:
     for name in names:
-        (package / (name + ".built")).touch()
+        # without linking, a plain module is only compiled: still missing until the library is linked
+        (package / (name + (".object" if "--no-link" in sys.argv else ".built"))).touch()
 '''
 
 
@@ -54,6 +55,9 @@ def test_the_rest_is_compiled_in_the_background_after_the_kernels(package):
     compiler.start()
     compiler.thread.join(60)
     assert built(package) == ["kernel", "one", "three", "two"]
+    runs = (package / "runs").read_text().splitlines()
+    assert [run for run in runs if "--only" in run and "--no-link" not in run] == []
+    assert runs[-2] == "--all --missing"  # linked once, after the batches; then what is left is read
     assert compiler.snapshot() is None  # no row once it is done
 
 

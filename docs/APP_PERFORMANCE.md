@@ -614,10 +614,19 @@ without it. A compile of such a function takes about 20 ms, so this is a few per
 ### Compiled library kernels (Cython, optional)
 
 decomp-repair's `native_build.py` builds its typed Cython kernels (`_scan.pyx`: the bracket and loop scans many families
-share, 10x to 70x faster per call, a few seconds to compile) and, with `--all`, plain library modules unchanged (measured
-about 3% on a draft pass, 0.96 s against 0.99 s: the larger gains came from fixing the library's
-quadratic scans and regex backtracking in plain Python, 1.92 s to 0.27 s on real functions). All 151 modules build in
-30 s with 8 jobs on an 18-core Mac.
+share, 10x to 70x faster per call, a few seconds to compile) and, with `--all`, every other module unchanged, linked
+into one library. The gain from those is small (the library's test suite compiled: about 1% less CPU time); the large
+speedups came from fixing quadratic scans and regex backtracking in plain Python, 1.92 s to 0.27 s on real functions.
+
+It has to be one library. Importing the library's 1,413 modules on an 18-core arm64 Mac:
+
+| build | import | first import | memory |
+| --- | --- | --- | --- |
+| interpreted | 1.5 s | 1.5 s | 75 MB |
+| a compiled file per module | 19 s | 214 s | 600 MB |
+| one library | 0.5 s | 1.7 s | 150 MB |
+
+The full build takes 156 s with 16 jobs, and the library with its kept object files is about 470 MB per environment.
 
 The app runs both itself (`app/native_library.py`), because `uv sync` compiles nothing and a checkout ran interpreted
 until somebody remembered to build. The kernels are built as the app starts, before anything imports the library (a
