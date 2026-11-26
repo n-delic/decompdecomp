@@ -89,7 +89,9 @@ function setup(){
     const second=t.run('loadRomExplorer()');await tick();
     assert.equal(t.calls.filter(c=>c.options?.method==='POST').length,1);
     start.resolve({job:'pending'});await Promise.all([first,second]);
-    assert.equal(t.renders.length,1);
+    // The saved map is drawn at once, and once more by the one job both loads share.
+    assert.equal(t.calls.filter(c=>c.url?.includes('cached=1')).length,1);
+    assert.equal(t.renders.length,2);
   }
   // Fresh windows discover active work before any large saved-map request.
   {

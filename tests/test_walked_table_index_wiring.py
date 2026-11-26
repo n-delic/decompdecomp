@@ -55,7 +55,7 @@ def test_the_drafts_offer_the_family():
 def test_it_runs_in_the_bounded_local_lane(monkeypatch):
     from tests.test_permute import AGENT
 
-    net = setup(monkeypatch)
+    net = setup(monkeypatch, declared=('walked_table_index_repairs',))
     monkeypatch.setattr(generation_calls, 'IN_SERVER', True)
     proj = net.project_row('game')
     fn = {**net.function(), 'asm': ''}

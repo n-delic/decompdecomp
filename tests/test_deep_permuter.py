@@ -23,7 +23,9 @@ class Log:
         self.check_cancel(); self.updates.append(value)
 
 
-def setup(monkeypatch, imported=False):
+def setup(monkeypatch, imported=False, *, declared=()):
+    """`declared`: the library modules whose self-declared repair stays in the local lane (for the tests of that
+    wiring); every other one is off."""
     net = FakeNet()
     # Keep synthetic judge tests in process so their patched proposal generators apply.
     from decompnet.app import deep_proposals
@@ -34,6 +36,9 @@ def setup(monkeypatch, imported=False):
     monkeypatch.setattr(deep_proposals.Pool, 'generate', generate)
     monkeypatch.setattr('decompnet.app.compiler_preflight.warnings', lambda *args: '')
     monkeypatch.setattr('decompnet.app.deep_profile_sweep.run', lambda *args: False)  # (own tests: test_deep_profile_sweep)
+    # The climb's first compiles under other profiles (a KMC project always gets one, with the jump threader off) need
+    # the real judge and would spend the allowance these tests count (own tests: test_compiler_detection).
+    monkeypatch.setattr('decompnet.app.profile_climb.lead', lambda *args, **kwargs: None)
     net._function = lambda name, slug: net.function()
     net.local_agent = lambda name: (AGENT, None)
     net.fork_slug = lambda slug: 'fork' if imported else None
@@ -58,7 +63,9 @@ def setup(monkeypatch, imported=False):
     # lane children of its own and broke every count below). The lane's registry calls are off here; their own tests
     # (tests/test_library_family_wiring.py) cover them.
     from decompnet.app import library_registry
-    monkeypatch.setattr(library_registry, 'local_calls', lambda context: [])
+    local_calls = library_registry.local_calls
+    monkeypatch.setattr(library_registry, 'local_calls',
+                        lambda context: [call for call in local_calls(context) if call[1][0] in declared])
     return net
 
 

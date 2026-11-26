@@ -2,6 +2,7 @@
 import hashlib
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
 
 from decompnet import candidate_quality
 from decompnet.app import (
@@ -306,7 +307,8 @@ def test_shared_diff_publication_does_not_relabel_evidence_after_inputs_change(t
             db.execute('UPDATE functions SET target=? WHERE id=?',(b'new target',fn['id']))
         return original_copy(result)
 
-    monkeypatch.setattr(agent_evidence.copy,'deepcopy',deliver)
+    # agent_evidence's own `copy` only: other modules deep-copy too (candidate_scope, while the evidence is read).
+    monkeypatch.setattr(agent_evidence,'copy',SimpleNamespace(deepcopy=deliver))
     assert agent_evidence.baseline(net,a,'game',fn,fn['best_source'])['verified']
     with pytest.raises(NetworkError,match='No verified diff'):
         agent_tokens.diff_page(net,a,'game','f')

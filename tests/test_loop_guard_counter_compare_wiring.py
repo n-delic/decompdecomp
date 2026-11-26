@@ -50,7 +50,7 @@ def test_the_drafts_offer_the_guard_and_the_combined_child():
 def test_it_runs_in_the_bounded_local_lane(monkeypatch):
     from tests.test_permute import AGENT
 
-    net = setup(monkeypatch)
+    net = setup(monkeypatch, declared=('loop_guard_counter_compare',))
     monkeypatch.setattr(generation_calls, 'IN_SERVER', True)
     proj = net.project_row('game')
     fn = {**net.function(), 'asm': ''}

@@ -105,6 +105,16 @@ def _no_progress_wait(monkeypatch):
     monkeypatch.setattr(tools, "PROGRESS_RETRY_SECONDS", 0)
 
 
+@pytest.fixture(autouse=True)
+def _own_disabled_compilers(monkeypatch, tmp_path_factory):
+    """Compilers the user switched off in their app (disabled.json beside the installed toolchains, which tests share
+    to find compilers) must not change what tests see. A test that points DECOMPNET_TOOLCHAINS elsewhere keeps its own."""
+    from decompnet import toolchains
+    real, shared = toolchains._disabled_file, toolchains.root()
+    none = tmp_path_factory.getbasetemp() / "no-disabled-compilers.json"
+    monkeypatch.setattr(toolchains, "_disabled_file", lambda: none if toolchains.root() == shared else real())
+
+
 # A test that runs away with memory or never returns must not take the machine with it. One test grew a worker to
 # 15 GB (14 GB of it compressed, which resident-size checks miss) and kept it for over 15 minutes. Each test process
 # watches its own physical footprint and, above the limit, names the test, prints every thread's stack and ends

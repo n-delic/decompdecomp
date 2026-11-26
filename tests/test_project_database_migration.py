@@ -614,6 +614,8 @@ def test_repair_baseline_category_upgrades_existing_shards_on_open(tmp_path):
             store = net.repair_feedback.for_project(slug).store
             with store.tx() as db:
                 db.execute('DELETE FROM settings WHERE key=?', (BASELINE_MIGRATION,))
+                # A database from before this category has no stamp of this code's setup either (schema_stamp.py).
+                db.execute("DELETE FROM settings WHERE key='schema-stamp:repair-feedback'")
                 db.execute('INSERT INTO repair_examples(project_id,function_id,created_at,evidence,category,status) '
                            "VALUES(?,?,0,?,'other','reviewed')", (pid, 10 * pid, '{"before":null,"after":{}}'))
     finally:

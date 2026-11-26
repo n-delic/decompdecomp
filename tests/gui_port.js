@@ -59,7 +59,8 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
   {const t=setup();await t.run('loadPortReadiness()');assert.equal(t.calls.length,0,'another tab asks for nothing');}
   {const t=setup();t.c.S.tab='porting';t.c.reply=async()=>report;
    await t.run('loadPortReadiness()');
-   assert.deepEqual(t.calls,['/api/port-readiness?slug=a']);
+   // The last saved report is asked for first, drawn at once, then replaced by the fresh one.
+   assert.deepEqual(t.calls,['/api/port-readiness?cached=1&slug=a','/api/port-readiness?slug=a']);
    assert.equal(t.c.$('portBlockers').children.length,2);
    const steps=t.c.$('portSteps').children;
    assert.equal(steps.length,13,'thirteen steps');
@@ -97,7 +98,8 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    t.calls.length=0;
    t.c.reply=async url=>url==='/api/asset-map'?{resources:11,bytes:970,path:'/p/port/assets',files:['config.yml','g/rom.yml']}:report;
    await t.run('writeAssetMap()');
-   assert.deepEqual(t.calls,['/api/asset-map','/api/port-readiness?slug=a'],'writing reads the report again');
+   await new Promise(resolve=>setImmediate(resolve)); // (the fresh read follows the saved one)
+   assert.deepEqual(t.calls,['/api/asset-map','/api/port-readiness?cached=1&slug=a','/api/port-readiness?slug=a'],'writing reads the report again');
    assert.match(t.c.$('portAssetsLog').textContent,/11 resources .* written to \/p\/port\/assets: config.yml, g\/rom.yml/);
    assert.equal(t.c.$('portAssets').disabled,false);
    t.c.reply=async()=>{throw Error("ROM Explorer hasn't scanned this ROM yet");};
@@ -113,7 +115,8 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    const followed=[];t.c.followJob=async(job,log)=>{followed.push(job);};
    t.calls.length=0;t.c.reply=async url=>url==='/api/asset-extract'?{job:'j1'}:report;
    await t.run('extractAssets()');
-   assert.deepEqual(t.calls,['/api/asset-extract','/api/port-readiness?slug=a']);
+   await new Promise(resolve=>setImmediate(resolve)); // (the fresh read follows the saved one)
+   assert.deepEqual(t.calls,['/api/asset-extract','/api/port-readiness?cached=1&slug=a','/api/port-readiness?slug=a']);
    assert.deepEqual(followed,['j1'],'the job is followed with its progress bar');
    assert.equal(t.c.$('portExtract').disabled,false);assert.equal(t.c.$('portAssets').disabled,false);}
   {const t=setup();t.c.S.tab='porting';
@@ -291,7 +294,8 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
   {const t=setup();t.c.S.tab='porting';const followed=[];t.c.followJob=async(job)=>{followed.push(job);};
    t.c.reply=async url=>url==='/api/rename-calls'?{job:'r1'}:report;
    await t.run('fixRenamedCalls()');
-   assert.deepEqual(t.calls,['/api/rename-calls','/api/port-readiness?slug=a'],'the report is read again after');
+   await new Promise(resolve=>setImmediate(resolve)); // (the fresh read follows the saved one)
+   assert.deepEqual(t.calls,['/api/rename-calls','/api/port-readiness?cached=1&slug=a','/api/port-readiness?slug=a'],'the report is read again after');
    assert.deepEqual(followed,['r1']);assert.equal(t.c.$('portRenameCalls').disabled,false);}
   {const t=setup();const opened=[];t.c.window={open:u=>opened.push(u)};t.c.followJob=async()=>({url:'http://127.0.0.1:5/'});
    t.c.reply=async url=>url==='/api/play'?{job:'p1'}:report;
@@ -327,7 +331,8 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
   {// A build started elsewhere (another window, before navigating away) is followed, not started again
    const t=setup(),followed=[];t.c.S.tab='porting';t.c.updateWorkProgress=(log,p)=>{log.seen=p;};
    t.c.followJob=async job=>{followed.push(job);return null;};
-   t.c.reply=async()=>({...report,play:{job:{id:'p4',progress:{phase:'Linking',step:5,steps:8}},url:null}});
+   // No saved report yet: this double's job ends at once, so a saved reply naming it would follow it again.
+   t.c.reply=async url=>url.includes('cached=1')?{cache_miss:true}:({...report,play:{job:{id:'p4',progress:{phase:'Linking',step:5,steps:8}},url:null}});
    await t.run('loadPortReadiness()');for(let i=0;i<10;i++)await Promise.resolve();
    assert.deepEqual(followed,['p4']);assert.ok(!t.calls.includes('/api/play'));
    assert.equal(t.c.$('portPlayLog').seen.phase,'Linking','its progress shows at once');

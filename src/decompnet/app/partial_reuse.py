@@ -155,8 +155,9 @@ def scope(net, proj, fn, source, donor):
     if net.fork_slug(proj['slug']):
         _, fp, _ = net.forks.get(proj['slug'])
         context += input_stamp(fp.root)
-    # Saving an attempt advances this counter without changing compilation inputs.
-    config = {key: value for key, value in net.cfg(proj).items() if key != 'progress_revision'}
+    # Saving an attempt advances this counter, and the first progress sync records which home writes the project's
+    # folders (folder_owner.py): neither changes compilation inputs, so neither may retry a donor already judged.
+    config = {key: value for key, value in net.cfg(proj).items() if key not in ('progress_revision', 'folder_owner')}
     return 'partial-v1:' + hashlib.sha256(json.dumps([donor['best_score'],
         trial_key(source, context, config, fn, [tuple(r) for r in net.project_store(proj['id']).all('SELECT name,address,size,kind FROM symbols WHERE project_id=? ORDER BY name', proj['id'])])], sort_keys=True).encode()).hexdigest()
 

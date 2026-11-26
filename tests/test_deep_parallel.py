@@ -441,6 +441,12 @@ def test_scoped_byte_read_trial_recognizes_a_saved_address_named_draft(monkeypat
                           '    }\n}\n')}
     search = deep_permuter.Search(net, 1, 6, Log())
     monkeypatch.setattr(deep_permuter.permuter_focus, 'classify', lambda *args: 'operand')
+    # The pass tries only its first few children, and this family's eight for the same call come first (its own test:
+    # test_argument_weight_scope_wiring).
+    from decompnet.app import generation_calls
+    from decomprepair import argument_weight_scope
+    monkeypatch.setattr(generation_calls, 'IN_SERVER', True)
+    monkeypatch.setattr(argument_weight_scope, 'variants', lambda *args, **kwargs: [])
     tried = []
     # Worse than the best (75) for every child, so the pass goes through all its proposals: a library family that
     # wraps the call in `do {...} while (0)` now comes before the byte-read one, and an improvement would stop there.

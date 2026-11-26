@@ -8,6 +8,7 @@ the draft's read-before-write valid C at the same score. Three more finished it 
 through a free local (501 -> 285), the identical `if (temp)` arms collapsed (25 -> 15) and the element and picked-object
 pointers written as one variable (15 -> 0). The shapes below are the function's, with other names."""
 from decompnet.app import draft_repairs
+from decomprepair import identical_arm_collapse_repairs
 
 NAME = 'walk'
 
@@ -141,9 +142,13 @@ void pick(void **table, void *obj, s32 flag, s32 word, s32 n)
 def test_the_later_families_are_proposed_labelled_and_known_to_the_agents():
     labels = {}
     result = draft_repairs.variants(LATER_SOURCE, 'pick', 'mips', labels=labels, limit=None)
-    assert set(LATER) <= set(labels.values())
     assert set(LATER) <= set(draft_repairs.AGENT_FAMILIES)
+    # Another library family writes the collapsed arms first and labels them, so that one is checked by its text.
+    collapsed = {text for _, text in identical_arm_collapse_repairs.variants(LATER_SOURCE, 'pick')}
+    assert collapsed and collapsed <= set(result)
+    assert set(LATER) - {'identical_arm_collapse'} <= set(labels.values())
     by = {family: [t for t in result if labels.get(t) == family] for family in LATER}
+    by['identical_arm_collapse'] = collapsed
     assert any('limit = flag;\n  if (limit == 0)' in t for t in by['live_range_retarget'])
     assert any('picked' not in t and 'item = table[0];' in t for t in by['pointer_local_merge'])
     assert any('if (obj)' not in t and t.count('0x60)) = 1;') == 1 for t in by['identical_arm_collapse'])
