@@ -13,7 +13,8 @@
                          Scaffolding the starting C already has may stay, also in a match (which is reported as keeping
                          it); adding more is refused
     haiku.py done HOLDER [--note TEXT]     (also: giveup)
-                         submit the best candidate seen, keep a better one under another profile as a compiler trial
+                         submit the best candidate seen, run the repair library on a close one under another profile (exact:
+                         saved as the match), keep a better one under another profile as a compiler trial
                          (compiler_experiments: nothing is applied; the next `next` shows it), write the note, release
                          the claim, remove the session (with no try and no --note: only the claim and session go)
 
@@ -25,7 +26,9 @@ import contextlib
 import hashlib
 import io
 import json
+import os
 import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -45,6 +48,8 @@ LINE_WIDTH = 240
 PICK_ATTEMPTS = 5
 RELEASE_WAIT_SECONDS = 600
 VERIFY_SECONDS = 90
+CHAIN_NEAR = 300  # `done` walks a near-miss of another profile this close through the repair library
+CHAIN_STEPS, CHAIN_CHILDREN, CHAIN_SECONDS = 4, 600, 600
 
 
 # --- the sources a matcher may not send -------------------------------------------------------------------------------
@@ -505,6 +510,66 @@ def candidate(gateway, name):
     raise setup.McpError(f"get_candidate gave no candidate to experiment on: {text[:200]}")
 
 
+def library_chain(root, info, name, profile, path):
+    """prove_chain from the C at `path` under `profile` (with the session's venv, which can import the app): the final
+    source, or None when it could not run or ran out of time."""
+    venv, out = Path(info.get("venv") or ""), root / "chain.c"
+    out.unlink(missing_ok=True)
+    command = [str(venv / "bin" / "python"), str(Path(__file__).with_name("prove_chain.py")), str(path),
+               "--slug", info["slug"], "--function", name, "--toolchain", profile["toolchain"],
+               f"--flags={' '.join(profile['flags'])}", "--steps", str(CHAIN_STEPS),
+               "--children", str(CHAIN_CHILDREN), "--out", str(out)]
+    if info.get("home"):
+        command += ["--home", info["home"]]
+    try:
+        subprocess.run(command, env=dict(os.environ, UV_PROJECT_ENVIRONMENT=str(venv)), capture_output=True,
+                       timeout=CHAIN_SECONDS, check=True)
+        return out.read_text()
+    except (OSError, subprocess.SubprocessError) as error:
+        print(f"the repair library could not be run on the near-miss: {str(error)[:200]}")
+        return None
+
+
+def chain_near(root, info, state):
+    """The repair library on the closest candidate of another profile, before it is only kept as a trial: nothing
+    else ever searches it (the Deep Permuter works from the saved C under the function's own profile). A 25 under -O1
+    of an -O2 function was one `join_tail_arm_split` step from exact and waited as a trial. An exact result is saved
+    as the match and a closer one replaces the near-miss; one that adds scaffolding is dropped, as in `try`."""
+    profiles = state["profiles"]
+    others = [(kept["score"], int(i)) for i, kept in state["best"].items() if not profiles[int(i)]["own"]]
+    if not others:
+        return
+    score, index = min(others)
+    mine = next((kept["score"] for i, kept in state["best"].items() if profiles[int(i)]["own"]), None)
+    if score > CHAIN_NEAR or (mine is not None and score >= mine):
+        return
+    function, profile = state["function"], profiles[index]
+    name, path = function["name"], Path(state["best"][str(index)]["path"])
+    print(f"running the repair library on the {score} near-miss under {label(profile)} (a few minutes at most)")
+    source = library_chain(root, info, name, profile, path)
+    if source is None or source == path.read_text() or faults(source, state.get("inherited")):
+        return
+    worker = Worker(info)
+    try:
+        found = worker.score(function, profile, source)["score"]
+    finally:
+        worker.close()
+    if found is None or found >= score:
+        return
+    print(f"the repair library took the near-miss {score} -> {found}")
+    copy = root / f"best-profile{index}.c"
+    copy.write_text(source)
+    state["best"][str(index)] = {"score": found, "path": str(copy)}
+    if found == 0:
+        state["scaffolded"] = kinds(scaffolding(source))
+        try:
+            print(apply_profile(info, name, profile, source))
+            wait_matched(info, name)
+        except setup.McpError as error:
+            print(f"the app refused the profile change: {error}")
+    write_state(root, state)
+
+
 def keep_near(holder, root, info, state):
     """Keep the closest candidate of another profile where it survives the session: a `compiler_experiments` trial
     records the C, the profile and the score with the function and applies nothing; the next `next` shows it. Returns
@@ -556,8 +621,11 @@ def done(holder, note=""):
     near = ""
     if current.get("status") != "matched" and not lost:
         keep_work(holder, root, info, state)
-        near = keep_near(holder, root, info, state)
+        chain_near(root, info, state)
         current = app_function(info, name)
+        if current.get("status") != "matched":
+            near = keep_near(holder, root, info, state)
+            current = app_function(info, name)
     if current.get("status") == "matched":
         setup.stop_session(holder)
         kept = state.get("scaffolded")
