@@ -14,7 +14,7 @@ IDENTITY = ('id', 'project_id', 'name', 'unit', 'vram', 'size', 'rom_offset', 'n
 WORKFLOW_SETTINGS = ('suggestions', 'knowledge_auto', 'range_checks', 'compiler_survey', 'progress_revision',
                      'progress_folder', 'save_folder', 'instructions', 'priority', 'draft_generation', 'spend',
                      'autopilot', 'auto_commit_matches', 'auto_commit_folder', 'auto_commit_branch',
-                     'score_commits', 'checked', 'export')
+                     'score_commits', 'checked', 'export', 'folder_owner')
 
 
 def destination(proj, fn):

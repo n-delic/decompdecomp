@@ -48,7 +48,7 @@ log = logging.getLogger("decompdecomp")
 
 # spimdisasm can name a function piece by the numeric label at its first instruction.
 LOCAL_PIECE = re.compile(r"\.L[0-9A-F]+")
-from . import saves
+from . import folder_owner, saves
 from .project_lock import ProjectLock
 
 CHECK_SECONDS = 0.25  # a non-forced check of an unchanged folder is this rare per project
@@ -2065,6 +2065,9 @@ class Progress:
                 if rom:
                     pid = proj["id"]
                     folder = saves.default_folder(self.net, slug)
+                    # (records this home as the folders' owner: a copy of the database elsewhere then stops at
+                    # default_folder instead of publishing its view here; folder_owner.py)
+                    folder_owner.check(self.net, proj, folder)
                     state = self._state(pid)
                     dirty = self._dirty(pid)
                     config_key = _config_key(proj, self.net.cfg(proj))
