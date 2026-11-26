@@ -815,6 +815,20 @@ def cut_missing_switches(asm_text: str) -> str:
     return re.sub(r"(?m)^(.*?\bjr[ \t]+)\$(?!ra\b)\w+([ \t]*(?:#.*)?)$", r"\1$ra\2", asm_text)
 
 
+OUTSIDE_BRANCH_NOTE = ("/* a branch below leaves the function (its target is before or after what the project filed as this "
+                       "function): it is drafted as a return, so check where this function really starts and ends */\n")
+_OUTSIDE_TARGET = re.compile(r"\. \+ 4 \+ \([^)]*\)")
+
+
+def cut_outside_branches(asm_text: str) -> str:
+    """A branch whose target is not in the function (the split cut it in the middle of code): the disassembler prints
+    its target as `. + 4 + (offset << 2)`, which m2c cannot parse, so it drafted nothing (blues-brothers-2000: 4 of 6
+    sampled functions). The branch goes to a label that returns, so the code around it compiles."""
+    if not _OUTSIDE_TARGET.search(asm_text):
+        return asm_text
+    return _OUTSIDE_TARGET.sub(".Loutside_branch", asm_text) + "\n.Loutside_branch:\njr $ra\nnop\n"
+
+
 @compile_timing.timed('generation')
 def run_m2c(asm_text: str, name: str, target: str, context_header: str = "", data_asm: str | None = None,
             timeout: float = 20, valid: bool = False, strict: bool = False, options: tuple[str, ...] = ()) -> str | None:
@@ -824,6 +838,9 @@ def run_m2c(asm_text: str, name: str, target: str, context_header: str = "", dat
     A `nop` before that label is what it asks for and changes nothing the draft shows, so it is added and m2c runs
     again (a function can have several such labels)."""
     asm_text = float_unsigned_conversions(asm_text)
+    if (cut := cut_outside_branches(asm_text)) != asm_text:
+        drafted = run_m2c(cut, name, target, context_header, data_asm, timeout, valid, strict, options)
+        return OUTSIDE_BRANCH_NOTE + drafted if drafted else drafted
     for _ in range(8):
         try:
             return _run_m2c(asm_text, name, target, context_header, data_asm, timeout, valid, strict, options)

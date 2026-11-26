@@ -195,3 +195,17 @@ def test_null_assigned_to_a_number_becomes_zero_on_the_named_line():
     from decompnet.app import compile_error_repair as cer
     assert cer.null_as_zero("a;\n    var = NULL;\n", 2) == "a;\n    var = 0;\n"
     assert cer.null_as_zero("a;\n    var = 1;\n", 2) is None
+
+
+def test_branch_out_of_the_function_is_drafted_as_a_return():
+    asm = ("glabel func_80001FB4\n/* 0 80001FB4 97030004 */  lhu        $v1, 0x4($t8)\n"
+           "/* 4 80001FB8 1060FFAF */  beqz       $v1, . + 4 + (-0x51 << 2)\n"
+           "/* 8 80001FBC 00191200 */  sll        $v0, $t9, 8\n"
+           "/* C 80001FC0 03E00008 */  jr         $ra\n/* 10 80001FC4 00000000 */  nop\n"
+           "endlabel func_80001FB4\n")
+    cut = seeds.cut_outside_branches(asm)
+    assert ". + 4" not in cut and "beqz       $v1, .Loutside_branch" in cut and ".Loutside_branch:\njr $ra" in cut
+    assert seeds.cut_outside_branches("  jr $ra\n") == "  jr $ra\n"
+    if seeds.available():
+        drafted = seeds.run_m2c(asm, "func_80001FB4", "mips-ido-c", strict=True)
+        assert drafted and seeds.OUTSIDE_BRANCH_NOTE in drafted
