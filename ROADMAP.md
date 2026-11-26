@@ -841,7 +841,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Resumable source/profile queue and explicit assembly reconsideration | ✓ ROM | ✓ ROM | ✓ ROM | — | — | ✓ ROM | — | — owned-build adapter planned | — owned-build adapter planned | — | — owned-build adapter planned | — owned-build adapter planned |
 | Supplied assembly code/data verification | ✓ ROM driver | ✓ ROM driver | ✓ ROM driver | — | — | ✓ ROM driver | — | — own build adapter planned | — own build adapter planned | — | — own build adapter planned | — own build adapter planned |
 | Indexed SDK object assembly proof | ✓ MIPS ROM | ✓ MIPS ROM | ✓ MIPS ROM | — | — | ✓ MIPS ROM | — | — owned-build adapter planned | — owned-build adapter planned | — | — owned-build adapter planned | — owned-build adapter planned |
-| Library C that library detection finds set aside (opt-in, Libraries for this game; linked when your SDK has it) | ✓ MIPS ROM, built-in ultralib table; port glue and replaced only | ✓ MIPS ROM | ✓ MIPS ROM | — | — | ✓ MIPS ROM | — | — owned-build adapter planned | — owned-build adapter planned | — | — owned-build adapter planned | — owned-build adapter planned |
+| Library C that library detection finds set aside (opt-in, Libraries for this game; linked when your SDK has it) | ✓ MIPS ROM, built-in ultralib table; port glue and replaced, and n_audio (no public source) | ✓ MIPS ROM | ✓ MIPS ROM | — | — | ✓ MIPS ROM | — | — owned-build adapter planned | — owned-build adapter planned | — | — owned-build adapter planned | — owned-build adapter planned |
 | Built-in exact SDK assembly detection before claims | ✓ bcmp/bzero | — pack planned | — pack planned | — | — | — pack planned | — | — pack planned | — pack planned | — | — pack planned | — owned-build adapter planned |
 | Exact C / verified source assembly / verified SDK assembly / other assembly / open counts | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ counts | ✓ counts | — | ✓ counts | ✓ counts |
 | Local mapped source preparation | ✓ | ✓ | ✓ | — | — | ✓ | — | body only¹ | body only¹ | — | body only¹ | body only¹ |
@@ -1055,6 +1055,11 @@ in Rare's IDO forks), so its table is the fingerprints and names of the SDK's ow
 like decomp-toolkit's GameCube corpus (tools/naudio_signatures.py, `Console.sdk_tables`), less the 63 fingerprints
 the ultralib table already names (n_audio's copies of libultra's audio code: two names on one fingerprint would be
 no identity). With no SDK that racing game now has 242 library functions found, 53 of them n_audio, up from 186.
+
+A library no public source builds is set aside on the detection alone (`Console.sdk_without_source`: the N64's
+n_audio, which ultralib has no C for): waiting for that C had left a racing game's `n_alSynNew`, `n_alCSPNew` and
+`n_alFxNew`, named from exact signatures, to agents and deep passes. The port runs their original code. Check again,
+and the deep permuter before it searches a function, set library code aside too.
 
 Library code the port compiles from C (`gu*` math, libultra's synthesizer) is set aside too once the user installs
 libultra source (decompals/ultralib at the table's commit, a proprietary pack: its C is SGI's and Nintendo's), and
