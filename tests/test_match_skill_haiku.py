@@ -172,6 +172,11 @@ def test_done_keeps_the_near_miss_as_a_trial_writes_the_note_and_releases_with_t
     assert session.stopped == ["small"] and "not matched" in capsys.readouterr().out
 
 
+def test_done_with_nothing_tried_only_ends_the_session(session):
+    assert haiku.main(["done", "small"]) == 0
+    assert session.stopped == ["small"] and Gateway.calls == []
+
+
 def test_a_near_miss_no_better_than_the_kept_one_is_not_recorded_again(session):
     state = haiku.read_state(session.root)
     haiku.write_state(session.root, dict(state, kept=7))

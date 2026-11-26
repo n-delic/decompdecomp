@@ -13,7 +13,7 @@
     haiku.py done HOLDER [--note TEXT]     (also: giveup)
                          submit the best candidate seen, keep a better one under another profile as a compiler trial
                          (compiler_experiments: nothing is applied; the next `next` shows it), write the note, release
-                         the claim, remove the session
+                         the claim, remove the session (with no try and no --note: only the claim and session go)
 
 ROM projects only (project mode has no isolated judge). It never changes a compiler range or the project default, never
 prints the connection token, and keeps every file in the session folder (/tmp/dd-HOLDER/).
@@ -500,6 +500,8 @@ def done(holder, note=""):
         return setup.stop_session(holder)
     state = read_state(root)
     name = state["function"]["name"]
+    if not state["tries"] and not note:  # nothing was learned: no note and no give-up on the function
+        return setup.stop_session(holder)
     current = app_function(info, name)
     lost = claimlost.taken(claimlost.read(root))
     near = ""
