@@ -326,7 +326,13 @@ def mapped_data(spans,declared,size):
     code, loaded with it). A table counts only when every entry lands inside the candidate function."""
     ranges=[dict(rom_start=s,rom_end=e,vram=v) for s,e,v in list(spans)+list(declared)]
     for (s0,e0,v0),nxt in zip(spans,list(spans[1:])+[(min(size,spans[-1][1]+0x10000),None,None)] if spans else []):
-        if e0<nxt[0]:ranges.append(dict(rom_start=e0,rom_end=nxt[0],vram=v0+e0-s0))
+        if e0<nxt[0]:
+            ranges.append(dict(rom_start=e0,rom_end=nxt[0],vram=v0+e0-s0))
+            # An overlay's read-only data can also come before its code (a table of jump tables ahead of the next
+            # overlay): the same bytes on the code after them, whose own mapping places them. A table counts
+            # only when it resolves uniquely, so a mapping that doesn't fit the game adds nothing.
+            if nxt[2] is not None and nxt[2]-nxt[0]!=v0-s0:
+                ranges.append(dict(rom_start=e0,rom_end=nxt[0],vram=nxt[2]-nxt[0]+e0))
     return ranges
 
 

@@ -1,7 +1,7 @@
 """The importer's last look at the gaps between an N64 game's code (consoles/n64/code.py, complete_gaps): homemade
 code, no game data. A racing game's split left 16 functions (31 KB) as data: object handlers reached only through
 pointers its code builds, leaves with no frame, switches, several functions to a gap."""
-from decompnet.consoles.n64.code import complete_gaps, mapped_gaps, runtime_entries
+from decompnet.consoles.n64.code import complete_gaps, mapped_data, mapped_gaps, runtime_entries
 
 LEAF = [0x24020001, 0x24420001, 0x03e00008, 0]
 
@@ -40,3 +40,15 @@ def test_an_address_the_game_ran_opens_a_gap_between_two_overlays(tmp_path):
     entries = runtime_entries(tmp_path)
     assert entries == {0x80001008}
     assert (0x1008, 0x1018, 0x80001008) in complete_gaps(image, [], found, entries=entries, log=lambda *a: None)
+
+
+def test_rodata_ahead_of_an_overlay_is_mapped_on_the_overlay_after_it():
+    """A table of jump tables can sit between one overlay's code and the next overlay's code, loaded with the next:
+    a switch in that overlay found its table nowhere (the data was mapped only on the code before it), so the
+    function stayed raw bytes. The bytes are now mapped on both neighbours' mappings."""
+    spans = [(0x1000, 0x1100, 0x80001000), (0x2000, 0x2100, 0x80300000)]
+    ranges = {(r["rom_start"], r["rom_end"], r["vram"]) for r in mapped_data(spans, (), 0x3000)}
+    assert (0x1100, 0x2000, 0x80001100) in ranges  # after the code before it
+    assert (0x1100, 0x2000, 0x802FF100) in ranges  # ahead of the code after it
+    same = [(0x1000, 0x1100, 0x80001000), (0x2000, 0x2100, 0x80002000)]
+    assert len([r for r in mapped_data(same, (), 0x3000) if r["rom_start"] == 0x1100]) == 1
