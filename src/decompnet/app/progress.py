@@ -373,6 +373,14 @@ def _manifest(files: dict[str, str], cfg: dict, known_names=()) -> dict:
         layout = {f["name"]: f for f in manifest.get("layout", [])}
         if len(layout) != len(manifest.get("layout", [])):
             raise ValueError("a function is listed twice in layout")
+        # Saves written before the writer left them out can list a function of no bytes (a GBA split of data).
+        # With no saved C it says nothing: left out rather than refusing the whole save.
+        empty = [name for name, entry in layout.items() if entry.get("size") == 0
+                 and not any(f"{kind}/{saves._source_file(str(name))}" in files for kind in ("src", "best"))]
+        if empty:
+            for name in empty:
+                del layout[name]
+            manifest["layout"] = [entry for entry in manifest["layout"] if entry["name"] in layout]
         for name, entry in layout.items():
             if (not (IDENT.fullmatch(name) or LOCAL_PIECE.fullmatch(name)) or not isinstance(entry["vram"], int)
                     or not isinstance(entry["size"], int) or entry["size"] <= 0

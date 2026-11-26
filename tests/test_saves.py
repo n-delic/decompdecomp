@@ -252,6 +252,12 @@ def test_a_restore_that_cannot_judge_leaves_no_half_imported_project(tmp_path, m
     monkeypatch.setattr(net, "import_rom", import_game)
     monkeypatch.setattr(net, "apply_remote_layout", lambda *args: None)
     monkeypatch.setattr("decompnet.app.progress.toolchains.installed", lambda _: None)
+
+    def cannot_install(tid, log=print):
+        raise saves.toolchains.ToolchainError("offline")
+
+    monkeypatch.setattr(saves.toolchains, "ensure", cannot_install)
+    monkeypatch.setattr(net, "import_rom", lambda *a, **k: pytest.fail("the compiler is checked before the import"))
     with pytest.raises(NetworkError, match="gcc-2.7.2-kmc"):
         saves.restore(net, str(save), tmp_path / "own-game", log=lambda *_: None)
     assert net.store.all("SELECT slug FROM projects") == []

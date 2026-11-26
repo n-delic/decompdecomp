@@ -816,7 +816,7 @@ def _manifest_from_rows(net, proj, cfg: dict, rows, folder: Path) -> tuple[dict,
         # naming it sent the port's build looking for a header the save never wrote
         "function_headers": {r["name"]: r["unit"] for r in rows if r["unit"].startswith(PRIVATE_HEADERS) and r["unit"] in units},
         "layout": [{"name": r["name"], "vram": r["vram"], "size": r["size"],
-                    "status": "asm" if r["status"] == "asm" else "open"} for r in rows],
+                    "status": "asm" if r["status"] == "asm" else "open"} for r in rows if r["size"] > 0],
         "symbols": net.layout_symbols(pid),
         # the C types given to data (Globals tab), by address: an untouched D_ name is not in `symbols`
         "global_types": [{"address": r["address"], "type": r["c_type"], "source": r["type_source"] or ""}
@@ -1094,6 +1094,30 @@ def find_local_game(net, source, folder, manifest, log):
     raise NetworkError('No matching local game was found. Choose your copy of the game and open the saved project again.')
 
 
+def _install_compilers(manifest: dict, log) -> None:
+    """Install the free compilers a save's code is judged with. The main one is required, and one that can't be
+    installed here (proprietary, or no build for this computer) says so now; those of ranges and single functions are
+    installed when they can be."""
+    def named(profile):
+        tid = profile.get("toolchain") if isinstance(profile, dict) else None
+        return tid if isinstance(tid, str) and toolchains.known(tid) else None
+
+    main = named(manifest.get("compiler"))
+    others = {named(p) for p in [*(manifest.get("compiler_ranges") or []),
+                                 *(manifest.get("function_compilers") or {}).values()]}
+    for tid in [main, *sorted(t for t in others - {main, None})]:
+        if tid is None or toolchains.installed(tid) is not None:
+            continue
+        log(f"installing {toolchains.get(tid).name}: the saved code is judged with it")
+        try:
+            toolchains.ensure(tid, log=log)
+        except Exception as error:  # a download, a checksum, no build for this computer
+            if tid == main:
+                raise NetworkError(f"Install {toolchains.get(tid).name} ({tid}) in Setup, then open the saved project "
+                                   f"again: {error}") from error
+            log(f"{tid} couldn't be installed ({error}); functions that need it are checked once it is")
+
+
 def restore(net, source: str, game: Path | None = None, log=print) -> dict:
     """Rebuild a project from a save (a folder or a git repository) and the user's own copy of the game: import it
     (or find it already imported), check it's the same game, then put back the layout, names, headers, settings and
@@ -1137,6 +1161,8 @@ def _restore(net, source: str, game: Path | None, log) -> dict:
                                f"({manifest['game'].get('file') or 'its original file'}); pick your copy of that one")
         files = _read(folder)
         manifest = _manifest(files, {"rom": {"sha1": game_sha1}})
+        if any(name.startswith(("src/", "best/")) for name in files):
+            _install_compilers(manifest, log)  # before the import: it can take half an hour, and a failure discards it
         log("importing and splitting your game copy")
         existing = list(net.project_rows())
         source_folder = folder if Path(source).expanduser().is_dir() else Path(source).expanduser()
