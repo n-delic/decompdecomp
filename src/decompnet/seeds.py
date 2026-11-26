@@ -30,6 +30,10 @@ typedef s16 M2C_UNK16;
 typedef s32 M2C_UNK32;
 #define M2C_FIELD(expr, type_ptr, offset) (*(type_ptr)((s8 *)(expr) + (offset)))
 #define M2C_BITWISE(type, expr) ((type)(expr))
+#define M2C_BITS_F32(expr) (m2c_bits = (u32)(expr), *(f32 *)&m2c_bits)
+extern u32 m2c_bits;
+#define M2C_PTR_FROM_F32(type, expr) ((type)(m2c_fbits = (expr), *(u32 *)&m2c_fbits))
+extern f32 m2c_fbits;
 #define M2C_ERROR(desc) (0)
 #define M2C_CARRY 0
 #define M2C_OVERFLOW(a) (0)
@@ -503,6 +507,15 @@ def _compilable(source: str | None, name='', asm='', header='', toolchain=None, 
         from decomprepair import void_pointer_arithmetic
         source = void_pointer_arithmetic.rewrite(source, name) or source
         source = void_pointer_arithmetic.externs(source, name) or source
+        source = denormal_floats_as_words(source)
+    source = pointer_bits_as_float(source, name)
+    # a local m2c typed as a function pointer (`M2C_UNK (*sp24)(M2C_UNK, M2C_UNK);`) that the code also steps (`sp24 += 0xC`):
+    # the slot held an address that was both called and walked; the draft keeps the word
+    for pointer in re.findall(r"^[ \t]+[A-Za-z_][\w \t\*]*\(\*(\w+)\)\([^;\n]*\);", source, flags=re.M):
+        if re.search(rf"\b{pointer}\s*[-+]=", source):
+            source = re.sub(rf"^([ \t]+)[A-Za-z_][\w \t\*]*\(\*{pointer}\)\([^;\n]*\);", rf"\1s32 {pointer};", source, flags=re.M)
+    source = re.sub(r"\*[ \t]*(?:NULL|\(\(void \*\)0\))(?![\w])", "0", source)  # (an argument slot nothing set: `*NULL`)
+    source = re.sub(r"^([ \t]*\w+:)[ \t]*\n(?=[ \t]*\})", r"\1;\n", source, flags=re.M)
     from decomprepair import void_pointer_arithmetic as stores
     source = stores.stores(source) or source  # a store m2c printed as a call through a cast, which no compiler reads
     if asm:
@@ -515,6 +528,44 @@ def _compilable(source: str | None, name='', asm='', header='', toolchain=None, 
         # split names the piece
         source = re.sub(r"(?<![\w.])\.L([0-9A-Fa-f]{8}(?:_[a-z][a-z0-9]*(?:_[A-Za-z0-9]+)*)?)(?![\w.])", r"func_\1", source)
     return source
+
+
+_DENORMAL = re.compile(r"(?<![\w.])(\d+(?:\.\d+)?e-\d+)f\b")
+
+
+def denormal_floats_as_words(source: str) -> str:
+    """m2c prints the integer 1 passed where a float is expected as `1e-45f`; IDO's assembler can't encode a denormal
+    ("number outside range for single precision") and fails the whole function. The word the original passed is what
+    the draft keeps."""
+    import struct
+
+    def word(m):
+        value = float(m.group(1))
+        if value == 0.0 or abs(value) >= 1.17549435e-38:
+            return m.group(0)
+        return f"M2C_BITS_F32({struct.unpack('>I', struct.pack('>f', value))[0]}U)"
+    return _DENORMAL.sub(word, source)
+
+
+def pointer_bits_as_float(source: str, name: str) -> str:
+    """`M2C_BITWISE(f32, &local)` (a pointer passed where the callee reads a float) is `(f32)(&local)`, a cast IDO and
+    GCC 2.x refuse: 130 functions of 90 games stopped at "Cast a pointer into a non-integral type". The pointer's bits
+    are what the original passed, so the draft reads them as a float through a word."""
+    # a float read as an address (`M2C_BITWISE(s32 *, temp_fa0)`) and a float load used as a base (`M2C_FIELD(*(f32 *)0x2CF8`):
+    # the word the original held in a pointer, which m2c typed by the load it saw
+    floats = set(re.findall(r"^[ \t]*f32[ \t]+(\w+)[ \t]*;", source, flags=re.M))
+    source = re.sub(r"M2C_BITWISE\((\w+ \*+),\s*(\w+)\)",
+                    lambda m: f"M2C_PTR_FROM_F32({m.group(1)}, {m.group(2)})" if m.group(2) in floats else m.group(0), source)
+    source = re.sub(r"M2C_FIELD\(([^,\n]*)", lambda m: "M2C_FIELD(" + re.sub(r"\*\(f32 \*\)(0x[0-9A-Fa-f]+)", r"*(u32 *)\1", m.group(1)), source)
+    if "M2C_BITWISE(f32," not in source:
+        return source
+    head = re.search(rf"\b{re.escape(name)}\s*\(([^)]*)\)\s*\{{", source)
+    pointers = set(re.findall(r"\*\s*(\w+)\s*(?:,|$)", head.group(1))) if head else set()
+    pointers |= set(re.findall(r"^[ \t]*[\w ]+\*+\s*(\w+)\s*[;=]", source, flags=re.M))
+    def swap(m):
+        expr = m.group(1).strip()
+        return f"M2C_BITS_F32({expr})" if expr.startswith("&") or expr in pointers else m.group(0)
+    return re.sub(r"M2C_BITWISE\(f32,\s*([^(),]+)\)", swap, source)
 
 
 def drop_saved_register_reads(source: str) -> str:

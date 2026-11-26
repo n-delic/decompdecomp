@@ -68,3 +68,42 @@ def test_a_float_register_read_before_it_is_set_is_an_unset_float_local(monkeypa
     out = seeds.run_m2c('glabel f\nnop\n', 'f', 'mips-ido-c', valid=True, strict=True)
     assert 'M2C_ERROR' not in out and 'GLUE' not in out
     assert 'y = arg0 * unset_f5 + unset_f16;' in out and 'f32 unset_f5;' in out and 'f32 unset_f16;' in out
+
+
+def test_pointer_bits_read_as_float_and_float_bits_read_as_pointer():
+    """`M2C_BITWISE(f32, &local)` is a cast IDO and GCC 2.x refuse; the pointer's bits are read as a float through a word,
+    and the opposite (a float held in an address) the other way."""
+    from decompnet import seeds
+    src = ("void func_80000000(s32 *arg0) {\n    f32 temp_fa0;\n    s32 sp1C;\n"
+           "    func_80000010(M2C_BITWISE(f32, &sp1C), M2C_BITWISE(f32, arg0), M2C_BITWISE(s32 *, temp_fa0));\n"
+           "    M2C_FIELD(*(f32 *)0x2CF8, f32 *, 4) = 0.0f;\n}\n")
+    out = seeds.pointer_bits_as_float(src, "func_80000000")
+    assert "M2C_BITS_F32(&sp1C)" in out and "M2C_BITS_F32(arg0)" in out
+    assert "M2C_PTR_FROM_F32(s32 *, temp_fa0)" in out
+    assert "M2C_FIELD(*(u32 *)0x2CF8" in out
+    assert "M2C_BITWISE(f32, 1)" not in out
+
+
+def test_label_before_closing_brace_gets_an_empty_statement():
+    from decompnet import seeds
+    out = seeds._compilable("void f(void) {\n    if (x) {\n        goto block_2;\n    }\nblock_2:\n}\n", "f")
+    assert "block_2:;\n}" in out
+
+
+def test_denormal_float_literals_become_words_for_ido():
+    from decompnet import seeds
+    out = seeds.denormal_floats_as_words("f(1e-45f, 4.3e-44f, 1.0f, 2.5e-3f);")
+    assert out == "f(M2C_BITS_F32(1U), M2C_BITS_F32(31U), 1.0f, 2.5e-3f);"
+
+
+def test_null_dereference_arguments_are_zero():
+    from decompnet import seeds
+    src = "void f(void) {\n    x = g(NULL, *NULL, *((void *)0));\n}\n"
+    out = seeds._compilable(src, "f")
+    assert "g(NULL, 0, 0)" in out
+
+
+def test_function_pointer_local_that_is_stepped_becomes_a_word():
+    from decompnet import seeds
+    out = seeds._compilable("void f(void) {\n    M2C_UNK (*sp24)(M2C_UNK, M2C_UNK);\n    sp24 += 0xC;\n}\n", "f")
+    assert "s32 sp24;" in out

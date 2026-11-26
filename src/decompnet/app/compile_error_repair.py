@@ -7,7 +7,8 @@ that still fails. Bounded, so a draft that never compiles costs a handful of com
 """
 from decomprepair import compile_error_repairs
 
-ROUNDS = 12
+ROUNDS = 12  # without the number of errors dropping
+MAX_ROUNDS = 60  # in all: a draft that keeps shedding errors one round at a time (a dozen wrong operators) gets to finish
 FAMILY = 'compile_error_repair'
 
 
@@ -15,7 +16,11 @@ def candidates(compile_source, source, *, rounds=ROUNDS, check_cancel=None):
     """Yield (family, source) once, when `source` compiles after repairs. `compile_source(text)` returns something
     with `.ok` and `.log`; the draft itself is not offered again."""
     tried = {}
-    for _ in range(rounds):
+    best = None  # the fewest diagnostics seen: a round that lowers it earns the draft a fresh allowance
+    stalled = 0
+    for _ in range(MAX_ROUNDS):
+        if stalled >= rounds:
+            return
         if check_cancel:
             check_cancel()
         result = compile_source(source)
@@ -32,7 +37,12 @@ def candidates(compile_source, source, *, rounds=ROUNDS, check_cancel=None):
             tried[('size', '')] = 1
             continue
         changed = False
-        for line, message in sorted(compile_error_repairs.diagnostics(result.log), reverse=True):
+        found = compile_error_repairs.diagnostics(result.log)
+        if best is None or len(found) < best:
+            best, stalled = len(found), 0
+        else:
+            stalled += 1
+        for line, message in sorted(found, reverse=True):
             key = (line, message)
             repaired = compile_error_repairs.repair(source, line, message, tried.get(key, 0))
             tried[key] = tried.get(key, 0) + 1
