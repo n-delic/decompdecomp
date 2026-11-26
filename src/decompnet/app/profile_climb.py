@@ -163,6 +163,18 @@ def fp_variant(search, proj, fn, profile) -> bool:
         return False
 
 
+def level_variant(search, proj, fn, profile) -> bool:
+    """True when `profile` is the function's own settings at another -O level."""
+    try:
+        from ..project import compiler_for
+        from . import opt_levels
+        own = compiler_for(search.net.cfg(proj), fn['vram'], fn)
+        return own['toolchain'] == profile['toolchain'] and list(profile['flags']) in opt_levels.variants(
+            own['toolchain'], own['flags'])
+    except Exception:  # noqa: BLE001 - not knowing the function's settings is not being a level variant
+        return False
+
+
 def _fp_first(options):
     """[(family, child)] with the FP-constant and operand families first (stable otherwise): a step judges at most
     CHAIN_CHILDREN of them, and the literal inlining that matches under the flipped profile is one child among hundreds."""
@@ -247,8 +259,9 @@ def climb(search, agent, proj, fn, source, profile, score, seed=0, *, require_cl
     seen = {hashlib.sha256(source.encode()).hexdigest()}
     best_source, best = source, score
     spent = 0
-    if fp_variant(search, proj, fn, profile):
-        # (the flipped floating-point profile: the source may need a repair under it too: a best-child chain first)
+    if fp_variant(search, proj, fn, profile) or level_variant(search, proj, fn, profile):
+        # (the flipped floating-point profile, or another -O level: the source may need a repair under it too: a
+        # best-child chain first)
         best_source, best, spent = repair_chain(search, agent, proj, fn, source, score, profile,
                                                 max(1, budget // CHAIN_SHARE), check, header, key)
         seen.add(hashlib.sha256(best_source.encode()).hexdigest())
@@ -309,6 +322,27 @@ def climb(search, agent, proj, fn, source, profile, score, seed=0, *, require_cl
 
 class _ProfileTimeElapsed(Exception):
     """The alternate-profile window ended while time remains for the main search."""
+
+
+def explore_level(search, agent, proj, fn, leads) -> bool:
+    """Repair under the -O level the profile probe found clearly closer: `leads` is [(profile, C, its score there)],
+    one level, closest text first. Within the same share of the pass's time as `explore`; True when one was exact."""
+    now = time.monotonic()
+    deadline = now + max(0, search.deadline - now) / CLIMB_SHARE
+
+    def check():
+        search.check()
+        if time.monotonic() >= deadline:
+            raise _ProfileTimeElapsed
+
+    try:
+        for profile, source, score in leads:
+            check()
+            if climb(search, agent, proj, fn, source, profile, score, check=check) == 0:
+                return True
+    except _ProfileTimeElapsed:
+        search.log('Optimisation level time share reached; continuing with the current settings.')
+    return False
 
 
 def explore(search, agent, proj, fn, baseline, clean_profile=None):

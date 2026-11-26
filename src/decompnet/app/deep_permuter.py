@@ -2567,7 +2567,8 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
                     search.best = 0
                 else:
                     # the few per-function profiles its target points to (SN 2.7.2's builds, KMC for library code,
-                    # -mfp32, -G8): judged once per saved C, an exact pair applied for this function only
+                    # -mfp32, -G8) and every other -O level of its compiler, on the saved C and the machine draft:
+                    # judged once per saved C, an exact pair applied for this function only, a closer level repaired
                     from . import profile_probe
                     if profile_probe.run(search, agent, proj, net._function(name, slug), saved):
                         search.best = 0
