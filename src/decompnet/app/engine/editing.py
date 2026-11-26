@@ -75,7 +75,37 @@ class EditMixin:
         entries); each then needed a person to revoke a match of the empty tail and join it back. A cut is refused
         when the first part's last instruction needs the next word as its delay slot, or when the first part falls
         through its end without a transfer just before it (after a call that never returns, the next function may
-        really start there). A person can still split anything (split_rom_by_you)."""
+        really start there). A person can still split anything (split_rom_by_you).
+
+        When stray words sit between a return and the cut (an entry that swallowed a return, two words that are no
+        instruction, then the next prologue), no single cut is right: the answer points to the one reviewed step that
+        is (propose_change's split_gap, or trim_start on a tail that starts on them). A cut right after such words is
+        refused for that reason too, though nothing runs on: they would stay at the end of the first part, which no C
+        could then match."""
+        why = self._split_run_on(proj, fn, addr)
+        from ..boundary_repairs import stray_cut
+        stray = stray_cut(proj, fn, addr)
+        if why is None and not (stray and stray[0] == "split_gap"):
+            return None
+        where = f"0x{addr:08X}"
+        if stray and stray[0] == "split_gap":
+            end = stray[1]
+            count = (addr - end) // 4
+            return (f"{fn['name']} returns before {where}: its last instruction ends at 0x{end:08X}, and the {count} "
+                    f"word{'s' if count != 1 else ''} from there to {where} are no part of it. A cut at {where} would "
+                    f"leave them in {fn['name']}, and one at 0x{end:08X} at the start of the next function. Propose the "
+                    f"one step that does both instead: propose_change(function=\"{fn['name']}\", action=\"split_gap\", "
+                    f"end=\"0x{end:08X}\", entry=\"{where}\", evidence=...) ends {fn['name']} at 0x{end:08X}, keeps "
+                    f"those words out of any function (archived, original bytes kept) and starts a function at {where} "
+                    "once the user approves. Then release this function and work on another.")
+        if stray:
+            return (f"Every word of {fn['name']} before {where} is stray (one is no instruction): it is no code of its "
+                    f"own. Propose propose_change(function=\"{fn['name']}\", action=\"trim_start\", end=\"{where}\", "
+                    f"evidence=...): once the user approves, those words are archived as padding and the function "
+                    f"starts at {where}. Then release this function and work on another.")
+        return why
+
+    def _split_run_on(self, proj, fn, addr: int) -> str | None:
         facts = arch.get(proj["arch"]).boundary_instruction
         console = self.console(proj)
         width = console.instruction_size(fn)

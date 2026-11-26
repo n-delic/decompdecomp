@@ -21,6 +21,7 @@ from ..network import CLAIM_ORDERS, Agent, Network, NetworkError
 from ..release_receipts import operation as release_operation
 from ..repair_feedback import AGENT_CATEGORIES, submission, track_matches
 from . import (
+    agent_proposals,
     agent_tokens,
     asset_agents,
     automatic_assignment,
@@ -139,7 +140,8 @@ one claim; one function back is normal.)
    "Next step: ..." for the next agent. Omit notes if there is nothing useful to pass on. Before
    that, compile the next step instead of releasing. A direct callee blocks work?
    release_function(needs=that one) allows one pivot per unchanged input, respecting pauses. Sure that
-   no C makes its code at all (hand-written assembly): not_c=true, saying why.
+   no C makes its code at all (hand-written assembly): not_c=true, saying why. Can you show it is driver or
+   SDK code, or that its extent is wrong? propose_change(...) once with the evidence; the user approves it.
    A boundary-review warning comes first: use get_boundary_evidence to inspect the original bytes, overlap,
    and possible data references. Leave boundary decisions to review and move to an eligible function.
    A target ending without a return is not an assembly verdict; report or correct its extent first.
@@ -155,7 +157,8 @@ WORK_BOUNDARY = """\
 The function runs on past its end into padding, linker leftovers or data? report_boundary(...) where it really
 ends, then work on as it is. The brief says "possible start boundary problem"? Its first word is probably
 padding or dead code, so no C can match this extent: release the function with that in your notes instead of tuning
-it. A person reviews the suggested start; do not cut it yourself."""
+it. A person reviews the suggested start; do not cut it yourself. Stray words between a return and the next
+prologue? propose_change(action="split_gap", end=after the return, entry=the prologue) for the user to approve."""
 
 # A helper started on "make matched code readable" (options task=readable), in any project (app/readable.py);
 # {names}: step 3, as the project's mode has it (READABLE_ROM, READABLE_FORK)
@@ -711,6 +714,8 @@ HANDLERS: dict[str, Callable[..., str]] = {
     "defer_asset_region": asset_agents.defer,
     "get_boundary_evidence": boundary_investigations.evidence,
     "suggest_boundary": boundary_investigations.report,
+    "propose_change": lambda net, agent, slug, function, action, evidence, end="", entry="":
+        agent_proposals.propose(net, agent, slug, function, action, evidence, end, entry),
     "get_claims": claim_state.get_claims,
     "resolve_addresses": _resolve_addresses,
     "report_data_region": _report_data_region,
@@ -1208,7 +1213,7 @@ QUICK_TOOLS = frozenset({
     'resolve_addresses', 'read_data', 'standins_for', 'claim_function', 'claim_readable', 'release_function', automatic_assignment.RELEASE,
     'search_repair_examples', 'get_repair_examples', 'upvote_repair_example', 'add_repair_rule',
     'add_note', 'report_repair', 'share_knowledge', 'suggest', 'tidy_done', 'claim_asset_region', 'defer_asset_region',
-    'inspect_asset_region', 'report_data_region', 'report_boundary', 'suggest_boundary', 'port_readiness', 'get_data_unit', 'claim_data', 'release_data',
+    'inspect_asset_region', 'report_data_region', 'report_boundary', 'suggest_boundary', 'propose_change', 'port_readiness', 'get_data_unit', 'claim_data', 'release_data',
     'claim_port_fix', 'release_port_fix',
 })
 QUICK_LANE = 16
@@ -1595,12 +1600,29 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
 
     @tool
     async def suggest_boundary(ctx: Context, function: str, action: str, supporting: str, counter: str,
-                               uncertainty: str, citations: str, end: str = "", confidence: str = "tentative") -> str:
+                               uncertainty: str, citations: str, end: str = "", confidence: str = "tentative",
+                               entry: str = "") -> str:
         """Save an advisory boundary recommendation with cited hex instructions; never apply a layout change.
-        action: delay_slot, join_previous, adjust, padding, data, keep, unclear. end: exclusive hex address for adjust.
+        action: delay_slot, join_previous, adjust, padding, data, keep, trim_start, split_end, split_gap, unclear.
+        end: exclusive hex end for adjust and split_gap, the real entry for trim_start and split_end. entry: for
+        split_gap, where the next function starts after the stray words.
         confidence: strong, tentative, unclear. citations: comma-separated hex instruction addresses from evidence."""
         return await run(ctx, "suggest_boundary", function=function, action=action, supporting=supporting,
-                         counter=counter, uncertainty=uncertainty, citations=citations, end=end, confidence=confidence)
+                         counter=counter, uncertainty=uncertainty, citations=citations, end=end, confidence=confidence,
+                         entry=entry)
+
+    @tool
+    async def propose_change(ctx: Context, function: str, action: str, evidence: str, end: str = "",
+                             entry: str = "") -> str:
+        """Propose a change only the user may make; nothing changes until they approve it with one click.
+        action: set_aside (hand-written assembly no C makes), set_aside_sdk (SDK, driver or library code, not the
+        game's own), or a boundary change (mapped MIPS ROM projects): delay_slot, join_previous, adjust (end = new
+        exclusive end), padding, data, keep, trim_start (end = the real entry; the words before it are padding),
+        split_end (end = where the next function starts), split_gap (end = where this function's last instruction
+        ends, entry = where the next function starts; the stray words between stay out of any function).
+        evidence: the instructions and addresses that show it, and what you could not rule out."""
+        return await run(ctx, "propose_change", function=function, action=action, evidence=evidence, end=end,
+                         entry=entry)
 
     @tool
     async def report_boundary(ctx: Context, function: str, end: str, reason: str) -> str:

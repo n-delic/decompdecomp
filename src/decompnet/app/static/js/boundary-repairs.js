@@ -5,7 +5,8 @@ const BOUNDARY_CHOICES = [
   ['keep','Keep as separate entry','Keep an intentional entry point and allow agents to work on its current bytes.'],
   ['padding','Mark as padding','Exclude alignment bytes from detected code; a small size or no known callers is insufficient.'],
   ['data','Mark as data','Exclude bytes supported by data-use evidence, rather than executable instructions.'],
-  ['adjust','Adjust end address…','Advanced: enter a different exclusive end; any shortened tail stays available for review.']
+  ['adjust','Adjust end address…','Advanced: enter a different exclusive end; any shortened tail stays available for review.'],
+  ['split_gap','End here, keep stray words out, start the next function…','Advanced: the function ends at the first address (after its return and delay slot), the words up to the second stay outside any function (archived as padding, original bytes kept), and a new function starts at the second.']
 ];
 function boundaryAssemblyHTML(lines, prefix, labels={}) {
   let previous=null;
@@ -17,15 +18,25 @@ function boundaryAssemblyHTML(lines, prefix, labels={}) {
 function boundaryLayoutHTML(entries) {
   return `<div class="boundary-layout">${entries.map(entry=>`<div><b class="mono">${esc(entry.name)}</b><span class="mono small">${hex8(entry.start)} → ${hex8(entry.end)} (exclusive)</span></div>`).join('')}</div>`;
 }
+// What the extent looks like after the decision: the owner, then what a cut leaves (app/boundary_repairs.py's _commit).
+function boundaryAfterHTML(plan) {
+  if(['padding','data'].includes(plan.action))return '<p>Archived as '+esc(plan.action)+'; excluded from detected code.</p>';
+  const next=at=>`New function func_${at.toString(16).toUpperCase().padStart(8,'0')}`;
+  if(plan.action==='split_gap')return boundaryLayoutHTML([{name:plan.owner,start:plan.start,end:plan.end},{name:'Stray words · archived as padding',start:plan.end,end:plan.entry},{name:next(plan.entry),start:plan.entry,end:plan.old_end}]);
+  if(plan.action==='split_end')return boundaryLayoutHTML([{name:plan.owner,start:plan.start,end:plan.end},{name:next(plan.end),start:plan.end,end:plan.old_end}]);
+  if(plan.action==='trim_start')return boundaryLayoutHTML([{name:'Words before the entry · archived as padding',start:plan.start,end:plan.end},{name:next(plan.end),start:plan.end,end:plan.old_end}]);
+  return boundaryLayoutHTML([{name:plan.owner,start:plan.start,end:plan.end},...(plan.end<plan.old_end?[{name:'Retained tail · needs review',start:plan.end,end:plan.old_end}]:[])]);
+}
 function boundaryRepairPreviewHTML(plan) {
   const changed=['delay_slot','join_previous','adjust'].includes(plan.action);
-  const consequence=changed?`<b>${esc(plan.owner)}</b> remains the active name. ${plan.affected.filter(f=>f.name!==plan.owner).map(f=>`<code>${esc(f.name)}</code>`).join(', ') || 'No other entry'}${plan.affected.length>1?' will be archived with history retained.':' will be archived.'} The resized function needs a fresh match.`:
+  const cut=['split_gap','split_end','trim_start'].includes(plan.action);
+  const consequence=cut?`${plan.action==='trim_start'?`The words before the entry are archived under <b>${esc(plan.owner)}</b>`:`<b>${esc(plan.owner)}</b> keeps its name and ends earlier`}${plan.action==='split_gap'?'; the stray words are archived as padding with their original bytes':''}. The new function is open for agents; both need a fresh match.`:changed?`<b>${esc(plan.owner)}</b> remains the active name. ${plan.affected.filter(f=>f.name!==plan.owner).map(f=>`<code>${esc(f.name)}</code>`).join(', ') || 'No other entry'}${plan.affected.length>1?' will be archived with history retained.':' will be archived.'} The resized function needs a fresh match.`:
     plan.action==='keep'?'The current entry remains separate. This explicitly allows automatic work on its current bytes.':'This entry is archived with history retained and excluded from detected code. This adds no match.';
   return `<section class="boundary-preview"><h3>Review the proposed change</h3><div class="coverage-counts"><div><b>${plan.old_size}</b><span>Current bytes</span></div><div><b>${plan.new_size}</b><span>Proposed bytes</span></div><div><b>${plan.affected.length}</b><span>Retained entries affected</span></div></div>
     <p><b>Before</b></p>${boundaryLayoutHTML(plan.affected.map(f=>({name:f.name,start:f.start,end:f.end})))}
-    <p><b>After</b></p>${['padding','data'].includes(plan.action)?'<p>Archived as '+esc(plan.action)+'; excluded from detected code.</p>':boundaryLayoutHTML([{name:plan.owner,start:plan.start,end:plan.end},...(plan.end<plan.old_end?[{name:'Retained tail · needs review',start:plan.end,end:plan.old_end}]:[])])}
+    <p><b>After</b></p>${boundaryAfterHTML(plan)}
     <p>${consequence}</p><p class="small">${esc(plan.warning)}</p>
-    <details open><summary>Original instructions around the disputed boundaries · highlighted = proposed extent</summary>${boundaryAssemblyHTML(plan.assembly,'boundary-preview-line',{[plan.old_end]:'current end (exclusive)',[plan.end]:'proposed end (exclusive)'})}</details></section>`;
+    <details open><summary>Original instructions around the disputed boundaries · highlighted = proposed extent</summary>${boundaryAssemblyHTML(plan.assembly,'boundary-preview-line',{[plan.old_end]:'current end (exclusive)',[plan.end]:plan.action==='trim_start'||plan.action==='split_end'?'proposed entry':'proposed end (exclusive)',...(plan.entry!=null?{[plan.entry]:'next function starts'}:{})})}</details></section>`;
 }
 function boundaryEvidenceHTML(packet) {
   return `<h3>Why this entry needs review</h3><p><b>${esc(packet.diagnosis)}</b></p>
@@ -42,10 +53,10 @@ function boundaryEvidenceHTML(packet) {
 function boundarySuggestionsHTML(packet) {
   return (packet.suggestions||[]).map((item,index)=>`<section class="boundary-suggestion"><h3>${item.action==='unclear'?'No clear recommendation':item.action==='trim_start'?'Start later: the first word is probably padding':esc(BOUNDARY_CHOICES.find(c=>c[0]===item.action)?.[1]||item.action)}</h3>
     <p class="small">${esc(item.agent)} · ${esc(item.model||'provider default')} · ${esc(item.confidence)} evidence · ${esc(new Date(item.time*1000).toLocaleString())}${item.stale?' · <b>Inputs changed: investigate again before using this advice.</b>':''}</p>
-    ${item.end?`<p>Proposed exclusive end: <code>${hex8(item.end)}</code></p>`:''}${item.start?`<p>Proposed start: <code>${hex8(item.start)}</code> · nothing was changed; no layout edit for a start exists yet.</p>`:''}
+    ${item.end?`<p>Proposed ${['trim_start','split_end'].includes(item.action)?'entry':'exclusive end'}: <code>${hex8(item.end)}</code>${item.entry?` · next function starts at <code>${hex8(item.entry)}</code>`:''}</p>`:''}${item.start?`<p>Proposed start: <code>${hex8(item.start)}</code> · nothing was changed; no layout edit for a start exists yet.</p>`:''}
     <p><b>Supporting evidence:</b> ${esc(item.supporting)}</p><p><b>Counter-evidence:</b> ${esc(item.counter)}</p><p><b>Remaining uncertainty:</b> ${esc(item.uncertainty)}</p>
     <p class="small">Instructions: ${item.citations.map(address=>`<a data-boundary-cite="${packet.assembly.some(l=>l.address===address)?'boundary-evidence-line':'boundary-edge'}-${address}" href="#${packet.assembly.some(l=>l.address===address)?'boundary-evidence-line':'boundary-edge'}-${address}">${hex8(address)}</a>`).join(', ')}</p>
-    ${!item.stale&&!['unclear','trim_start'].includes(item.action)?`<button type="button" class="ghost" data-boundary-use="${index}">Review this proposal</button>`:''}</section>`).join('') || '<p class="small muted">No agent recommendation saved for this entry.</p>';
+    ${!item.stale&&!['unclear','trim_start','split_end'].includes(item.action)?`<button type="button" class="ghost" data-boundary-use="${index}">Review this proposal</button>`:''}</section>`).join('') || '<p class="small muted">No agent recommendation saved for this entry.</p>';
 }
 // The start and end fixes the importer makes (app/entry_fixes.py); listed as suggestions when they were left alone.
 const BOUNDARY_ENTRY_FIXES=['trim_start','split_end','padding'];
@@ -64,7 +75,7 @@ async function openBoundaryReview(initial='') {
       <label class="field">Model<input data-boundary-model list="boundary-models" placeholder="Agent default"><datalist id="boundary-models"></datalist></label></div>
       <div class="row"><button class="ghost" data-boundary-investigate>Ask agent to investigate</button><button class="ghost" data-boundary-stop hidden>Stop investigation</button><button class="ghost" data-boundary-refresh>Refresh recommendations</button></div><p class="small" data-boundary-agent-status role="status"></p><div data-boundary-agent-work></div>
     </details><div data-boundary-suggestions></div>
-    <fieldset class="boundary-decisions"><legend>Compare possible decisions</legend>${BOUNDARY_CHOICES.map(([value,title,help])=>`${value==='adjust'?'<details><summary>Advanced boundary edit</summary>':''}<label class="boundary-choice"><input type="radio" name="boundary-action" data-boundary-action value="${value}"><span><b>${esc(title)}</b><span class="small muted">${esc(help)}</span></span></label>${value==='adjust'?'<label class="field" data-boundary-end-field><span>New end address · exclusive (hex)</span><input data-boundary-end class="mono" placeholder="0x80001020"></label></details>':''}`).join('')}</fieldset>
+    <fieldset class="boundary-decisions"><legend>Compare possible decisions</legend>${BOUNDARY_CHOICES.map(([value,title,help])=>`${value==='adjust'?'<details><summary>Advanced boundary edit</summary>':''}<label class="boundary-choice"><input type="radio" name="boundary-action" data-boundary-action value="${value}"><span><b>${esc(title)}</b><span class="small muted">${esc(help)}</span></span></label>${value==='split_gap'?'<label class="field" data-boundary-entry-field><span>Next function starts at (hex) · split_gap only</span><input data-boundary-entry class="mono" placeholder="0x80001028"></label><p class="small muted">For split_gap the end address is where this function stops (after its return and delay slot); the words between it and the next function are kept out of any function.</p></details>':''}${value==='adjust'?'<label class="field" data-boundary-end-field><span>End address · exclusive (hex) · adjust and split_gap</span><input data-boundary-end class="mono" placeholder="0x80001020"></label>':''}`).join('')}</fieldset>
     <button type="button" class="ghost" data-boundary-preview>Preview selected decision</button><div data-boundary-preview-work></div><div data-boundary-plan></div>
     <label class="field"><span>Evidence for this decision</span><textarea data-boundary-note rows="3" placeholder="Record the instructions, addresses and uncertainty you reviewed."></textarea></label>
     <button class="primary" type="button" data-boundary-apply disabled>Run safety checks &amp; save decision</button>
@@ -77,7 +88,7 @@ async function openBoundaryReview(initial='') {
   const action=()=>body.querySelector('[data-boundary-action]:checked')?.value||'';
   const clear=()=>{plan=null;get('[data-boundary-apply]').disabled=true;get('[data-boundary-plan]').innerHTML='';};
   const invalidate=()=>{clear();packet=null;reading++;watching++;stopWatching();get('[data-boundary-investigate]').disabled=!available.length;get('[data-boundary-stop]').hidden=true;get('[data-boundary-agent-status]').textContent='';get('[data-boundary-evidence]').innerHTML='';get('[data-boundary-suggestions]').innerHTML='';get('[data-boundary-note]').value='';body.querySelectorAll('[data-boundary-action]').forEach(r=>{r.checked=false;});};
-  get('[data-boundary-name]').oninput=invalidate;get('[data-boundary-end]').oninput=clear;
+  get('[data-boundary-name]').oninput=invalidate;get('[data-boundary-end]').oninput=clear;get('[data-boundary-entry]').oninput=clear;
   body.querySelectorAll('[data-boundary-action]').forEach(r=>{r.onchange=clear;});
   const available=(S.st.agents||[]).filter(a=>a.installed||a.uses_endpoints),kind=get('[data-boundary-kind]'),endpoint=get('[data-boundary-endpoint]'),model=get('[data-boundary-model]');
   for(const a of available){const o=document.createElement('option');o.value=a.id;o.textContent=a.name;kind.append(o);}
@@ -173,7 +184,7 @@ async function openBoundaryReview(initial='') {
     if(pick&&!busy){get('[data-boundary-name]').value=pick.dataset.boundaryPick;invalidate();get('[data-boundary-audit]').querySelector('details').open=false;await read();await resumeWatch();return;}
     if(event.target.closest('[data-boundary-read],[data-boundary-refresh]')&&!busy){await read();await resumeWatch();return;}
     const use=event.target.closest('[data-boundary-use]');
-    if(use&&!busy&&packet){const item=packet.suggestions[Number(use.dataset.boundaryUse)];if(!item||item.stale)return;clear();body.querySelector(`[data-boundary-action][value="${item.action}"]`).checked=true;if(item.end){get('[data-boundary-end]').value=hex8(item.end);get('[data-boundary-end-field]').closest('details').open=true;}get('[data-boundary-note]').value=`Agent proposal (${item.agent}): ${item.supporting}\nCounter-evidence: ${item.counter}\nUncertainty: ${item.uncertainty}\nInstructions: ${item.citations.map(hex8).join(', ')}`;get('[data-boundary-preview]').focus();return;}
+    if(use&&!busy&&packet){const item=packet.suggestions[Number(use.dataset.boundaryUse)];if(!item||item.stale)return;clear();body.querySelector(`[data-boundary-action][value="${item.action}"]`).checked=true;if(item.end){get('[data-boundary-end]').value=hex8(item.end);get('[data-boundary-end-field]').closest('details').open=true;}if(item.entry)get('[data-boundary-entry]').value=hex8(item.entry);get('[data-boundary-note]').value=`Agent proposal (${item.agent}): ${item.supporting}\nCounter-evidence: ${item.counter}\nUncertainty: ${item.uncertainty}\nInstructions: ${item.citations.map(hex8).join(', ')}`;get('[data-boundary-preview]').focus();return;}
     const investigate=event.target.closest('[data-boundary-investigate]'),preview=event.target.closest('[data-boundary-preview]'),apply=event.target.closest('[data-boundary-apply]'),undo=event.target.closest('[data-boundary-undo]');
     if((!investigate&&!preview&&!apply&&!undo)||busy)return;
     busy=true;const controls=[...body.querySelectorAll('button,input,select,textarea')];
@@ -192,12 +203,14 @@ async function openBoundaryReview(initial='') {
       }else if(preview){
         if(!packet||packet.function!==get('[data-boundary-name]').value.trim())throw new Error('Read the selected function’s evidence first.');
         if(!action())throw new Error('Choose a decision after reviewing the evidence.');
-        clear();const endText=get('[data-boundary-end]').value.trim(),end=action()==='adjust'?Number(/^0x/i.test(endText)?endText:'0x'+endText):undefined;
-        plan=await api('/api/boundary-repairs',{method:'POST',body:{slug,action:'preview',function:packet.function,repair:action(),end}});
+        clear();const address=text=>Number(/^0x/i.test(text)?text:'0x'+text),endText=get('[data-boundary-end]').value.trim(),entryText=get('[data-boundary-entry]').value.trim();
+        const end=['adjust','split_gap'].includes(action())?address(endText):undefined,entry=action()==='split_gap'?address(entryText):undefined;
+        if(action()==='split_gap'&&!(end&&entry))throw new Error('Enter where this function ends and where the next function starts.');
+        plan=await api('/api/boundary-repairs',{method:'POST',body:{slug,action:'preview',function:packet.function,repair:action(),end,entry}});
         if(active())get('[data-boundary-plan]').innerHTML=boundaryRepairPreviewHTML(plan);
       }else{
         if(!undo&&!plan)throw new Error('Preview the decision before saving.');
-        const payload=undo?{slug,action:'undo',key:undo.dataset.boundaryUndo}:{slug,action:'apply',function:plan.function,repair:plan.action,end:plan.end,revision:plan.revision,image:plan.image,note:get('[data-boundary-note]').value};
+        const payload=undo?{slug,action:'undo',key:undo.dataset.boundaryUndo}:{slug,action:'apply',function:plan.function,repair:plan.action,end:plan.end,entry:plan.entry,revision:plan.revision,image:plan.image,note:get('[data-boundary-note]').value};
         const {job}=await api('/api/boundary-repairs',{method:'POST',body:payload});
         await followJob(job,log,(_lines,state)=>{const p=state.progress;if(active()&&p&&work._workStatus)work._workStatus.textContent=`${p.phase} · ${p.done||0} / ${p.total||0}`;},active);
         if(active()){invalidate();await load();S.ov=await api(`/api/project?slug=${encodeURIComponent(slug)}`);if(active()){renderStats(S.ov);renderProjectSettings();}}
