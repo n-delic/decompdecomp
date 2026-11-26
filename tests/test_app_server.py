@@ -4335,3 +4335,26 @@ def test_project_list_marks_a_project_whose_deep_permuter_runs(tmp_path, monkeyp
     assert client.get("/api/projects").json()[0]["deep_permuter"] is True
     jobs.jobs["x"]["state"] = "done"
     assert client.get("/api/projects").json()[0]["deep_permuter"] is False
+
+
+def test_a_long_job_keeps_only_its_recent_log_lines():
+    """A pass that logs a line per function for hours sent 200 MB on every poll and froze the progress bars."""
+    import time
+
+    from decompnet.app import support
+    from decompnet.app.support import Jobs
+    jobs = Jobs()
+
+    def work(log):
+        for i in range(support.JOB_LOG_LINES * 3):
+            log(f"line {i}")
+        return "ok"
+
+    jid = jobs.start("test", work)
+    deadline = time.time() + 10
+    while jobs.jobs[jid]["state"] == "running" and time.time() < deadline:
+        time.sleep(0.01)
+    lines = jobs.jobs[jid]["log"]
+    assert jobs.jobs[jid]["state"] == "done"
+    assert len(lines) <= support.JOB_LOG_LINES * 2
+    assert lines[-1] == f"line {support.JOB_LOG_LINES * 3 - 1}"

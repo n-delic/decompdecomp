@@ -32,6 +32,9 @@ LOG_BYTES, LOG_BACKUPS = 5 << 20, 4
 TOOL_SAID_CHARS = 400  # the end of what a failed tool said, in its job's error
 DETAILS_CHARS, TRACE_CHARS = 6000, 4000  # what a failed job keeps of a tool's output and of the Python trace
 JOB_ID_CHARS = 12
+# A job's log is sent whole on every poll. A long-running pass logs one line per function, forever: one reached 1.6
+# million lines (200 MB), so each poll took seconds and the window's progress bars froze. The file log keeps everything.
+JOB_LOG_LINES = 5000
 MIN_CONTEXT_TOKENS = 2048  # an endpoint's context is at least this: the work prompt alone needs about that
 MAX_SESSIONS = 32  # helpers on one endpoint at once, at most
 
@@ -177,7 +180,10 @@ class Jobs:
 
         def log(line: str) -> None:
             check_cancel()
-            job["log"].append(str(line))
+            lines = job["log"]
+            lines.append(str(line))
+            if len(lines) > JOB_LOG_LINES * 2:
+                del lines[:-JOB_LOG_LINES]  # trim in batches, so a busy job doesn't pay for it on every line
             logger.info("[%s %s] %s", kind, jid[:6], line)
 
         def check_cancel() -> None:
