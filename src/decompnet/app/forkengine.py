@@ -3842,6 +3842,10 @@ class ForkEngine:
                 target = ''
             for _, source in draft_cleanup.cleaned(original, meta.get('symbol') or fn['name'], proj['arch'], target, self._known(fp, unit)):
                 yield "", source
+        # m2c's untyped fields as members of a record per pointer (as in ROM mode's drafts)
+        from decomprepair import m2c_field_record_view
+        for _, source in m2c_field_record_view.variants(original, meta.get('symbol') or fn['name'])[:1]:
+            yield "", source
         if report is not None and not report.get('compiled'):
             from .. import seeds
             from . import initial_draft_repairs

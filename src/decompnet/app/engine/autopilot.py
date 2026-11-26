@@ -460,6 +460,11 @@ class AutopilotMixin:
                     # judged beside the raw draft, which stays the stored seed (app/draft_cleanup.py)
                     for family, source in draft_cleanup.cleaned(draft, fn['name'], proj['arch'], target_asm, ctx['header']):
                         candidates.append((family, f"{note}{seeds.with_m2c_macros(source)}\n"))
+                # m2c's untyped fields as members of a record per pointer: beat every other candidate on 13 of 60
+                # drafts of one N64 game's matched functions, 2 of them exact
+                from decomprepair import m2c_field_record_view
+                for family, source in m2c_field_record_view.variants(draft, fn['name'])[:1]:
+                    candidates.append((family, f"{note}{seeds.with_m2c_macros(source)}\n"))
                 from ..capture_followup_repairs import callee_evidence
                 from ..recent_capture_repairs import variants as captured_variants
                 known_callees=callee_evidence(self,proj,fn,draft)
