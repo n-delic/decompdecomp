@@ -691,6 +691,45 @@ def drop_float_saves(asm_text: str) -> str:
     return _FLOAT_SAVE.sub("", asm_text)
 
 
+_INSN = re.compile(r"^(?:[ \t]*/\*.*?\*/)?[ \t]*([a-z][\w.]*)[ \t]*(.*?)[ \t]*(?:#.*)?$")
+_LABEL_LINE = re.compile(r"^[ \t]*(\.?L\w+):[ \t]*$")
+
+
+def float_unsigned_conversions(asm_text: str) -> str:
+    """IDO's float-to-unsigned conversion is a fenced sequence (`cfc1 $t8, $31` ... a `cvt.w.s`, a check of the FPU's
+    exception bits, a second `cvt.w.s` of the value less 2^31, `ctc1 $t8, $31`), and m2c reads the control register
+    as an unknown instruction: 124 functions of 60 games had no draft. The whole fence is the C cast, so it is written
+    as the truncation it converts with (`trunc.w.s` and the move to the result register), which m2c reads as a cast."""
+    if "cfc1" not in asm_text:
+        return asm_text
+    lines = asm_text.split("\n")
+    parsed = [(_INSN.match(line) or [None, "", ""]) for line in lines]
+    ops = [(m[1], m[2]) for m in parsed]
+    out, i, changed = [], 0, False
+    while i < len(lines):
+        op, args = ops[i]
+        keep = True
+        if op == "cfc1" and args.replace(" ", "").endswith(",$31"):
+            saved = args.split(",")[0].strip()
+            end = next((j for j in range(i + 1, min(i + 60, len(lines)))
+                        if ops[j][0] == "ctc1" and ops[j][1].replace(" ", "") == f"{saved},$31"), None)
+            if end is not None:
+                inside = range(i, end + 1)
+                names = {m[1] for k in inside if (m := _LABEL_LINE.match(lines[k]))}
+                outside = "\n".join(lines[k] for k in range(len(lines)) if k not in inside)
+                convert = next((ops[k][1] for k in inside if ops[k][0] == "cvt.w.s"), None)
+                result = next((re.split(r"\s*,\s*", ops[k][1])[0] for k in inside if ops[k][0] == "andi"), None)
+                if (convert and result and not any(re.search(rf"(?<![\w.]){re.escape(n)}(?!\w)", outside) for n in names)
+                        and "$31" not in "".join(ops[k][1] for k in inside if ops[k][0] not in ("cfc1", "ctc1"))):
+                    fregs = re.split(r"\s*,\s*", convert)
+                    out += [f"trunc.w.s {fregs[0]}, {fregs[1]}", f"mfc1 {result}, {fregs[0]}"]
+                    i, keep, changed = end + 1, False, True
+        if keep:
+            out.append(lines[i])
+            i += 1
+    return "\n".join(out) if changed else asm_text
+
+
 @compile_timing.timed('generation')
 def run_m2c(asm_text: str, name: str, target: str, context_header: str = "", data_asm: str | None = None,
             timeout: float = 20, valid: bool = False, strict: bool = False, options: tuple[str, ...] = ()) -> str | None:
@@ -699,6 +738,7 @@ def run_m2c(asm_text: str, name: str, target: str, context_header: str = "", dat
     m2c refuses a label that a branch-likely handling puts on a delay slot ("refers to a delay slot: add a nop").
     A `nop` before that label is what it asks for and changes nothing the draft shows, so it is added and m2c runs
     again (a function can have several such labels)."""
+    asm_text = float_unsigned_conversions(asm_text)
     for _ in range(8):
         try:
             return _run_m2c(asm_text, name, target, context_header, data_asm, timeout, valid, strict, options)

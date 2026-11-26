@@ -107,3 +107,16 @@ def test_function_pointer_local_that_is_stepped_becomes_a_word():
     from decompnet import seeds
     out = seeds._compilable("void f(void) {\n    M2C_UNK (*sp24)(M2C_UNK, M2C_UNK);\n    sp24 += 0xC;\n}\n", "f")
     assert "s32 sp24;" in out
+
+
+def test_ido_float_to_unsigned_fence_becomes_a_truncation():
+    from decompnet import seeds
+    asm = "\n".join([
+        "glabel f", "  cfc1       $t8, $31", "  ctc1       $t9, $31", "  cvt.w.s    $ft1, $fv0", "  cfc1       $t9, $31",
+        "  nop", "  andi       $t9, $t9, 0x78", "  beql       $t9, $zero, .L8020D050", "  mfc1       $t9, $ft1",
+        "  sub.s      $ft1, $fv0, $ft1", ".L8020D050:", "  nop", "  ctc1       $t8, $31", "  jr $ra"])
+    out = seeds.float_unsigned_conversions(asm)
+    assert "cfc1" not in out and "ctc1" not in out
+    assert "trunc.w.s $ft1, $fv0" in out and "mfc1 $t9, $ft1" in out and "jr $ra" in out
+    keep = asm.replace("  jr $ra", "  b .L8020D050")  # a label the rest of the function branches to stays
+    assert seeds.float_unsigned_conversions(keep) == keep
