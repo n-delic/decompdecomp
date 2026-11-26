@@ -209,3 +209,10 @@ def test_branch_out_of_the_function_is_drafted_as_a_return():
     if seeds.available():
         drafted = seeds.run_m2c(asm, "func_80001FB4", "mips-ido-c", strict=True)
         assert drafted and seeds.OUTSIDE_BRANCH_NOTE in drafted
+
+
+def test_store_to_a_number_becomes_a_word_store():
+    from decompnet.app import compile_error_repair as cer
+    out = cer.literal_store("void f(void) {\n    0 = (void *) 0;\n    x = 1;\n}", 2)
+    assert "    *(s32 *)0 = (s32)((void *) 0);" in out and "x = 1;" in out
+    assert cer.literal_store("void f(void) {\n    x = 1;\n}", 2) is None
