@@ -173,3 +173,11 @@ def test_argument_register_without_a_parameter_is_declared():
     assert "    s32 arg2;\n    arg2 = arg1;" in out and "s32 arg0" in out and "s32 arg1" in out
     same = "s32 f(s32 arg0) {\n    s32 arg1;\n    arg1 = arg0;\n    return arg1;\n}\n"
     assert seeds.declare_written_arguments(same, "f") == same
+
+
+def test_a_switch_through_a_missing_table_is_cut_where_it_jumps():
+    from decompnet import seeds
+    asm = "glabel f\n  lw $v0, 0x0($v1)\n  jr $v0\n  nop\n  jr $ra\n  nop\n"
+    out = seeds.cut_missing_switches(asm)
+    assert "jr $ra" in out.splitlines()[2] and out.count("jr $v0") == 0
+    assert seeds.cut_missing_switches("  jr $ra\n") == "  jr $ra\n"

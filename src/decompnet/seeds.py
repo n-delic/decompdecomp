@@ -786,6 +786,20 @@ def float_unsigned_conversions(asm_text: str) -> str:
     return "\n".join(out) if changed else asm_text
 
 
+_MISSING_TABLE = ("jump table is not provided", "jtbl list must not be empty", "a name starting with")
+MISSING_SWITCH_NOTE = ("/* the jump table's data is not in the project: the switch below is cut where its jump was and its "
+                       "cases are not drafted (import the table's bytes, e.g. memory_regions.json for an overlay, and "
+                       "regenerate) */\n")
+
+
+def cut_missing_switches(asm_text: str) -> str:
+    """A `jr $reg` through a table whose bytes the project does not have: m2c refuses the whole function ("jump table
+    is not provided"), so an overlay game's switch functions had no draft at all (about 250 in 20 games). Nothing can
+    invent the case targets, but the rest of the function can be drafted: the jump becomes a return, so the code before
+    it compiles and the cases, which nothing then reaches, are left out. The draft says so in a comment."""
+    return re.sub(r"(?m)^(.*?\bjr[ \t]+)\$(?!ra\b)\w+([ \t]*(?:#.*)?)$", r"\1$ra\2", asm_text)
+
+
 @compile_timing.timed('generation')
 def run_m2c(asm_text: str, name: str, target: str, context_header: str = "", data_asm: str | None = None,
             timeout: float = 20, valid: bool = False, strict: bool = False, options: tuple[str, ...] = ()) -> str | None:
@@ -808,6 +822,9 @@ def run_m2c(asm_text: str, name: str, target: str, context_header: str = "", dat
             if "Read from unset register $f" in str(error) and (saved := drop_float_saves(asm_text)) != asm_text:
                 asm_text = saved
                 continue
+            if any(text in str(error) for text in _MISSING_TABLE) and (cut := cut_missing_switches(asm_text)) != asm_text:
+                drafted = _run_m2c(cut, name, target, context_header, data_asm, timeout, valid, strict, options)
+                return MISSING_SWITCH_NOTE + drafted if drafted else drafted
             found = _DELAY_SLOT_LABEL.search(str(error))
             if not found:
                 raise
@@ -816,7 +833,16 @@ def run_m2c(asm_text: str, name: str, target: str, context_header: str = "", dat
             if padded == asm_text:
                 raise
             asm_text = padded
-    return _run_m2c(asm_text, name, target, context_header, data_asm, timeout, valid, strict, options)
+    drafted = _run_m2c(asm_text, name, target, context_header, data_asm, timeout, valid, strict, options)
+    if drafted is None and not strict and (cut := cut_missing_switches(asm_text)) != asm_text:
+        # a quiet run says nothing of why it failed: ask again for the reason, and draft around a missing table
+        try:
+            _run_m2c(asm_text, name, target, context_header, data_asm, timeout, valid, True, options)
+        except DraftError as error:
+            if any(text in str(error) for text in _MISSING_TABLE):
+                around = _run_m2c(cut, name, target, context_header, data_asm, timeout, valid, strict, options)
+                return MISSING_SWITCH_NOTE + around if around else around
+    return drafted
 
 
 def _run_m2c(asm_text: str, name: str, target: str, context_header: str = "", data_asm: str | None = None,
