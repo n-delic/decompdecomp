@@ -486,3 +486,20 @@ def test_the_profiles_most_of_the_project_was_proven_under_are_planned_last():
     assert [(p['toolchain'], tuple(p['flags']), p['family']) for p in got] == [(*o1, 'project')]
     own = {'toolchain': o1[0], 'flags': list(o1[1])}
     assert profile_probe.project_common(facts(own=own, common=Counter({o1: 12}))) == []
+
+
+def test_the_brief_says_which_profile_the_neighbours_were_built_with(monkeypatch):
+    from collections import Counter
+
+    from decompnet.app import profile_detection
+
+    own = {'toolchain': 'gcc-2.7.2-kmc', 'flags': ['-G0', '-mips3', '-O2']}
+    o1 = ('gcc-2.7.2-kmc', ('-G0', '-mips3', '-O1'))
+    votes = {'near': Counter({o1: 6, profile_probe.key(own): 2})}
+    monkeypatch.setattr(profile_detection, 'neighbours', lambda net, proj, cfg, fn: (votes['near'], 8))
+    hint = profile_probe.neighbour_profile_hint(None, {}, {}, {}, own)
+    assert '6 of its 8' in hint and '-O1' in hint and 'compiler_experiments' in hint
+    assert profile_probe.neighbour_profile_hint(None, {}, {}, {}, {**own, 'flags': list(o1[1])}) == ''  # already so
+    votes['near'] = Counter({o1: 4, profile_probe.key(own): 4})
+    assert profile_probe.neighbour_profile_hint(None, {}, {}, {}, own) == ''  # no clear majority
+    assert profile_probe.neighbour_profile_hint(None, {}, {}, {}, {**own, 'cmd': 'cc'}) == ''
