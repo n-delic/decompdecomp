@@ -509,6 +509,7 @@ def _compilable(source: str | None, name='', asm='', header='', toolchain=None, 
         source = void_pointer_arithmetic.externs(source, name) or source
         source = denormal_floats_as_words(source)
     source = pointer_bits_as_float(source, name)
+    source = declare_written_arguments(source, name)
     # a local m2c typed as a function pointer (`M2C_UNK (*sp24)(M2C_UNK, M2C_UNK);`) that the code also steps (`sp24 += 0xC`):
     # the slot held an address that was both called and walked; the draft keeps the word
     for pointer in re.findall(r"^[ \t]+[A-Za-z_][\w \t\*]*\(\*(\w+)\)\([^;\n]*\);", source, flags=re.M):
@@ -552,6 +553,20 @@ def denormal_floats_as_words(source: str) -> str:
             return m.group(0)
         return f"M2C_BITS_F32({struct.unpack('>I', struct.pack('>f', value))[0]}U)"
     return _DENORMAL.sub(word, source)
+
+
+def declare_written_arguments(source: str, name: str) -> str:
+    """m2c writes an argument register the signature has no parameter for (`arg3 = temp_a2;` in a three-parameter
+    function: the code moved a value into $a3 for a callee or a later use): a compiler stops at "'arg3' undefined".
+    The register is a local the draft owns."""
+    head = re.search(rf"^[^\n;{{}}]*\b{re.escape(name)}\s*\(([^)]*)\)\s*\{{[ \t]*\n", source, flags=re.M) if name else None
+    if not head:
+        return source
+    known = set(re.findall(r"\barg\d+\b", head.group(1))) | set(re.findall(r"\b[A-Za-z_][\w \t\*]*?\b(arg\d+)\s*[;=,\[]", source[head.end():]))
+    missing = sorted({a for a in re.findall(r"\barg\d+\b", source[head.end():])} - known, key=lambda a: int(a[3:]))
+    if not missing:
+        return source
+    return source[:head.end()] + "".join(f"    s32 {a};\n" for a in missing) + source[head.end():]
 
 
 def pointer_bits_as_float(source: str, name: str) -> str:

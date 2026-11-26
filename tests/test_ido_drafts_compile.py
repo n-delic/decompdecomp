@@ -165,3 +165,11 @@ def test_called_address_is_cast_to_a_function_pointer():
     assert "arg1((M2C_UNK (*)())arg1)()" not in (cer.call_through_cast("a;\n    *arg1();\n", 2) or "")
     assert "((M2C_UNK (*)())arg1)();" in cer.call_through_cast("a;\n    *arg1();\n", 2)
     assert cer.call_through_cast("a;\n    ((void (*)())x)(1);\n", 2) is None
+
+
+def test_argument_register_without_a_parameter_is_declared():
+    from decompnet import seeds
+    out = seeds.declare_written_arguments("s32 f(s32 arg0, s32 arg1) {\n    arg2 = arg1;\n    return arg0;\n}\n", "f")
+    assert "    s32 arg2;\n    arg2 = arg1;" in out and "s32 arg0" in out and "s32 arg1" in out
+    same = "s32 f(s32 arg0) {\n    s32 arg1;\n    arg1 = arg0;\n    return arg1;\n}\n"
+    assert seeds.declare_written_arguments(same, "f") == same
