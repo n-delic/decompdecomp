@@ -91,8 +91,11 @@ def probe(search, agent, proj, fn, source, profile, *, scored=False, review_vari
     scope = agent_tokens.target_scope(search.net, {**dict(fn), 'best_source':source}, '')
     key = 'deep-profile-v1:'+hashlib.sha256(repr((scope, source, profile)).encode()).hexdigest()
     store = search.net.project_store(proj['id'])
+    # a miss queued earlier in this batch (the profile sweep's, judged just before the profile probe asks for the same
+    # pair) keeps its score beside its outcome: it was the outcome alone, and 816 of 837 neighbour probes of one game
+    # were recorded without a score, so the probe's note never said which profile scored better
     queued = trial_bookkeeping.lookup(store, ('profile-probe', fn['id'], key))
-    cached = {'outcome': queued} if queued is not None else store.one(
+    cached = {'outcome': queued[0], 'feedback': json.dumps({'score': queued[1]})} if queued is not None else store.one(
         'SELECT outcome,feedback FROM reuse_trials WHERE function_id=? AND signature=?', fn['id'], key)
     # (a compile failure is as settled as a miss: retrying one recompiled 88 broken rewrites 9,844 times)
     if cached and cached['outcome'] in ('miss', 'compile_failed'):
@@ -115,7 +118,7 @@ def probe(search, agent, proj, fn, source, profile, *, scored=False, review_vari
     trial_bookkeeping.submit(store, [('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason,feedback) VALUES(?,?,?,?,?)',
                    (fn['id'], key, outcome, 'deep compiler profile probe',
                     json.dumps({'score':score, 'profile':profile, **({'source':source} if exact else {})})))],
-                   immediate=bool(exact), memo=(('profile-probe', fn['id'], key), outcome))
+                   immediate=bool(exact), memo=(('profile-probe', fn['id'], key), (outcome, score)))
     search.log('Profile '+profile['toolchain']+' '+' '.join(profile['flags'])+': '+
                ('exact; rechecking source/profile bundle' if exact else 'score '+str(score) if score is not None else 'does not compile'))
     if exact:
