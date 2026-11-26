@@ -1456,6 +1456,10 @@ class Twins:
             return 0
         bounded = job is not None and hasattr(job, "reuse_limit")
         from .cross_game_progress import report
+        donors = self.net.project_store(other['id']).all(
+            "SELECT id,project_id,name,unit,meta FROM functions WHERE project_id=? AND status='matched'", other["id"])
+        if not donors:
+            return 0  # nothing to lend; a project never set up has no objdiff.json to read either
         report(job, 'Reading imported target objects', game=other['name'])
         theirs = self._fork_prints(other, matched_only=True, job=job)
         matched = 0
@@ -1469,8 +1473,6 @@ class Twins:
         relaxed = donor_relocations.candidates(self.net, proj, theirs.values(), job) if manual else {}
         identical = donor_relocations.identical_targets(mine, theirs.values(), job) if manual else {}
         label = self.net.symbols(proj['id']).label if relaxed or identical else None
-        donors = self.net.project_store(other['id']).all(
-            "SELECT id,project_id,name,unit,meta FROM functions WHERE project_id=? AND status='matched'", other["id"])
         if manual:
             # A common library wrapper can match the fingerprints of dozens of
             # overlay functions. Try specific leads before spending time on fan-out.
