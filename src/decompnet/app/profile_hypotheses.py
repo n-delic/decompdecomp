@@ -58,6 +58,37 @@ def kmc_cse_address_probe(own, rows):
     return None
 
 
+def kmc_cse_hoist_probe(own, rows):
+    """Try both of cse's block options off when the candidate keeps an address in a saved register that the target
+    builds again at each use.
+
+    At -O2 cse follows a branch and skips a short block, so the address of a global passed to two calls in one arm is
+    kept in `$sN` and copied into the argument register (`move $a0,$s2` twice) where the target has `lui/addiu $a0`
+    before each call. An N64 dispatcher matched at 0 with both options off and plain C; either one alone left it
+    unchanged (605), so the single-option probe above never found it (nor does it see one extra pair)."""
+    flags = list(own['flags'])
+    options = ['-fno-cse-follow-jumps', '-fno-cse-skip-blocks']
+    if (own['toolchain'] != 'gcc-2.7.2-kmc' or '-O2' not in flags
+            or any(flag in flags for flag in (*options, '-fcse-follow-jumps', '-fcse-skip-blocks'))):
+        return None
+    low = re.compile(r'addiu\s+(\$\w+),\s*(?:\$\w+),\s*%lo\(([^()]+)\)')
+    copy = re.compile(r'(?:move|addu)\s+\$a[0-3],\s*(\$s[0-7])(?:,\s*\$zero)?')
+    target, candidate = Counter(), Counter()
+    kept = {}
+    for _, left, right in rows:
+        if found := low.fullmatch(left.strip()):
+            target[found[2]] += 1
+        if found := low.fullmatch(right.strip()):
+            candidate[found[2]] += 1
+            if found[1].startswith('$s'):
+                kept[found[1]] = found[2]
+    copies = Counter(found[1] for _, _, right in rows if (found := copy.fullmatch(right.strip())))
+    if any(copies[register] >= 2 and target[symbol] >= 2 and target[symbol] > candidate[symbol]
+           for register, symbol in kept.items()):
+        return [*flags, *options]
+    return None
+
+
 def kmc_cse_skip_probe(own, rows):
     """Try dropping `-fno-cse-skip-blocks` when the candidate reloads a field the target loads once.
 
@@ -116,6 +147,8 @@ def kmc_priorities(own, assembly, rows):
     variants = []
     if cse := kmc_cse_address_probe(own, rows):
         variants.append(cse)
+    if hoist := kmc_cse_hoist_probe(own, rows):
+        variants.append(hoist)
     if skip := kmc_cse_skip_probe(own, rows):
         variants.append(skip)
     if expensive := kmc_expensive_probe(own, rows):

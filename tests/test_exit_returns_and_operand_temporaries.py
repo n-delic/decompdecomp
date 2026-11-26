@@ -133,3 +133,9 @@ def test_kmc_integer_address_candidate_matches_reversed_add_operands(tmp_path):
     [(family, candidate)] = variants(source, 'f', HEADER, rows)
     assert family == 'kmc_address_operand_order'
     assert _code(tmp_path, candidate) == target
+
+
+def test_the_flag_search_tries_both_cse_block_options_off():
+    from decompnet.app.engine.compilers import CompilerMixin
+    variants = CompilerMixin().flag_variants('gcc-2.7.2-kmc', FLAGS)
+    assert [*FLAGS, '-fno-cse-follow-jumps', '-fno-cse-skip-blocks'] in variants
