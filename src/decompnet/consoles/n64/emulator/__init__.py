@@ -14,7 +14,10 @@ from the core (its VI counter and hook, DecompGetViCount and DecompSetViHook; C+
 pinned commits themselves (RetroReversing/mupen64plus-core#2, RetroReversing/libRetroReversing#44).
 
 usage: python -m decompnet.consoles.n64.emulator ROM --vis N [--input SCRIPT] [--dump VI:FILE] [--watch ADDR[:LEN]]
-       [--break ADDR] [--from VI] [--expansion-pak]
+       [--break ADDR] [--from VI] [--expansion-pak] [--saves FOLDER]
+
+A run starts without a save (EEPROM, SRAM, FlashRAM, Controller Pak) and leaves none behind, so it is the same run
+every time, unless it is given a folder of saves.
 """
 from __future__ import annotations
 
@@ -279,11 +282,12 @@ def run(rom: Path, vis: int, *, inputs: str = "", dumps: dict[int, Path] | None 
         watches: list[tuple[int, int]] | tuple = (), breaks: list[int] | tuple = (), report_from: int = 0,
         max_hits: int = 200, expansion_pak: bool = False, timeout: float = 1800,
         record: tuple[Path, int] | None = None, stop=lambda: False, on_record=None, pending: int = 0,
-        frame_dumps: dict[int, Path] | None = None, input_clock: str = "vi", extra_env: dict[str, str] | None = None) -> Run:
+        frame_dumps: dict[int, Path] | None = None, input_clock: str = "vi", extra_env: dict[str, str] | None = None, saves: Path | None = None) -> Run:
     """Run the user's ROM in the reversing emulator for `vis` vertical interrupts. `inputs`: the input script
     (input.c), timed in retraces or, with `input_clock` "frames", in the game's frames (its graphics tasks); `dumps`:
     {vi: file}; `frame_dumps`: {frame: file}, RDRAM as the game hands over that graphics task; `watches`: (physical address, length) write breakpoints; `breaks`: virtual
-    addresses to stop at (breakpoints need the slower pure interpreter)."""
+    addresses to stop at (breakpoints need the slower pure interpreter). `saves`: a folder the game's saves are read
+    from and written to; without one the run has an empty folder of its own, removed after it."""
     folder = installed()
     if folder is None:
         raise EmulatorError("The reversing emulator isn't installed: install mupenRE under Compilers & tools → Tools (it builds from its source).")
@@ -313,6 +317,10 @@ def run(rom: Path, vis: int, *, inputs: str = "", dumps: dict[int, Path] | None 
     folder = current(folder)
     with tempfile.TemporaryDirectory(prefix="decomp-emulator-") as tmp:  # its configuration and anything it writes
         env["EMU_CONFIG"] = tmp
+        # never the core's usual folder in the user's home: a game's save from an earlier run changes what it does
+        kept_saves = Path(saves).resolve() if saves is not None else Path(tmp) / "saves"
+        kept_saves.mkdir(parents=True, exist_ok=True)
+        env["EMU_SAVES"] = str(kept_saves)
         argv = [folder / "mupenre-frontend", folder / f"libmupen64plus.{SO}", folder / f"rsp-hle.{SO}",
                 folder / f"input.{SO}", folder / f"video.{SO}", Path(rom).resolve()]
         proc = subprocess.Popen(limits.capped([str(a) for a in argv]), cwd=tmp, env=env, stdout=subprocess.DEVNULL,
@@ -442,6 +450,8 @@ def main(argv=None) -> int:
     p.add_argument("--from", dest="report_from", type=int, default=0, metavar="VI")
     p.add_argument("--max", type=int, default=200)
     p.add_argument("--expansion-pak", action="store_true")
+    p.add_argument("--saves", type=Path, metavar="FOLDER",
+                   help="start from the game's saves in this folder and write them there (default: no save, none kept)")
     p.add_argument("--timeout", type=float, default=1800, help="seconds before the run is cut short")
     args = p.parse_args(argv)
     inputs = Path(args.input[1:]).read_text().strip() if args.input.startswith("@") else args.input
@@ -449,7 +459,7 @@ def main(argv=None) -> int:
     watches = [(_address(w.split(":")[0]), int(w.split(":")[1], 16) if ":" in w else 4) for w in args.watch]
     result = run(args.rom, args.vis, inputs=inputs, dumps=dumps, watches=watches,
                  breaks=[_address(b) for b in args.breaks], report_from=args.report_from, max_hits=args.max,
-                 expansion_pak=args.expansion_pak, timeout=args.timeout)
+                 expansion_pak=args.expansion_pak, timeout=args.timeout, saves=args.saves)
     for h in result.hits:
         extra = (" [a0] " + " ".join(f"{w:08X}" for w in h.words)) if h.words else ""
         print(f"{h.kind} VI {h.vi} pc {h.pc:08X} ra {h.ra:08X} a0-a3 "
