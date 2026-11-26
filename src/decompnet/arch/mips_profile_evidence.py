@@ -8,6 +8,7 @@ import struct
 
 JR_RA = 0x03E00008
 NOP = 0
+MOVE_FP_SP = (0x03A0F021, 0x03A0F025, 0x03A0F02D)  # `$fp = $sp` written as addu, or, daddu
 
 
 def words_of(code: bytes, big_endian: bool = True) -> list[int]:
@@ -40,3 +41,9 @@ def ends_jr_ra_nop(words) -> bool:
     op, funct = before >> 26, before & 63
     transfer = op in (1, 2, 3, 4, 5, 6, 7, 0x14, 0x15, 0x16, 0x17) or (op == 0 and funct in (8, 9, 0xC, 0xD))
     return before != NOP and not transfer
+
+
+def keeps_frame_pointer(words) -> bool:
+    """The prologue copies `$sp` into `$fp`: GCC's unoptimised (`-O0`) code does it in every function, optimised code
+    omits the frame pointer unless it needs one (`alloca`)."""
+    return any(word in MOVE_FP_SP for word in words[:16])
