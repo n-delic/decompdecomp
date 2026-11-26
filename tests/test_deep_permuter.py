@@ -53,6 +53,12 @@ def setup(monkeypatch, imported=False):
     monkeypatch.setattr(generation_calls, 'IN_SERVER', True)  # (so the patches below reach the lane's calls)
     monkeypatch.setattr(temporary_hoist_repairs, 'variants', lambda *args, **kwargs: [])
     monkeypatch.setattr(reassociation_repairs, 'variants', lambda *args, **kwargs: [])
+    # The library's self-declared repairs (decomprepair.registry) join the lane too, and a library release can add one
+    # that reads these tiny sources (0.5.681 added run_weight_scope, scaffold_strip and product_split_sum, which gave the
+    # lane children of its own and broke every count below). The lane's registry calls are off here; their own tests
+    # (tests/test_library_family_wiring.py) cover them.
+    from decompnet.app import library_registry
+    monkeypatch.setattr(library_registry, 'local_calls', lambda context: [])
     return net
 
 
