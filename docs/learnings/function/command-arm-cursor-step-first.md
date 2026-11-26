@@ -4,7 +4,7 @@ kind: function
 compiler: sn-n64-281 -G0 -mips3 -O2 -mgas -meb -mcpu=VR4300 -mhard-float (and -mfp32)
 evidence: observation
 date: 2026-11-26
-families: cursor_advance_first, block_local_share
+families: cursor_advance_first, block_local_share, field_mask_defer, loop_counter_own, arm_role_local_merge
 ---
 
 What the function (or case) looked like and the exact compiler and flags:
@@ -41,6 +41,26 @@ global.c before local-alloc gives the arms' byte temporaries their registers. Sh
 (the chain from the saved best: `cursor_advance_first`, then `block_local_share`, 1430 -> 1285 -> 775 under `-mfp32`).
 Still open: the arms' byte temporaries (`$v1, $v0, $a1, $a2` in the target, `$v0, $v1, $a0, $a1` ours) and the shared
 pointer's register (`$a0` in the target, `$a3` ours).
+
+Later steps on the same function (the app's judge, then `-mfp32` in brackets):
+
+- Triangle arms, the 5-bit vertex indices: the shifts into the fields' variables first, the masks in place after
+  (`kt = (u32)b >> 5; b = b >> 10; r = w & 0x1F; kt &= 0x1F; b &= 0x1F;`): 825 -> 580 (775 -> 530). decomp-repair
+  `field_mask_defer` (its all-runs child: 535).
+- The second triangle arm's first word read into the same variables as the first arm's (the word in `b`, a block-local
+  copy `w` for the low index, no `do { } while (0)` fence): 580 -> 470 (530 -> 420). Not a family: the arms' shapes were
+  copied from the already-matching arm by hand.
+- The empty parts loop with a counter of its own (it shared `kt` with the triangle arms' field): 470 -> 410 (420 -> 360).
+  decomp-repair `loop_counter_own`.
+- The second triangle arm's low index in the first arm's variable (`r_b1` -> `r`, both `= w & 0x1F`): 410 -> 365
+  (360 -> 315), both triangle arms then matching. decomp-repair `arm_role_local_merge`.
+- The `if (0) goto` back edge around `texs = hdr->texs;` in the earlier best stopped mattering after the shared
+  pointer (775 either way) and is gone; the `do { } while (0)` fence went with the triangle rewrite.
+
+Left at 365 (315): the two modify-vertex arms' byte temporaries come out one register round (`$v0, $v1, $a0, $a1` for
+the target's `$v1, $v0, $a1, $a2`) and the shared pointer in `$a3` (target `$a0`); tried without effect or worse: the
+colour word's association (`(a | b) | (c | d)` 485, reversed 830, `+` 1485, `|=` steps 485), `s32 c`, `w1` stored
+directly (315), block-local pointers again (825), sharing the pointer with arms 0, 1 or 0xFF (330-530).
 
 What is controlled evidence and what is one function:
 
