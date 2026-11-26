@@ -12,10 +12,8 @@ around it.
 ## Setup
 
 1. Ask (or take from the request): project slug, pool size (default 4), model for matchers (default Sonnet), and
-   whether stalled near-matches go to a stronger model (default Opus). Haiku works when it gets a detailed brief and a
-   SHORT list (10-15 named functions in one score band): in a 1,000-function session Haiku agents matched dozens,
-   best on saved bests 100-800 away. Give them the "First moves" block and fix catalog (now in match-function) and
-   name the function list explicitly; a bare "match something" brief made Haiku stop without editing. Use Opus for
+   whether stalled near-matches go to a stronger model (default Opus). Haiku gets
+   `match-function/HAIKU.md` as its brief, one function per agent run. Use Opus for
    stuck near-misses and large functions (over 100 instructions), Sonnet for builders and sweeps.
    Pool sizes that worked: about 4 Opus + 4 Haiku + 2 builders at once. That is the machine limit; each agent runs one
    judge process at a time (parallel grids overloaded it twice), so tell them so.
@@ -38,6 +36,10 @@ around it.
 > Commits end with the model's Co-Authored-By line; PR bodies end with the Claude Code line.
 > Report: function, final score as the app records it, any profile change, edit list, all PR links, scaffolding
 > the match relies on, how the tools worked, and what the permuter still can't do.
+
+**Brief Haiku with `.claude/skills/match-function/HAIKU.md`** (read from origin/main), one function per agent run:
+give it the project slug, the primary checkout's path and, if you have one, the function name; start a fresh agent for
+the next function.
 
 Brief template notes (for a Haiku or any list-based agent):
 - List the functions by name with each saved best, instruction count and any hint from earlier notes.

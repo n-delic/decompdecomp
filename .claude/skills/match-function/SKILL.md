@@ -23,6 +23,9 @@ description: Match one function by hand against the running decompdecomp app, th
   machine twice).
 - zsh does not split a flag string held in a variable: pass flags literally.
 
+**Small models (Claude Haiku): do not follow this file.** Read [HAIKU.md](HAIKU.md) instead (`next`, `try`, `done`
+with `scripts/haiku.py`), one function per agent run.
+
 ## First moves, in this order
 
 Most matches in a 1,000-function session came from this order, not from clever spelling.
