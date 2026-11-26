@@ -300,3 +300,19 @@ def test_a_real_sn_compile_dumps_the_profile_with_the_requests_flags(tmp_path):
     source = "float f1(float a, float b) { return a * b + a; }"
     reply = hosted_judge.passes_report(net, {"slug": "game", "name": "f1", "source": source, "save": True, "flags": ["-mfp32"]})
     assert "-mfp64 -mfp32 -da" in reply["text"] and "Warning: the dump flags changed" not in reply["text"]
+
+
+def test_a_long_sched_dump_whose_notes_come_first_still_gives_its_order(tmp_path, monkeypatch):
+    """An SN64 GCC 2.8.1 sched dump writes ~60 KB of `;;` launch notes before its RTL: cut at 60,000 characters, a
+    395-instruction function's first-scheduler order came back empty ("not written by this compiler build")."""
+    net = project(tmp_path)
+    notes = ";; insn[   8]: priority =    1, ref_count =    2\n" * 2000
+    sched = notes + SCHED
+    assert len(sched) > 60000 and compiler_passes.SKILL_EXCERPT_CHARS > 1_000_000
+    monkeypatch.setattr(compiler_passes, "diagnose", lambda *a, **k: (
+        result() | {"toolchain": "gcc-2.7.2-kmc", "phases": {"sched": {"excerpt": sched[:a[5]], "excerpt_cut": len(sched) > a[5]}}}, {}))
+    text = hosted_judge.passes_report(net, {"slug": "game", "name": "f1", "source": "int f1(void){return 0;}", "passes": ["sched"]})["text"]
+    assert "Scheduling order, sched (first scheduler), 2 insns:" in text and "4 movsi_internal2" in text
+    monkeypatch.setattr(compiler_passes, "SKILL_EXCERPT_CHARS", 1000)
+    text = hosted_judge.passes_report(net, {"slug": "game", "name": "f1", "source": "int f1(void){return 0;}", "passes": ["sched"]})["text"]
+    assert "the dump was cut: the order is incomplete" in text

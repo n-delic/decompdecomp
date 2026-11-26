@@ -61,7 +61,11 @@ def diagnose(net, proj, fn, source, passes, excerpt_chars=compiler_diagnostics.E
 
 SKILL_PASSES = ('greg', 'sched', 'sched2', 'loop')
 LOOP_NOTE_LINES = 80
-SKILL_EXCERPT_CHARS = 60000  # a whole function's dump: the skill's passes.py reads orders, not a bounded excerpt
+# A whole function's dump: the skill's passes.py reads orders, not a bounded excerpt. It was 60,000 characters, and an
+# SN64 GCC 2.8.1 sched dump writes its `;;` launch notes before the RTL: a 395-instruction colour interpolator's 122 KB
+# sched dump came back as "0 insns, not written by this compiler build" and its sched2 order as 21 insns, and a
+# 618-instruction interpreter's 186 KB lreg and 158 KB greg (explain_regs.py's tables) were cut to their first third.
+SKILL_EXCERPT_CHARS = 4_000_000
 
 
 def preferences(result):
@@ -144,8 +148,10 @@ def report(net, proj, fn, source, passes=SKILL_PASSES, sched_verbose=False, file
     for phase in ('sched', 'sched2'):
         if phase in passes:
             order = schedule_order(result, phase)
+            cut = ((result.get('phases') or {}).get(phase) or {}).get('excerpt_cut')
             out += ['', f"Scheduling order, {phase} ({'first' if phase == 'sched' else 'second'} scheduler), "
-                        f"{len(order)} insns:", '  ' + '  '.join(order) if order else '  (not written by this compiler build)']
+                        f"{len(order)} insns{' (the dump was cut: the order is incomplete)' if cut else ''}:",
+                    '  ' + '  '.join(order) if order else '  (not written by this compiler build)']
     if sched_verbose:
         notes = verbose_schedule(result)
         out += ['', f'First scheduler notes ({len(notes)} lines):',
