@@ -19,7 +19,6 @@ nothing. Without `--no-release` it then calls `release_function(function, notes,
 HOLDER`; run `setup.py stop HOLDER` after. The app accepts the release once `clock.py` allows a hand-off (SKILL.md 5c).
 """
 import argparse
-import json
 import sys
 from pathlib import Path
 
@@ -47,8 +46,7 @@ def note_text(function, source_path, score, rows, explanation, tried, findings="
 
 
 def claim_token(gateway, function):
-    claims = json.loads(gateway.call("get_claims", {})).get("claims", [])
-    return next((c.get("claim_token") or "" for c in claims if c.get("function") == function), None)
+    return next((c.get("claim_token") or "" for c in setup.claims(gateway) if c.get("function") == function), None)
 
 
 def handoff(holder, tried, source="", findings="", dry_run=False, release=True, gateway=None, judge=None,

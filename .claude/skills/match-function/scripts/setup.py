@@ -282,6 +282,28 @@ def claim(gateway, function="", strategy="random", max_insns=0, wait=None):
     return found[1]
 
 
+CLAIMS_TRIES = 5
+
+
+def claims(gateway, tries=CLAIMS_TRIES):
+    """This connection's live claims (`get_claims`). The gateway puts the answer to a call it had only acknowledged (a
+    busy app's release_function) at the top of the next reply, so the JSON is looked for inside the text, and a reply
+    without it is asked for again: a `done` once failed on exactly that and worked when run a second time."""
+    text = ""
+    for attempt in range(tries):
+        if attempt:
+            time.sleep(TRANSIENT_PAUSE)
+        text = gateway.call("get_claims", {})
+        for found in re.finditer(r"\{", text):
+            try:
+                value = json.JSONDecoder().raw_decode(text, found.start())[0]
+            except ValueError:
+                continue
+            if isinstance(value, dict) and isinstance(value.get("claims"), list):
+                return value["claims"]
+    raise McpError(f"get_claims gave no list of claims in {tries} tries: {text[:200]}")
+
+
 def older_orders(strategy, max_insns):
     """The claim to ask for, then what an app started before `nearest` and `max_insns` existed understands: closest
     (near-misses relative to size) with the cap, closest alone, random. Refused calls claim nothing, so the one claim
@@ -588,7 +610,7 @@ def check_claim(holder):
         status = judge.App(info["home"]).function(info["slug"], function)
         gateway = Gateway(info["gateway_url"], info["token"])
         gateway.start()
-        held = json.loads(gateway.call("get_claims", {})).get("claims", [])
+        held = claims(gateway)
     except (McpError, SystemExit, OSError, ValueError) as error:
         print(f"{holder}: could not ask the app whether {function} is still claimed ({error}); try again in a minute")
         return 1
