@@ -902,6 +902,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Grouped ROM variants: selector, identities, checked shared C and single-repository export | ✓ demo + two real releases verified | — adapter validation pending | — adapter validation pending | — | — | — adapter validation pending | — | — object adapter planned | — object adapter planned | — | — object adapter planned | — object adapter planned |
 | Other releases of a game: found, paired, names, header types and code brought over | ✓ | — not yet run | — not yet run | — | — | — not yet run | — | — object pairing planned | — object pairing planned | — | — object pairing planned | — object pairing planned |
 | Automatic attempts from similar verified C | ✓ (ROM) | ✓ (ROM) | ✓ (ROM) | — | — | ✓ (ROM) | — | — | — | — | — | — |
+| Look-alikes in a game get a match's C at once, with its compiler profile and the target's constants (`lookalike_profiles`) | ✓ (ROM) | ✓ (ROM) not run yet | ✓ (ROM) not run yet | — | — | ✓ (ROM) not run yet | — | — no per-function profiles in project mode | — no per-function profiles in project mode | — | — no per-function profiles in project mode | — |
 | Bounded automatic reuse, tiny templates and local SDK C | ✓ (ROM) | ✓ (ROM) | ✓ (ROM) | — | — | ✓ (ROM) | — | — | — | — | — | — |
 | Shared knowledge (two models agree) | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Tidy each source file once it's polished (shared types in one header, names, dead declarations) | — | — | — | — | — | — | — | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -1177,6 +1178,13 @@ objects by instruction sequence, align their relocation names, and try the donor
 profiles. The destination judge verifies the resulting C.
 Project-mode similar-transfer support is planned: align target-object relocations and adapt file-local declarations before trying
 similar C through objdiff. Other processors need an instruction reader for this search.
+
+A matched function's open look-alikes in its own ROM game are tried as soon as it matches: its C with their names, with
+the donor's own per-function compiler profile (published for the receiver only on an exact judge's verdict) and a
+compile-guided search for the constants they differ in (32-bit LUI/ORI pairs, negative, repeated and swapped values;
+`app/lookalike_profiles.py`, `arch/mips_immediates.value_sites`). Planned: project mode, once its sources carry a
+per-file compiler the same way (DS's `set_file_compiler`) and its objects are aligned like the similar-code pass; other
+processors need their immediate reader.
 
 Cross-game C++ constructor entry replay currently covers N64 overlays with IDO. Main-ROM linking and owned-build
 projects need their own verified constructor-entry selection and export handling before this retry can reach them.
