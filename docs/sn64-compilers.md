@@ -74,6 +74,11 @@ The application was not reinstalled and no live compiler ranges were applied.
 | `sn-n64-272-0004` | Original SN compiler/assembler, preserved-pack conversion | Real C compilation and linked byte checks on macOS |
 | `sn-n64-272-0006` | Original SN compiler/assembler, preserved-pack conversion | Real C compilation and linked byte checks on macOS |
 
+On a Mac with `sn-n64-272-970404` installed, the 0001 profiles (`sn-n64-272-0001`, `sn-n64-272-0001-as0004`)
+preprocess with its native `cpp` instead of `cppn64.exe` under wibo and Rosetta, saving about 0.07 s of processor per
+compile; the output is the same bytes (docs/learnings/finding/sn64-0001-cpp-native-equivalent.md). The other builds'
+preprocessors haven't been compared yet and still run under wibo.
+
 Downloads and the reconstructed source commit are checksum pinned. The reconstruction's own source tree
 (`sn64-gcc-2.7.2-source`, from decompals/SN64-gcc, GPL by derivation from GCC) is installed with it for reading;
 the original SN builds have none. The source

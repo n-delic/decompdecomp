@@ -109,6 +109,9 @@ def compiler_config(root: Path, cfg: dict) -> CompilerConfig:
             raise toolchains.ToolchainError(f"{tc.name} couldn't prepare its compiler runtime: {error}") from None
         tc_dir = where_tools[0]
         ro_paths += [str(d) for d in dirs]
+        optional = {} if (vm or linux) else {tid: str(toolchains.path(tid)) for tid in tc.optional
+                                              if toolchains.installed(tid) is not None}
+        ro_paths += list(optional.values())
         if "runtime-i386" in tc.requires and not linux and not vm:  # in WSL its programs bring the runtime themselves
             runtime32 = str(toolchains.require("runtime-i386"))
         flags = c.get("flags", tc.flags)
@@ -127,6 +130,9 @@ def compiler_config(root: Path, cfg: dict) -> CompilerConfig:
             if driver:result=[a.replace("{driver}",where_tools[-1]+"/"+driver.name) for a in result]
             for dep,where in zip(tc.requires,where_tools[1:]):
                 result=[a.replace(f"{{tc:{dep}}}",where) for a in result]
+            for dep in tc.optional:
+                mark=f"{{tc?:{dep}}}"
+                result=[(a.replace(mark,optional[dep]) if dep in optional else "") if mark in a else a for a in result]
             return result
         cmd=resolve(base)
         assembly_preprocess=tuple(resolve(tc.assembly_preprocess))

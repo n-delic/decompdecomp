@@ -7,10 +7,30 @@ tool installation or executable lookup belongs here; every tool path is explicit
 from __future__ import annotations
 
 import argparse
+import hashlib
 import re
 import subprocess
 import sys
 from pathlib import Path
+
+# The cppn64.exe builds whose output the reconstructed SN64 GCC's native cpp (sn-n64-272-970404) reproduces byte for
+# byte once its LF line ends are made CRLF: build 0001's, compared on 3,290 C sources of an N64 game (matched,
+# saved, seeds and the latest attempts) with -P and the game's include folder. Under wibo on a Mac (Rosetta), each
+# Windows program costs about 0.07 s of processor just to start, which was all of cppn64's time and a fifth of a
+# compile's. Builds 0004 and 0006 ship other cppn64.exe files: they keep theirs until compared the same way.
+NATIVE_CPP = {'fbf093aef34cb064efab32ab7c1e897f5dc025bac0b6f95456f949f1316a36b7'}
+
+
+def native_cpp(cpp: Path, native: Path | None) -> Path | None:
+    """The native preprocessor to run instead of `cpp`, or None. Only on a Mac (wibo runs natively on Linux, where
+    starting it costs little), only for a cppn64.exe it was compared with, and only when it is installed."""
+    if sys.platform != 'darwin' or native is None or not native.is_file():
+        return None
+    try:
+        verified = hashlib.sha256(cpp.read_bytes()).hexdigest() in NATIVE_CPP
+    except OSError:
+        return None
+    return native if verified else None
 
 
 def assembler_input(text: str) -> str:
@@ -25,7 +45,7 @@ def assembler_input(text: str) -> str:
 
 
 def compile_source(cc: Path, cpp: Path, assembler: Path, converter: Path, runner: Path,
-                   source: Path, output: Path, include: Path, flags: list[str]) -> None:
+                   source: Path, output: Path, include: Path, flags: list[str], native: Path | None = None) -> None:
     for tool in (cc, cpp, assembler, converter, runner):
         if not tool.is_file():
             raise ValueError(f'Missing {tool.name}: reinstall the SN64 toolchain and its converter in Compilers & tools.')
@@ -39,8 +59,14 @@ def compile_source(cc: Path, cpp: Path, assembler: Path, converter: Path, runner
     obj = output.with_suffix('.sn.obj')
     defines = [f for f in flags if f.startswith(('-D', '-U', '-I'))]
     compiler_flags = [f for f in flags if f not in defines]
-    run([runner, cpp, '-P', '-undef', '-nostdinc', '-D_LANGUAGE_C', '-D__GNUC__=2',
-         '-I' + str(include.resolve()), *defines, source, '-o', preprocessed])
+    arguments = ['-P', '-undef', '-nostdinc', '-D_LANGUAGE_C', '-D__GNUC__=2',
+                 '-I' + str(include.resolve()), *defines, source, '-o', preprocessed]
+    if (native := native_cpp(cpp, native)) is not None:
+        run([native, *arguments])
+        # cc1n64 reads what cppn64.exe would have written, line ends included.
+        preprocessed.write_bytes(preprocessed.read_bytes().replace(b'\n', b'\r\n'))
+    else:
+        run([runner, cpp, *arguments])
     run([runner, cc, '-quiet', *compiler_flags, preprocessed, '-o', assembly])
     assembly.write_bytes(assembler_input(assembly.read_text(encoding='utf-8', errors='replace')).encode('utf-8'))
     run([runner, assembler, '-mips3', '-I', include, '-o', obj, assembly])
@@ -102,6 +128,8 @@ def main():
     for option in ('converter', 'runner', 'wrapper'):
         parser.add_argument('--' + option, type=Path)
     parser.add_argument('--native', action='store_true')
+    # (empty when the reconstructed compiler isn't installed: toolchains.toml's `optional`)
+    parser.add_argument('--native-cpp', type=lambda value: Path(value) if value else None)
     parser.add_argument('source', type=Path)
     parser.add_argument('output', type=Path)
     parser.add_argument('include', type=Path)
@@ -124,7 +152,7 @@ def main():
             if args.converter is None or args.runner is None:
                 raise ValueError('The original SN64 profile needs its converter and runner.')
             compile_source(args.cc, args.cpp, args.assembler, args.converter, args.runner,
-                           args.source, args.output, args.include, args.flags)
+                           args.source, args.output, args.include, args.flags, args.native_cpp)
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         parser.exit(1, f'SN64 compilation failed: {error}\n')
 

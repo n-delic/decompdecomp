@@ -59,6 +59,9 @@ class Toolchain:
     cc: list[str] = field(default_factory=list)
     flags: list[str] = field(default_factory=list)
     requires: list[str] = field(default_factory=list)
+    # Tools it uses only when they are installed, never installed for it: `{tc?:id}` in its command is that tool's
+    # folder, or the whole argument is empty when it isn't installed (or runs through WSL or a Linux VM).
+    optional: list[str] = field(default_factory=list)
     cmd: list[str] = field(default_factory=list)  # full command template, when compiling is more than cc + flags
     parts: list[dict] = field(default_factory=list)
     git: str = ""
