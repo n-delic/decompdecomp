@@ -15,6 +15,10 @@ should, so a source that is really a little worse than the best, but beats the s
 rescore reaches the project; Check again, and the check before helpers start after the update, rescore each open best
 once, so users restart the app and run Check again (it takes minutes) to bring saved bests to the new scale at once.
 
+Version 4 changes no penalty but where the judge places a candidate's own float literals, so a saved score may be too
+high or too low; the same one-time rescore of open bests applies. A change to the judge that moves scores bumps the
+version like a change of penalty does.
+
 Fork projects aren't touched: their scores are objdiff's match percentage, not these penalties.
 """
 from __future__ import annotations

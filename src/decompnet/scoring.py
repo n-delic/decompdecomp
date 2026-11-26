@@ -29,7 +29,9 @@ PENALTY_DELETION = 100
 # Bumped whenever the penalties change, so scores saved under older ones aren't compared with new ones as equals
 # (functions.score_version; network.Network._refresh_stale_best rescores a stale best before it can block one).
 # 3: a branch whose target is the instruction its counterpart's target aligns with costs nothing (_aligned_branch).
-SCORE_VERSION = 3
+# 4: the judge places a candidate's own float literals where the ROM holds those bytes (#3563, #3566, #3640): bests
+# saved before were thousands off either way (one saved at 9660 judged 11530, another at 9846 judged 7616).
+SCORE_VERSION = 4
 # Off, the score is version 2's: tests and the measurement of the change read both from the same pair of objects.
 ALIGN_BRANCH_TARGETS = True
 
