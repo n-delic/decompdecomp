@@ -290,6 +290,40 @@ wheels = [
 ]
 
 [[package]]
+name = "cython"
+version = "3.3.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/98/de/dff7f5fcfd06a947b16bbd66568e3e8f291cd9a17c35fd04b43b5a7ad3bf/cython-3.3.2.tar.gz", hash = "sha256:e789d9fd939b74fb8c572fc2b689e3b14bd141ba95243693a546064c8179a1d3", size = 3741343, upload-time = "2026-11-25T05:44:55.667Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8f/cb/6bdda74eea6227d231b8239f51ecc10fdc5ee1c9c311392c2284fdc6837d/cython-3.3.2-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:087dd0dfd85a40f17f88befdd7a9448fcc7ed6689e70aae1ca003c7b87951138", size = 3143601, upload-time = "2026-11-25T05:45:37.23Z" },
+    { url = "https://files.pythonhosted.org/packages/9e/bb/ff6565dd967d9277a327231be25bd47d64942a2d25e5162d62d04954e794/cython-3.3.2-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:0acfcf02010f56bb211e9b4e03c262ce85a2e15bbc041038b7f2958058b3752a", size = 3261499, upload-time = "2026-11-25T05:45:38.792Z" },
+    { url = "https://files.pythonhosted.org/packages/14/0f/9b00baabd190ace525da1bb80dd49b0b484d131f873be443ac9149a5ec47/cython-3.3.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:15aec2b43368e9781a80e7e52ff470ffda8d93e1f115a47467b14fe189af1536", size = 3417551, upload-time = "2026-11-25T05:45:40.922Z" },
+    { url = "https://files.pythonhosted.org/packages/28/8b/0d610390f503c4c1875eaaad06eb4b5713f7144a551d6ebb72a90c8f88eb/cython-3.3.2-cp312-cp312-win_amd64.whl", hash = "sha256:1fdb32187141db8bdbe172636d4892187b9115ccba425a39cf1fa5d9575ac86e", size = 2873859, upload-time = "2026-11-25T05:45:42.785Z" },
+    { url = "https://files.pythonhosted.org/packages/c6/0b/d28e4dd8b51e422cea518660e7fe270bfcc8956f8637b34a6ad877a6c22d/cython-3.3.2-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:8b138c8351b29d361d866c3b3ab142a1ed318df977c90e0a522ee8f90575d183", size = 3135302, upload-time = "2026-11-25T05:45:44.355Z" },
+    { url = "https://files.pythonhosted.org/packages/06/e4/31d301aede84e5b3cb20d925274b68b5f07f5ca618f34464670b1289e6de/cython-3.3.2-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:5aa4f21ac90350a2c3893e40049fd66daa37b636341f523e97bc554276954331", size = 3256736, upload-time = "2026-11-25T05:45:46.334Z" },
+    { url = "https://files.pythonhosted.org/packages/04/9a/acf7ff018e5ffe9c51598909f9ce80e018cbcae265df6ae1e54a1e5c0a7f/cython-3.3.2-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:83489ca3f20dc6a60394b9fb69342a7589dd9c9daf5c69c4160d18cd8458d77f", size = 3413413, upload-time = "2026-11-25T05:45:47.889Z" },
+    { url = "https://files.pythonhosted.org/packages/30/85/93546cc3df9ae9191973f90c1e048db70ef82af7076d78d893293dc9d9a2/cython-3.3.2-cp313-cp313-win_amd64.whl", hash = "sha256:d0978d0b247701acbe97fcb223ef812f687700ccefd25939be23340c6cd48ee2", size = 2867778, upload-time = "2026-11-25T05:45:49.609Z" },
+    { url = "https://files.pythonhosted.org/packages/22/52/81ec3fb537d269d35574fa3d785cedcfe797a48ace76ac7fdc7c857309a8/cython-3.3.2-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:b2830879d118ffa057d6819eb6be66f11e222d00b779e39253cf2931e0b0b32b", size = 3186861, upload-time = "2026-11-25T05:45:51.335Z" },
+    { url = "https://files.pythonhosted.org/packages/2a/1b/0ca909cb2d36b1e66d5bcd0bd2eac3f492da8c5b17513835bb7f691d4955/cython-3.3.2-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:53234bb85a21f3735ed42c787cf5db3cc74b115943a3c46f81567140a48b9a89", size = 3335493, upload-time = "2026-11-25T05:45:53.649Z" },
+    { url = "https://files.pythonhosted.org/packages/44/fe/3bbab705f72450e52e95e3c612a8a4de4675311f2df17d703652bccc958a/cython-3.3.2-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:0b2b865e94b0464bc3e1b4aeee4b9224b19727e26ba2b53c535eb6c9729c1822", size = 3459780, upload-time = "2026-11-25T05:45:55.726Z" },
+    { url = "https://files.pythonhosted.org/packages/e9/13/0a766eab55ce1423a3640286e3c277b178d9e046e49e6a2ce4035d5b616d/cython-3.3.2-cp314-cp314-win_amd64.whl", hash = "sha256:53d681bee402add71745229efc99e3e7e6521a4acc3ff61b115a3b1f0c460321", size = 2927915, upload-time = "2026-11-25T05:45:57.392Z" },
+    { url = "https://files.pythonhosted.org/packages/3b/50/6c725a7c179052a66815e90757eb75a730d95905d63df2cbcb180f9a9c18/cython-3.3.2-cp315-cp315-macosx_11_0_arm64.whl", hash = "sha256:bdf74fa39f5949de6004704684d721185535f754be6d18a7e5921c9bf04b1b86", size = 3178071, upload-time = "2026-11-25T05:45:58.926Z" },
+    { url = "https://files.pythonhosted.org/packages/c6/54/27d004576aae55e84999c062d1713348f6196972b4ee3259c2cbe42c572d/cython-3.3.2-cp315-cp315-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:3e51a6bf45d1c40334071de7fc36774f1296b2cd3c2778a8e0efdb89a321049c", size = 3330642, upload-time = "2026-11-25T05:46:00.624Z" },
+    { url = "https://files.pythonhosted.org/packages/f8/0d/38780c65105b2c0eab00e1d51d92c8e9a1f758558f4a107c0354dff5af16/cython-3.3.2-cp315-cp315-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:f87d479106fa67bf06808ae80e6c02eefa0e0ebf597e42e6a8653b038372d18f", size = 3456905, upload-time = "2026-11-25T05:46:02.236Z" },
+    { url = "https://files.pythonhosted.org/packages/2c/ed/5f153df3d294d7a3bc02739a76557611cf9cd6ad6081c0b7e9eb8a5de815/cython-3.3.2-cp315-cp315-win_amd64.whl", hash = "sha256:a15465611e6b5b12ae8822a45f53ecc7b0fe47b4e36d21be7d816079fdc7438b", size = 2926590, upload-time = "2026-11-25T05:46:04.282Z" },
+    { url = "https://files.pythonhosted.org/packages/2d/49/9400763536e52fd2b4c11f39e74e1dd0565750bbf54bd20414c495afd027/cython-3.3.2-cp39-abi3-macosx_10_9_x86_64.whl", hash = "sha256:77f7eb2b1615ff1c6504c7a9986130910c0064ac5f46a6be29cee9910ce7a8e0", size = 2982053, upload-time = "2026-11-25T05:46:06.1Z" },
+    { url = "https://files.pythonhosted.org/packages/ac/19/a8766fa9a4f072101d0cdf735c314e87af0ae95fd159b4cdf25d4977c2fb/cython-3.3.2-cp39-abi3-manylinux1_i686.manylinux_2_28_i686.manylinux_2_5_i686.whl", hash = "sha256:aaa520548f0c6186fb4b40c4899efe65e298dc2deab023e43aeb871f2ab21edc", size = 3144298, upload-time = "2026-11-25T05:46:07.813Z" },
+    { url = "https://files.pythonhosted.org/packages/3e/4f/b27847bd80d67dfb7c2771d6b21b2b1f0ba74ff22b9ef78047541ec99df1/cython-3.3.2-cp39-abi3-manylinux2014_armv7l.manylinux_2_17_armv7l.manylinux_2_31_armv7l.whl", hash = "sha256:6fe8f608e8a1949715e59ebe44fb88f493ded20403ac1c5ed50753247cd759ba", size = 2899006, upload-time = "2026-11-25T05:46:09.385Z" },
+    { url = "https://files.pythonhosted.org/packages/f9/61/34e15d2bbe7dfbcdbbd4a4128b86141c52be95e2e64e74a37679113b9c5b/cython-3.3.2-cp39-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:5a67eaeba88ca5674e23160b4fb884e9fb8766e8c38c979c0522707be0bd0246", size = 2885359, upload-time = "2026-11-25T05:46:10.957Z" },
+    { url = "https://files.pythonhosted.org/packages/66/c1/3fb493680a04ea8be687431f17bd5d334a3d0de76776a98129cf79a88d5c/cython-3.3.2-cp39-abi3-musllinux_1_2_armv7l.whl", hash = "sha256:70b42d46b4a63da7c78538ec9b97374813b4967817eece5112c0f62e538e3fd3", size = 2842319, upload-time = "2026-11-25T05:46:12.901Z" },
+    { url = "https://files.pythonhosted.org/packages/a0/31/f1ad994790feeeaab853a1d7b95d1071f38336d04dc9aea44c700199315a/cython-3.3.2-cp39-abi3-musllinux_1_2_i686.whl", hash = "sha256:f407195e0e87193ba9d79b5155ae6f02714ae5dc625f6d622ea8427705ac4517", size = 3163172, upload-time = "2026-11-25T05:46:14.449Z" },
+    { url = "https://files.pythonhosted.org/packages/f1/68/7c494405bb4972031a7131d543b1daa6659069f60e1b6b04e9196cc42adc/cython-3.3.2-cp39-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:e5f298e45245c07d3094962a1cc77be9cb34b1efeefbaaae7ad659f83145b3ed", size = 3051646, upload-time = "2026-11-25T05:46:16.414Z" },
+    { url = "https://files.pythonhosted.org/packages/62/00/201cb8be3ff233dcb855812a39d52c9035f950626bd4d57a9dec1e5bf3b9/cython-3.3.2-cp39-abi3-win32.whl", hash = "sha256:50d897bf566eed97f3a24328bc8aba8881a80a885eb98e313c496a2a1538904e", size = 2548951, upload-time = "2026-11-25T05:46:17.871Z" },
+    { url = "https://files.pythonhosted.org/packages/1d/a5/dd56265af26da1c92cf8203a3d34dbcc6d4fd41171da3b123a126157a4a2/cython-3.3.2-cp39-abi3-win_arm64.whl", hash = "sha256:5e7e8d959ad262d1cda9e4a43b19cfc8c84b78830cf39d8a402e985dd9e7b5e5", size = 2606612, upload-time = "2026-11-25T05:46:19.394Z" },
+    { url = "https://files.pythonhosted.org/packages/27/c1/b51acd1bb1f807c6a8b7ac3b2f1cd9b65bdea8a54daa4423e4bd4060c66d/cython-3.3.2-py3-none-any.whl", hash = "sha256:93ebae3f7d1cd0ce5e49cdc8df2e83c54596fe2f1971767738efb78f43e4032b", size = 1350368, upload-time = "2026-11-25T05:44:53.202Z" },
+]
+
+[[package]]
 name = "decompassets"
 version = "0.71.0"
 source = { url = "https://github.com/RetroReversing/decomp-assets/archive/refs/tags/v0.193.0.tar.gz" }
@@ -301,6 +335,7 @@ version = "1.0.13+rr.1"
 source = { editable = "." }
 dependencies = [
     { name = "capstone" },
+    { name = "cython" },
     { name = "decompassets" },
     { name = "decomprepair" },
     { name = "httpx" },
@@ -311,6 +346,7 @@ dependencies = [
     { name = "pyobjc-framework-webkit", marker = "sys_platform == 'darwin'" },
     { name = "pywebview", marker = "sys_platform == 'win32'" },
     { name = "rabbitizer" },
+    { name = "setuptools" },
     { name = "spimdisasm" },
     { name = "splat64", extra = ["mips"] },
     { name = "tzdata", marker = "sys_platform == 'win32'" },
@@ -329,8 +365,9 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "capstone", specifier = ">=5.0.9" },
+    { name = "cython", specifier = ">=3.1" },
     { name = "decompassets", url = "https://github.com/RetroReversing/decomp-assets/archive/refs/tags/v0.193.0.tar.gz" },
-    { name = "decomprepair", url = "https://github.com/RetroReversing/decomp-repair/archive/refs/tags/v0.6.98.tar.gz" },
+    { name = "decomprepair", url = "https://github.com/RetroReversing/decomp-repair/archive/refs/tags/v0.6.99.tar.gz" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "mcp", specifier = ">=2.3.0" },
     { name = "ninja", specifier = ">=1.11" },
@@ -339,6 +376,7 @@ requires-dist = [
     { name = "pyobjc-framework-webkit", marker = "sys_platform == 'darwin'", specifier = ">=11.0" },
     { name = "pywebview", marker = "sys_platform == 'win32'", specifier = ">=6.2.1" },
     { name = "rabbitizer", specifier = ">=1.16.2" },
+    { name = "setuptools", specifier = ">=75" },
     { name = "spimdisasm", specifier = ">=1.42.4" },
     { name = "splat64", extras = ["mips"], specifier = ">=0.50.1" },
     { name = "tzdata", marker = "sys_platform == 'win32'", specifier = ">=2025.2" },
@@ -356,13 +394,13 @@ dev = [
 
 [[package]]
 name = "decomprepair"
-version = "0.6.98"
-source = { url = "https://github.com/RetroReversing/decomp-repair/archive/refs/tags/v0.6.98.tar.gz" }
+version = "0.6.99"
+source = { url = "https://github.com/RetroReversing/decomp-repair/archive/refs/tags/v0.6.99.tar.gz" }
 dependencies = [
     { name = "capstone" },
     { name = "rabbitizer" },
 ]
-sdist = { hash = "sha256:1c1d88442882df0933cfe5bf90495b0b507c816b6997866ca8589686bbcfed67" }
+sdist = { hash = "sha256:2838273ecc0c1326f9677cfb0c5e3c8488dc8e698e8b3f7f58e7446639e05630" }
 
 [package.metadata]
 requires-dist = [
@@ -1209,6 +1247,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/73/e6/03b882225a1b0627e75339b420883dc3c90707a8917d2284abef7a58d317/ruff-0.14.0-py3-none-win32.whl", hash = "sha256:7450a243d7125d1c032cb4b93d9625dea46c8c42b4f06c6b709baac168e10543", size = 12367872, upload-time = "2025-10-07T18:21:46.67Z" },
     { url = "https://files.pythonhosted.org/packages/41/77/56cf9cf01ea0bfcc662de72540812e5ba8e9563f33ef3d37ab2174892c47/ruff-0.14.0-py3-none-win_amd64.whl", hash = "sha256:ea95da28cd874c4d9c922b39381cbd69cb7e7b49c21b8152b014bd4f52acddc2", size = 13464628, upload-time = "2025-10-07T18:21:50.318Z" },
     { url = "https://files.pythonhosted.org/packages/c6/2a/65880dfd0e13f7f13a775998f34703674a4554906167dce02daf7865b954/ruff-0.14.0-py3-none-win_arm64.whl", hash = "sha256:f42c9495f5c13ff841b1da4cb3c2a42075409592825dada7c5885c2c844ac730", size = 12565142, upload-time = "2025-10-07T18:21:53.577Z" },
+]
+
+[[package]]
+name = "setuptools"
+version = "84.2.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/70/b3/c19426f783614d625699a4b247faf628ea9ab1db228674491767b417f9e1/setuptools-84.2.1.tar.gz", hash = "sha256:3ff8b3b5492a0aa66960f4419365a86b84e013070d4313e4d4a6894f5d64d6bc", size = 1230289, upload-time = "2026-10-20T19:01:37.742Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ef/55/6dc6d6bb953bdfc52519a0059592c52b6e3b8ad51cf8256dffceb55b0610/setuptools-84.2.1-py3-none-any.whl", hash = "sha256:ca140b45d5325a9478f880e351484f62fef15f336462e449ca0c03c873d589c2", size = 876263, upload-time = "2026-10-20T19:01:35.678Z" },
 ]
 
 [[package]]

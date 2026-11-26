@@ -4,7 +4,7 @@ import threading
 import time
 
 from ..network import NetworkError
-from . import workers
+from . import native_library, workers
 from .thread_activity import Sampler
 
 
@@ -33,6 +33,8 @@ class Monitor:
         def add(kind, key, title, state, project='', detail='', stoppable=True):
             rows.append(dict(kind=kind, key=str(key), title=title, state=state, project=project,
                              detail=str(detail or ''), stoppable=stoppable, cpu_percent=None))
+        if compiling := native_library.compiler.snapshot():
+            add('native', 'library', 'Compiling the repair library', compiling['state'], detail=compiling['detail'])
         startup = getattr(self.net, 'startup', None)
         startup_tasks = startup.snapshot() if startup is not None else []
         for task in startup_tasks:
@@ -142,6 +144,8 @@ class Monitor:
         if kind == 'purpose':
             from . import purpose_work
             purpose_work.stop(key)
+        elif kind == 'native':
+            native_library.compiler.stop()
         elif kind == 'startup':
             startup = getattr(self.net, 'startup', None)
             if startup is None or not startup.cancel(key):
