@@ -211,6 +211,44 @@ def test_branch_out_of_the_function_is_drafted_as_a_return():
         assert drafted and seeds.OUTSIDE_BRANCH_NOTE in drafted
 
 
+def test_unlabelled_branch_inside_the_function_gets_its_own_label():
+    # two sequential guarded calls whose first branch the disassembler printed without a label (a re-split function):
+    # drafting it as a return nested the second `if` inside the first, which no compiler turns back into these bytes
+    asm = ("glabel func_80001000\n"
+           "/* 0 80001000 27BDFFE8 */  addiu      $sp, $sp, -0x18\n"
+           "/* 4 80001004 AFB00010 */  sw         $s0, 0x10($sp)\n"
+           "/* 8 80001008 00808021 */  addu       $s0, $a0, $zero\n"
+           "/* C 8000100C 06000004 */  bltz       $s0, . + 4 + (0x4 << 2)\n"
+           "/* 10 80001010 AFBF0014 */  sw         $ra, 0x14($sp)\n"
+           "/* 14 80001014 0C000800 */  jal        func_80002000\n"
+           "/* 18 80001018 02002021 */  addu       $a0, $s0, $zero\n"
+           "/* 1C 8000101C 00000000 */  nop\n"
+           "/* 20 80001020 3C028040 */  lui        $v0, 0x8040\n"
+           "/* 24 80001024 0050102B */  sltu       $v0, $v0, $s0\n"
+           "/* 28 80001028 10400003 */  beqz       $v0, . + 4 + (0x3 << 2)\n"
+           "/* 2C 8000102C 00000000 */  nop\n"
+           "/* 30 80001030 0C000800 */  jal        func_80002000\n"
+           "/* 34 80001034 24040001 */  addiu      $a0, $zero, 0x1\n"
+           "/* 38 80001038 8FBF0014 */  lw         $ra, 0x14($sp)\n"
+           "/* 3C 8000103C 8FB00010 */  lw         $s0, 0x10($sp)\n"
+           "/* 40 80001040 03E00008 */  jr         $ra\n"
+           "/* 44 80001044 27BD0018 */  addiu      $sp, $sp, 0x18\n"
+           "endlabel func_80001000\n")
+    cut = seeds.cut_outside_branches(asm)
+    assert ". + 4" not in cut and ".Loutside_branch" not in cut
+    assert "bltz       $s0, .Lbranch_20" in cut and "beqz       $v0, .Lbranch_38" in cut
+    assert ".Lbranch_20:\n/* 20 80001020" in cut and ".Lbranch_38:\n/* 38 80001038" in cut
+    # without the disassembler's comments the instructions are counted; a target past the end still returns
+    bare = "glabel f\n  beqz $a0, . + 4 + (0x1 << 2)\n  nop\n  addiu $v0, $zero, 1\n  bnez $a0, . + 4 + (0x9 << 2)\n  nop\n"
+    cut = seeds.cut_outside_branches(bare)
+    assert ".Lbranch_8:\n  addiu $v0" in cut and "bnez $a0, .Loutside_branch" in cut
+    if seeds.available():
+        drafted = seeds.run_m2c(asm, "func_80001000", "mips-gcc-c", strict=True)
+        assert drafted and seeds.OUTSIDE_BRANCH_NOTE not in drafted
+        # the second call is not inside the first guard: the guards are siblings
+        assert "    }\n    if ((u32) arg0 > 0x80400000U) {" in drafted and "return;" not in drafted
+
+
 def test_store_to_a_number_becomes_a_word_store():
     from decompnet.app import compile_error_repair as cer
     out = cer.literal_store("void f(void) {\n    0 = (void *) 0;\n    x = 1;\n}", 2)

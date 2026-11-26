@@ -817,16 +817,59 @@ def cut_missing_switches(asm_text: str) -> str:
 
 OUTSIDE_BRANCH_NOTE = ("/* a branch below leaves the function (its target is before or after what the project filed as this "
                        "function): it is drafted as a return, so check where this function really starts and ends */\n")
-_OUTSIDE_TARGET = re.compile(r"\. \+ 4 \+ \([^)]*\)")
+_OUTSIDE_TARGET = re.compile(r"\. \+ 4 \+ \(\s*(-?)(0x[0-9A-Fa-f]+|\d+)\s*<<\s*2\s*\)")
+_ASM_OFFSET = re.compile(r"^\s*/\*\s*([0-9A-Fa-f]+)\s+[0-9A-Fa-f]{8}\s+[0-9A-Fa-f]{8}\s*\*/")
+_NOT_INSTRUCTION = re.compile(r"^\s*(?:$|#|//|\.|glabel\b|endlabel\b|dlabel\b|jlabel\b|alabel\b|[\w.$]+:)")
+
+
+def _instruction_offsets(lines: list[str]) -> dict[int, int]:
+    """Each instruction line's byte offset in the function: the disassembler's `/* OFF VRAM WORD */` comment when the
+    text has one, otherwise the count of instruction lines before it times four."""
+    offsets, count = {}, 0
+    for index, line in enumerate(lines):
+        if (found := _ASM_OFFSET.match(line)):
+            offsets[index] = int(found[1], 16)
+        elif not _NOT_INSTRUCTION.match(line):
+            offsets[index] = count * 4
+        else:
+            continue
+        count += 1
+    if offsets and any(_ASM_OFFSET.match(lines[i]) for i in offsets):
+        start = min(offsets.values())  # the comment's offset is from the segment in some splits, not the function
+        offsets = {i: offset - start for i, offset in offsets.items()}
+    return offsets
 
 
 def cut_outside_branches(asm_text: str) -> str:
-    """A branch whose target is not in the function (the split cut it in the middle of code): the disassembler prints
-    its target as `. + 4 + (offset << 2)`, which m2c cannot parse, so it drafted nothing (blues-brothers-2000: 4 of 6
-    sampled functions). The branch goes to a label that returns, so the code around it compiles."""
+    """A branch the disassembler printed as `. + 4 + (offset << 2)`, which m2c cannot parse, so it drafted nothing
+    (blues-brothers-2000: 4 of 6 sampled functions). The disassembler writes that form for a target it gave no label,
+    which is usually one outside the function (the split cut it in the middle of code), but not always: a function
+    re-split by Check again had every branch, in-function ones included, in that form, and drafting them all as returns
+    nested its sequential `if`s and inverted its `&&` (two functions at 10 and 940 matched once the branches were read).
+    A target inside the function gets a label of its own on that instruction; only one outside goes to a label that
+    returns, so the code around it compiles."""
     if not _OUTSIDE_TARGET.search(asm_text):
         return asm_text
-    return _OUTSIDE_TARGET.sub(".Loutside_branch", asm_text) + "\n.Loutside_branch:\njr $ra\nnop\n"
+    lines = asm_text.split("\n")
+    offsets = _instruction_offsets(lines)
+    at = {offset: index for index, offset in offsets.items()}
+    labels: dict[int, str] = {}
+    outside = False
+    for index, line in enumerate(lines):
+        found = _OUTSIDE_TARGET.search(line)
+        if not found:
+            continue
+        delta = int(found[2], 0) * (-1 if found[1] else 1)
+        target = offsets[index] + 4 + delta * 4 if index in offsets else None
+        if target is not None and target in at:
+            label = labels.setdefault(at[target], f".Lbranch_{target:X}")
+        else:
+            label, outside = ".Loutside_branch", True
+        lines[index] = line[:found.start()] + label + line[found.end():]
+    for index in sorted(labels, reverse=True):
+        lines.insert(index, f"{labels[index]}:")
+    out = "\n".join(lines)
+    return out + "\n.Loutside_branch:\njr $ra\nnop\n" if outside else out
 
 
 @compile_timing.timed('generation')
@@ -840,7 +883,8 @@ def run_m2c(asm_text: str, name: str, target: str, context_header: str = "", dat
     asm_text = float_unsigned_conversions(asm_text)
     if (cut := cut_outside_branches(asm_text)) != asm_text:
         drafted = run_m2c(cut, name, target, context_header, data_asm, timeout, valid, strict, options)
-        return OUTSIDE_BRANCH_NOTE + drafted if drafted else drafted
+        note = OUTSIDE_BRANCH_NOTE if ".Loutside_branch" in cut else ""
+        return note + drafted if drafted else drafted
     for _ in range(8):
         try:
             return _run_m2c(asm_text, name, target, context_header, data_asm, timeout, valid, strict, options)
