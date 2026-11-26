@@ -50,7 +50,7 @@ def test_kernels_are_built_once(package):
 
 def test_the_rest_is_compiled_in_the_background_after_the_kernels(package):
     native_library.ensure_kernels(package)
-    compiler = native_library.Compiler(package, delay=0, batch=2)
+    compiler = native_library.Compiler(package, delay=0, jobs=1)
     compiler.start()
     compiler.thread.join(60)
     assert built(package) == ["kernel", "one", "three", "two"]

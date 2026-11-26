@@ -6,8 +6,8 @@ runs it itself, in two parts:
 
 - `ensure_kernels`, as the app starts and before anything imports the library (its modules choose between a kernel and
   the plain Python once, when imported): the typed kernels, seconds.
-- `Compiler`, afterwards in the background: the plain modules the library lists, a few at a time at low priority.
-  That is about an hour of work the first time and only what changed after an update. Processes that start later (the
+- `Compiler`, afterwards in the background: the plain modules the library lists, at low priority on a few cores.
+  That is a minute or two the first time and only what changed after an update. Processes that start later (the
   repair proposals, permuter workers) use them as they arrive; the app itself from its next start.
 
 Nothing here is needed for correct results: without a C compiler, in a copy that can't be written to, or with
@@ -30,6 +30,7 @@ log = logging.getLogger("decompdecomp")
 
 KERNEL_SECONDS = 600
 BATCH_SECONDS = 1800  # the largest modules take minutes each
+MODULES_PER_JOB = 4
 START_AFTER_SECONDS = 60  # leave the app's own startup work the machine first
 
 
@@ -118,10 +119,10 @@ def ensure_kernels(package: Path | None = None) -> bool:
 class Compiler:
     """Builds the plain modules in the background; `snapshot` is its row in Background work."""
 
-    def __init__(self, package: Path | None = None, *, delay: float = START_AFTER_SECONDS, batch: int | None = None):
+    def __init__(self, package: Path | None = None, *, delay: float = START_AFTER_SECONDS, jobs: int | None = None):
         self.package = package
         self.delay = delay
-        self.batch = batch or (2 if (os.cpu_count() or 1) > 4 else 1)
+        self.jobs = jobs or max(1, min(4, (os.cpu_count() or 1) // 4))  # the machine stays the user's
         self.stopping = threading.Event()
         self.thread = None
         self.total = self.done = 0
@@ -135,16 +136,19 @@ class Compiler:
             return
         try:
             self.package = self.package or package_folder()
-            # without the kernels there is no working compiler, and an hour of failures helps nobody
+            # without the kernels there is no working compiler, and a long run of failures helps nobody
             if unavailable(self.package) or missing(self.package):
                 return
             names = missing(self.package, everything=True)
             self.total = len(names)
-            for start in range(0, len(names), self.batch):
+            # several modules per core in each run: a run per module spent its time starting Python and waiting for
+            # the slowest, and Stop still takes effect within seconds, between runs
+            size = self.jobs * MODULES_PER_JOB
+            for start in range(0, len(names), size):
                 if self.stopping.is_set():
                     return
-                group = names[start:start + self.batch]
-                _run(_command(self.package, "--only", ",".join(group), "--missing"), BATCH_SECONDS, len(group))
+                group = names[start:start + size]
+                _run(_command(self.package, "--only", ",".join(group), "--missing"), BATCH_SECONDS, self.jobs)
                 self.done += len(group)
             if names:
                 left = missing(self.package, everything=True)

@@ -6,7 +6,7 @@ Run it with Cython and setuptools available and the bundle's Python version (the
 `uv run --no-project --python 3.12 --with cython --with setuptools`), after the library is installed. It runs the
 library's own `native_build.py` on that folder (its default: the typed kernels, seconds), so the compiled `.so`/`.pyd`
 files sit beside the `.py` files and the bundle imports them. `DECOMP_NATIVE_LIBRARY=all` also compiles the plain
-modules (about an hour): a signed bundle never compiles at run time (app/native_library.py). Like build_fastelf.py it never fails the build: an older library without native_build.py, no
+modules (a minute or two): a signed bundle never compiles at run time (app/native_library.py). Like build_fastelf.py it never fails the build: an older library without native_build.py, no
 C compiler, or `DECOMP_NATIVE_LIBRARY=0` leave the interpreted modules, which behave identically (a few percent slower).
 """
 import os
