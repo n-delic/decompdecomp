@@ -2,12 +2,35 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 from . import kits, linuxvm, toolchains, wsl
 from .compiler import CompilerConfig
+
+# Settings parsed, by their text: a PC game's are about 200 KB, and one request read them 4 to 12 times (a range
+# check after a match, 462 times); a deep search read a MIPS game's 366 KB again for every candidate, about 3 ms
+# each time. A few versions are kept: each change of a project's settings is a new text.
+SETTINGS_KEPT = 8
+_settings: dict[str, dict] = {}
+_settings_lock = threading.Lock()
+
+
+def settings(text: str) -> dict:
+    """A project's parsed settings, shared by everyone who reads the same version of them: read it, never change it
+    (code that edits a copy parses its own, json.loads(proj["config"]))."""
+    with _settings_lock:
+        parsed = _settings.get(text)
+    if parsed is None:
+        parsed = json.loads(text)
+        with _settings_lock:
+            if len(_settings) >= SETTINGS_KEPT:
+                _settings.pop(next(iter(_settings)))  # the oldest version
+            _settings[text] = parsed
+    return parsed
 
 
 def function_compiler_key(function):

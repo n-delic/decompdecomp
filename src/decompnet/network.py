@@ -26,7 +26,7 @@ from . import agent_notes, agents, claim_routing, routing_experiment, scoring, s
 from .candidate_work import trial
 from .compiler import compile_source
 from .elfobj import FunctionObj, Reloc, extract_function
-from .project import compiler_config, compiler_for
+from .project import compiler_config, compiler_for, settings
 from .release_receipts import operation as release_operation
 from .request_timing import build as timed_build
 from .store import Store
@@ -1145,7 +1145,9 @@ class Network:
     def _invocation(proj, fn=None):
         """(project config, compiler invocation) for compiling `fn`: its address range's compiler, the resolved
         command, and the identity the compile caches key on. Shared by single and batched compiles."""
-        cfg = json.loads(proj["config"])
+        # The shared parse (read only; its top level copied), not a fresh one: a deep search compiles every candidate
+        # through here, and a game's settings are a few hundred KB.
+        cfg = dict(settings(proj["config"]))
         if fn is not None and (cfg.get("compiler_ranges") or cfg.get('function_compilers')):
             cfg = {**cfg, "compiler": compiler_for(cfg, fn["vram"], fn)}
         from . import compile_configuration, compile_timing, toolchains

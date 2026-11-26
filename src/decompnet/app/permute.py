@@ -1123,7 +1123,8 @@ class Permuter:
             identity = tuple(fn[k] for k in ('name', 'vram', 'size', 'unit', 'target', 'relocs'))
             naming = json.loads(fn['meta'] or '{}').get('naming')
             def build_settings(project):
-                cfg = json.loads(project['config'])
+                from ..project import settings
+                cfg = settings(project['config'])  # (shared, read only: parsed once per version, not per candidate)
                 return (compiler_for(cfg, fn['vram'], fn), project['root'], project['arch'], project['big_endian'],
                         tuple(cfg.get(k) for k in ('kind', 'platform', 'big_endian', 'gp')))
             build = build_settings(proj)

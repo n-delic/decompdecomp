@@ -1,4 +1,5 @@
 """Build evidence local to a function, shared by cooldowns and persistent trial history."""
+import copy
 import hashlib
 import json
 import re
@@ -8,7 +9,7 @@ from pathlib import Path
 
 from .candidate_work import current, remember
 from .forks.project import ForkError
-from .project import compiler_for
+from .project import compiler_for, settings
 
 
 def digest(path):
@@ -127,17 +128,42 @@ def _context(net,proj,unit,shared,store):
     return shared['contexts'][unit]
 
 
+def _bounded(cache, key, build, limit):
+    with _MEMO_LOCK:
+        if key in cache:
+            cache.move_to_end(key)
+            return cache[key]
+    value = build()
+    with _MEMO_LOCK:
+        cache[key] = value
+        while len(cache) > limit:
+            cache.popitem(last=False)
+    return value
+
+
+def _referenced(text):
+    """Identifiers and addresses one text mentions. Every scanned piece is a separate field joined by newlines, a
+    word boundary, so the union of the pieces' scans is the scan of the joined text."""
+    names=frozenset(re.findall(r'\b[A-Za-z_]\w*\b',text))
+    addresses={int(x,16) for x in re.findall(r'\b0x([0-9a-fA-F]+)\b',text)}
+    addresses.update(int(x,16) for x in re.findall(r'\b(?:D_|func_)([0-9a-fA-F]{8})\b',text))
+    return names, frozenset(addresses)
+
+
 def state(net,proj,fn,shared=None):
     store = net.project_store(proj['id'])
     _check_batch(shared, proj, store)
-    cfg=json.loads(proj['config'])
-    build={key:cfg.get(key) for key in ('kind','platform','big_endian','gp')}
-    build['compiler']=compiler_for(cfg,fn['vram'], fn) if cfg.get('compiler') else None
+    # Shared and read only (a deep search asks for a scope with every candidate's source): copy what it keeps.
+    cfg=settings(proj['config'])
+    build=copy.deepcopy({key:cfg.get(key) for key in ('kind','platform','big_endian','gp')})
+    build['compiler']=copy.deepcopy(compiler_for(cfg,fn['vram'], fn)) if cfg.get('compiler') else None
     ctx=_context(net,proj,fn['unit'],shared,store)
-    text='\n'.join(str(fn[key] or '') for key in ('name','asm','best_source','seed','relocs'))
-    names=set(re.findall(r'\b[A-Za-z_]\w*\b',text))
-    addresses={int(x,16) for x in re.findall(r'\b0x([0-9a-fA-F]+)\b',text)}
-    addresses.update(int(x,16) for x in re.findall(r'\b(?:D_|func_)([0-9a-fA-F]{8})\b',text))
+    # The function's own name, code and relocations stay put while a search rewrites its source: scan them once.
+    fixed=tuple(str(fn[key] or '') for key in ('name','asm','relocs'))
+    fixed_names,fixed_addresses=_bounded(_SCANS, fixed, lambda: _referenced('\n'.join(fixed)), 64)
+    source_names,source_addresses=_referenced('\n'.join(str(fn[key] or '') for key in ('best_source','seed')))
+    names=fixed_names|source_names
+    addresses=set(fixed_addresses|source_addresses)
     if fn['vram'] is not None:
         addresses.add(fn['vram'])
     def build_index():
@@ -167,8 +193,11 @@ def state(net,proj,fn,shared=None):
     # entries would evict that project result from the bounded shared cache and
     # force the next claim in the same batch to recompute every paused function.
     if hasattr(store, 'read_cache') and shared is None:
-        evidence = store.read_cache.get(('candidate-callees', proj['id'], fn['name'], hashlib.sha256(source.encode()).hexdigest()),
-            _version(store,proj,'matched_evidence',shared), callee_hashes)
+        # Kept per callee rather than per source: a search's candidates call the same few helpers, and a cache keyed
+        # by the whole source missed for every candidate, reading and hashing each helper's matched C again.
+        memo = store.read_cache.get(('candidate-callee-names', proj['id'], id(store)),
+                                    _version(store,proj,'matched_evidence',shared), dict)
+        evidence = _callee_evidence(net,proj,fn,source,memo,store)
     else:
         evidence = callee_hashes()
     result.append(evidence)
@@ -185,6 +214,17 @@ def state(net,proj,fn,shared=None):
         except (ForkError,OSError):
             result.append(('unavailable-project',digest(Path(proj['root'])/'objdiff.json')))
     return result
+
+
+def _frozen(rows):
+    """The rows themselves as an exact in-memory key. Hashing their repr cost a deep search about 4 ms a candidate:
+    the project row carries the game's whole configuration, whose string caches its own hash instead."""
+    value = tuple(tuple(row.items()) for row in rows)
+    try:
+        hash(value)
+    except TypeError:  # (a caller's own value in a row, a list say)
+        return hashlib.sha256(repr(rows).encode()).digest()
+    return value
 
 
 def key(net,proj,fn,shared=None):
@@ -205,7 +245,7 @@ def key(net,proj,fn,shared=None):
             if kept_versions == versions and kept_rows == rows:
                 _KEYS.move_to_end(slot)
                 return kept_value
-    token = (id(net), id(store), versions[0], hashlib.sha256(repr(rows).encode()).digest())
+    token = (id(net), id(store), versions[0], _frozen(rows))
     value = remember(('candidate-scope', token), build)
     with _KEYS_LOCK:
         # A few per function: callers hold their own copies of its row (the search's, a fresh read), and one
@@ -219,3 +259,5 @@ def key(net,proj,fn,shared=None):
 
 _KEYS = OrderedDict()
 _KEYS_LOCK = threading.Lock()
+_SCANS = OrderedDict()  # (name, asm, relocs) -> what they reference
+_MEMO_LOCK = threading.Lock()
