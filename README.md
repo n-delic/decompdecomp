@@ -1422,6 +1422,8 @@ alternatives; only the ordinary exact judge can accept them.
 
 Automatic search also learns which repair families improve results under the same compiler profile and
 mismatch kind. It keeps an exploration lane and waits for enough observations before changing priorities.
+A repair a compiler setup hasn't measured borrows what other setups on the same processor learnt for that kind of
+mismatch: only to try it somewhat earlier, never later.
 The repair examples dialog's **Classify this project** button groups untouched new evidence, retains
 existing reviews, and archives duplicate captures. Reviewed evidence remains available through the review
 state filter; classification does not enable a new compiler rule.

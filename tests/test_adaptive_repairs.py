@@ -105,7 +105,7 @@ def test_a_family_unmeasured_for_this_mismatch_kind_borrows_the_profiles_other_k
     assert 'useful' not in policy.policy_rows(net, 'profile', 'call')
     factors = policy.factors(net, 'profile', 'call')
     assert 1 < factors['useful'] <= policy.POOLED_MAX_FACTOR
-    assert policy.factors(net, 'other profile', 'call') == {}  # another compiler's evidence is never borrowed
+    assert policy.factors(net, 'other profile', 'call') == {}  # nothing says these two compile for the same processor
 
 
 def test_borrowed_evidence_never_demotes_and_never_overrides_the_kinds_own_measurement():
@@ -157,3 +157,57 @@ def test_a_repair_applied_twice_counts_that_trial_once():
     [row] = policy._credited([{'family': 'hoist+hoist', 'attempted': 3, 'improved': 1, 'matched': 1,
                                'failed': 0, 'elapsed_ms': 30}])
     assert (row['family'], row['attempted'], row['matched']) == ('hoist', 3, 1)
+
+
+def setups(net, monkeypatch, *flags):
+    """The policy keys of one project built with each of `flags`."""
+    proj, fn = net.project_row('game'), net.function()
+    original = net.cfg(proj)
+    keys = []
+    for flag in flags:
+        monkeypatch.setattr(net, 'cfg', lambda p, flag=flag: {**original, 'compiler': {**original['compiler'], 'flags': [flag]}})
+        keys.append(policy.profile(net, proj, fn))
+    return keys
+
+
+def test_a_setup_borrows_upward_from_the_other_setups_of_its_processor(monkeypatch):
+    net = FakeNet()
+    proven, new = setups(net, monkeypatch, '-O2', '-O1')
+    for _ in range(100):
+        policy.record(net, proven, 'register', 'useful', 20, 0, 10)
+        policy.record(net, proven, 'register', 'poor', 20, None, 10)
+    factors = policy.factors(net, new, 'register')
+    assert set(factors) == {'useful'} and 1 < factors['useful'] <= policy.BORROWED_MAX_FACTOR
+    assert policy.factors(net, new, 'call') == {}            # only the same mismatch kind
+    assert policy.factors(net, new, 'register@field') == {}  # a statement shape keeps its own evidence
+
+
+def test_a_setups_own_verdict_outweighs_what_others_measured(monkeypatch):
+    net = FakeNet()
+    proven, here, kind = setups(net, monkeypatch, '-O2', '-O1', '-O0')
+    for _ in range(100):
+        policy.record(net, proven, 'register', 'useful', 20, 0, 10)
+        policy.record(net, here, 'register', 'useful', 20, None, 10)
+        policy.record(net, kind, 'call', 'useful', 20, None, 10)
+    assert policy.factors(net, here, 'register')['useful'] < 1   # measured poor for this mismatch kind
+    assert 'useful' not in policy.factors(net, kind, 'register')  # measured poor in its other kinds
+
+
+def test_another_processor_lends_nothing(monkeypatch):
+    net = FakeNet()
+    mips, = setups(net, monkeypatch, '-O2')
+    proj = dict(net.project_row('game')) | {'arch': 'ppc', 'big_endian': 1}
+    other = policy.profile(net, proj, net.function())
+    for _ in range(100):
+        policy.record(net, mips, 'register', 'useful', 20, 0, 10)
+    assert policy.factors(net, other, 'register') == {}
+
+
+def test_history_of_a_setup_the_project_settings_name_is_borrowed_without_searching_it(monkeypatch):
+    net = FakeNet()
+    old = policy._key(policy._rom_settings(net.project_row('game'), net.cfg(net.project_row('game')),
+                                           net.cfg(net.project_row('game'))['compiler']))
+    for _ in range(100):
+        policy.record(net, old, 'register', 'useful', 20, 0, 10)   # counted before setups were noted
+    new, = setups(net, monkeypatch, '-O1')
+    assert policy.factors(net, new, 'register')['useful'] > 1
