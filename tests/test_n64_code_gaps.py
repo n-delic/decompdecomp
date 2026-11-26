@@ -1,7 +1,7 @@
 """The importer's last look at the gaps between an N64 game's code (consoles/n64/code.py, complete_gaps): homemade
 code, no game data. A racing game's split left 16 functions (31 KB) as data: object handlers reached only through
 pointers its code builds, leaves with no frame, switches, several functions to a gap."""
-from decompnet.consoles.n64.code import complete_gaps, mapped_data, mapped_gaps, runtime_entries
+from decompnet.consoles.n64.code import aligned_gaps, complete_gaps, mapped_data, mapped_gaps, runtime_entries
 
 LEAF = [0x24020001, 0x24420001, 0x03e00008, 0]
 
@@ -52,3 +52,17 @@ def test_rodata_ahead_of_an_overlay_is_mapped_on_the_overlay_after_it():
     assert (0x1100, 0x2000, 0x802FF100) in ranges  # ahead of the code after it
     same = [(0x1000, 0x1100, 0x80001000), (0x2000, 0x2100, 0x80002000)]
     assert len([r for r in mapped_data(same, (), 0x3000) if r["rom_start"] == 0x1100]) == 1
+
+
+def test_an_overlay_tail_placed_past_its_alignment_boundary_becomes_code():
+    """The bytes after an overlay's last listed function can sit a few bytes further on than its mapping says (the
+    next function starts on a 16-byte boundary), with another overlay after them. Two calls from known code into
+    frames of the gap, at one offset, place it."""
+    fn = [0x27bdffe8, 0xafbf0010, 0x24020001, 0x8fbf0010, 0x03e00008, 0x27bd0018]
+    before = [0x0c00040c, 0x0c000412, 0x03e00008, 0]  # jal 0x80001030; jal 0x80001048
+    image = image_with([(0x1000, before), (0x1020, fn), (0x1038, fn), (0x1050, [0x03e00008, 0])])
+    found = [(0x1000, 0x1010, 0x80001000), (0x1050, 0x1058, 0x80205050)]
+    assert aligned_gaps(image, found) == [(0x1010, 0x1050, 0x80001020)]
+    recovered = complete_gaps(image, [], found, log=lambda *a: None)
+    assert (0x1020, 0x1038, 0x80001030) in recovered and (0x1038, 0x1050, 0x80001048) in recovered
+    assert aligned_gaps(image, [(0x1000, 0x1010, 0x80001000), (0x1050, 0x1058, 0x80001050)]) == []  # one mapping
