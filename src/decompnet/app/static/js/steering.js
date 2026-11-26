@@ -3295,7 +3295,10 @@ async function acceptWaitingSuggestions(button) {
     renderSuggestionBatchProgress(body,{total:results.length,done:results.length,applied:result.applied,skipped:result.skipped},true);
     const skipped=results.filter(r=>!r.applied);
     body.querySelector('[data-batch-results]').innerHTML=skipped.length ? `<details class="collapsible-box"><summary>${skipped.length} skipped suggestions — view reasons</summary><div class="collapsible-box-body">${skipped.map(r=>`<div><b class="small">Suggestion #${esc(r.id)}</b><p class="small muted">${esc(r.reason)}</p></div>`).join('')}</div></details>` : '';
-    if(S.slug===slug){S.ov=result.overview;renderStats(S.ov);renderProjectSettings();}
+    // The suggestions are applied either way: a failed page refresh is its own message, and the job button frees now.
+    if(S.slug===slug)api(`/api/project?slug=${encodeURIComponent(slug)}`)
+      .then(overview=>{if(S.slug===slug){S.ov=overview;renderStats(S.ov);renderProjectSettings();}})
+      .catch(error=>toast(`Suggestions saved, but the page could not refresh: ${error.message}`));
   }catch(error){
     body.querySelector('[data-batch-status]').textContent='Could not finish applying suggestions';
     body.querySelector('[data-batch-current]').textContent='Completed changes are saved. Review the error before retrying.';

@@ -23,7 +23,7 @@ def fixture(monkeypatch, auto=True):
         db.execute("INSERT INTO functions(project_id,name,vram,size,status,matched_source,best_source,best_score) VALUES(1,'neighbor',4100,4,'matched','neighbor C','neighbor C',0)")
     net.cfg=lambda p:json.loads(p['config'])
     net.project_row=lambda slug:net._project(slug)
-    def change(slug,update):
+    def change(slug,update,**kw):
         with net.store.tx() as db:
             row=db.execute('SELECT config FROM projects WHERE slug=?',(slug,)).fetchone()
             cfg=json.loads(row['config']);update(cfg)
@@ -72,6 +72,30 @@ def test_explicit_suggestion_saves_its_source_and_profile_only_for_origin(monkey
     assert net.store.one("SELECT matched_source FROM functions WHERE name='neighbor'")['matched_source']==before
     assert cfg['suggestions'][0]['status']=='applied' and 'function only' in said
     assert not net.store.one('SELECT 1 FROM claims WHERE function_id=1')
+
+
+def test_single_function_apply_leaves_saved_folder_to_autosave(monkeypatch):
+    from contextlib import contextmanager
+    net,_=fixture(monkeypatch,auto=False)
+    net.suggest(Agent(1,'autopilot',None),'game','exact flags',compiler='gcc',flags='-O2 -ffast-math',
+                function='f',source='chosen source')
+    entered=[]
+    @contextmanager
+    def view():
+        entered.append('view');yield
+    @contextmanager
+    def judging(slug,**kw):
+        entered.append(kw);yield
+    net.progress=SimpleNamespace(view=view,judging=judging,
+                                 sync=lambda *a,**kw:pytest.fail('must not force a folder check'))
+    update=net._update_cfg
+    def change(slug,fn,**kw):
+        assert kw=={'synchronize':False};update(slug,fn)
+    net._update_cfg=change
+    applied=[]
+    monkeypatch.setattr(profiles,'apply',lambda *a:applied.append(a[3]['function']))
+    net.resolve_suggestion('game',1,True)
+    assert applied==['f'] and {'synchronize':False,'publish':False} in entered
 
 
 def test_disabled_auto_retains_bundle_and_manual_apply_rejudges_it(monkeypatch):
@@ -352,14 +376,11 @@ def test_accept_all_starts_without_overview_or_implicit_project_sync(monkeypatch
         stages.append(sid)
     net.resolve_suggestion=resolve
     net.project_row=lambda *a:pytest.fail('preparation must not synchronize project files')
-    def overview(slug):
-        assert stages==[1,6,'saved']
-        assert snapshots[-1]['current']['phase']=='Refreshing project overview'
-        stages.append('overview');return {'suggestions':[]}
-    net.overview=overview
-    net.progress=SimpleNamespace(sync=lambda *a,**kw:stages.append('saved'))
+    # Autosave publishes the changes and the page reads its own overview: neither holds the job open.
+    net.overview=lambda *a:pytest.fail('the batch must not build an overview')
+    net.progress=SimpleNamespace(sync=lambda *a,**kw:pytest.fail('the batch must not force a save'))
     result=profiles.accept_all(net,'game',Log())
-    assert stages==[1,6,'saved','overview'] and result['applied']==2
+    assert stages==[1,6] and result['applied']==2
 
 
 def test_accept_all_checks_each_suggestion_again_after_snapshot(monkeypatch):
