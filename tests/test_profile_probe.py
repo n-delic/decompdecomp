@@ -701,3 +701,21 @@ def test_every_rom_consoles_demo_finds_its_level(console_id, tmp_path, monkeypat
     assert profile_probe_autopilot.catch_up(net, slug, fn['id'], 2, 60, log) is True, list(log)
     assert net._function(name, slug)['status'] == 'matched'
     assert net.cfg(net.project_row(slug))['compiler'] == default
+
+
+@pytest.mark.parametrize('exact', [True, False])
+def test_the_drafts_record_arrays_are_judged_under_the_old_level(monkeypatch, exact):
+    from decompnet.app import deep_profiles
+    from decomprepair import global_offset_records
+    plan = [{'toolchain': 't', 'flags': ['-O1'], 'family': 'level', 'why': 'w'}]
+    search, seen = arrange(monkeypatch, {'-O1': 50}, plan)
+    sources = []
+
+    def judged(search_, agent, proj, fn, source, profile, **kw):
+        sources.append(source)
+        search_.tested += 1
+        return 0 if exact and source == 'RECORDS' else 300
+    monkeypatch.setattr(deep_profiles, 'probe', judged)
+    monkeypatch.setattr(global_offset_records, 'variants', lambda source, name, header: [('f', 'RECORDS')])
+    assert profile_probe.run(search, None, PROJ, {**FN, 'seed': 'DRAFT'}, 'C', climb=False) is exact
+    assert sources[:3] == ['C', 'DRAFT', 'RECORDS']
