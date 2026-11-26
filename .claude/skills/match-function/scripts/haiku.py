@@ -10,8 +10,8 @@
     haiku.py try HOLDER CAND.c
                          judge CAND.c under every candidate profile; submit it when it beats the saved score; when it is
                          exact, make it the match (under another profile: `suggest`, for this function only).
-                         Scaffolding the starting C already has may stay while improving; adding more is refused, and
-                         an exact C with any is not saved as a match (it goes into the note)
+                         Scaffolding the starting C already has may stay, also in a match (which is reported as keeping
+                         it); adding more is refused
     haiku.py done HOLDER [--note TEXT]     (also: giveup)
                          submit the best candidate seen, keep a better one under another profile as a compiler trial
                          (compiler_experiments: nothing is applied; the next `next` shows it), write the note, release
@@ -101,6 +101,11 @@ def inherited(sources):
         for item, count in scaffolding(source or "").items():
             found[item] = max(count, found.get(item, 0))
     return found
+
+
+def kinds(found):
+    """The kinds of scaffolding in `scaffolding`'s items, for one line: "fence, volatile"."""
+    return ", ".join(sorted({item.split(":")[0] for item in found}))
 
 
 def faults(source, allowed=None):
@@ -286,9 +291,9 @@ def screen(root, info, brief, worker, write=print):
             (folder / "rows.txt").write_text(rows)
             write(f"Its differing rows (target | yours):\n{differing(rows, folder / 'rows.txt')}")
     if allowed:
-        write("\nThe C above came with scaffolding (" + ", ".join(sorted({i.split(":")[0] for i in allowed}))
-              + "). `try` accepts what is already there, so start from it and keep your progress; adding more is "
-              "refused. A match is only saved without any: remove it when you can.")
+        write("\nThe C above came with scaffolding (" + kinds(allowed)
+              + "). `try` accepts what is already there, also in a match, so start from it and keep your progress; "
+              "adding more is refused.")
     if brief.get("declarations"):
         write("\n--- shared header declarations (already included; do not redeclare differently)")
         write("\n".join(brief["declarations"]))
@@ -402,13 +407,7 @@ def try_source(holder, path):
             print("It did not compile:\n" + (replies[0].get("detail") or "")[-1500:])
             return 1
         best = min((score, index) for index, score in enumerate(found) if score is not None)[1]
-        left = faults(source)  # inherited: fine for progress, never for a match
         for index, score in enumerate(found):
-            if score == 0 and left:  # kept apart: `done` must not submit it as a match
-                copy = root / f"exact-scaffolded-profile{index}.c"
-                copy.write_text(source)
-                state["scaffolded"] = {"profile": index, "path": str(copy)}
-                continue
             kept = state["best"].get(str(index))
             if score is not None and (kept is None or score < kept["score"]):
                 copy = root / f"best-profile{index}.c"
@@ -422,12 +421,10 @@ def try_source(holder, path):
             return 0
         exact = own if found[own] == 0 else next((i for i, s in enumerate(found) if s == 0), None)
         saved = current.get("best")
-        if exact is not None and left:
-            print(f"EXACT under profile {exact} ({label(profiles[exact])}) but NOT saved: it still has scaffolding.\n- "
-                  + "\n- ".join(left) + "\nRemove it one piece at a time and `try` again. If it can't go, run: haiku.py "
-                  f"done {holder}   (the C is kept in the function's note) and report it.")
-            return 1
         if exact is not None:
+            # only inherited scaffolding gets here (added scaffolding was refused above): saved, but said
+            state["scaffolded"] = kinds(scaffolding(source))
+            write_state(root, state)
             if exact == own:
                 print(submit(holder, root, state, source))
             else:
@@ -441,6 +438,8 @@ def try_source(holder, path):
                 print(f"\nMATCHED: the app records {name} as matched"
                       f"{'' if exact == own else f' with {label(profiles[exact])}'}. Stop editing and run: "
                       f"haiku.py done {holder}")
+                if state["scaffolded"]:
+                    print(f"It keeps scaffolding it started with ({state['scaffolded']}): say so in your report.")
                 return 0
             print(f"\nExact here, but the app does not record {name} as matched yet (read its answer above). "
                   f"Run: haiku.py done {holder}   and report both.")
@@ -491,15 +490,6 @@ def keep_work(holder, root, info, state):
             if not str(error).startswith("not submitted"):
                 raise
             print(error)
-
-
-def scaffolded_note(state):
-    """The note's copy of an exact C that was not saved because it still has scaffolding."""
-    kept = state.get("scaffolded")
-    if not kept:
-        return ""
-    return (f"EXACT C under {label(state['profiles'][kept['profile']])}, not saved because it still has scaffolding:\n"
-            f"{Path(kept['path']).read_text()[:6000]}")
 
 
 def candidate(gateway, name):
@@ -567,11 +557,11 @@ def done(holder, note=""):
     if current.get("status") != "matched" and not lost:
         keep_work(holder, root, info, state)
         near = keep_near(holder, root, info, state)
-        near = "\n".join(part for part in (near, scaffolded_note(state)) if part)
         current = app_function(info, name)
     if current.get("status") == "matched":
         setup.stop_session(holder)
-        print(f"RESULT {name}: MATCHED")
+        kept = state.get("scaffolded")
+        print(f"RESULT {name}: MATCHED" + (f" (keeps inherited scaffolding: {kept})" if kept else ""))
         return 0
     text = summary(state, note, near)
     try:
@@ -594,8 +584,7 @@ def done(holder, note=""):
     setup.stop_session(holder)
     best = min((kept["score"] for kept in state["best"].values()), default=None)
     print(f"RESULT {name}: not matched; app best {current.get('best')}, best seen under any profile {best}, "
-          f"{state['tries']} tries. Released."
-          + (" An EXACT C with scaffolding is in the note (not saved as a match)." if state.get("scaffolded") else ""))
+          f"{state['tries']} tries. Released.")
     return 0
 
 

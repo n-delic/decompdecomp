@@ -176,15 +176,19 @@ def test_an_improvement_that_keeps_inherited_scaffolding_is_submitted(session):
 
 
 @pytest.mark.parametrize("scores", ["own=0 other=70", "own=90 other=0"])
-def test_an_exact_candidate_with_inherited_scaffolding_is_not_saved_as_a_match(session, capsys, scores):
+def test_an_exact_candidate_with_inherited_scaffolding_is_saved_and_said(session, capsys, monkeypatch, scores):
+    def submit(holder, source, function="", again=""):  # the app records an own-profile exact as matched
+        session.sent.append(source)
+        App.status = "matched"
+        return "judged"
+    monkeypatch.setattr(haiku.setup, "submit", submit)
     start_from(session, FENCED)
     source = f"{FENCED} // {scores}"
-    assert haiku.main(["try", "small", session.write(source)]) == 1
-    assert "NOT saved" in capsys.readouterr().out
+    assert haiku.main(["try", "small", session.write(source)]) == 0
+    assert "keeps scaffolding it started with (fence, repair)" in capsys.readouterr().out
+    assert session.sent == [source] or dict(Gateway.calls)["suggest"]["source"] == source
     assert haiku.main(["done", "small"]) == 0
-    assert session.sent == [] and "suggest" not in tools()
-    assert source in dict(Gateway.calls)["release_function"]["notes"]
-    assert "EXACT C with scaffolding" in capsys.readouterr().out
+    assert "MATCHED (keeps inherited scaffolding: fence, repair)" in capsys.readouterr().out
 
 
 def test_the_screen_lets_the_saved_best_be_the_start(tmp_path):
