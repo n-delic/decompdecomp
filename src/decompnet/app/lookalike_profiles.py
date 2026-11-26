@@ -252,6 +252,14 @@ def trial(net, agent, proj, fn, source: str, settings=None, *, first: Measure | 
         source, result, searched = search(net, proj, fn, source, settings, first, budget)
         compiles += searched
         if not result.exact:
+            # A closer C than the plain transfer, under the function's own profile, is kept as its best attempt so
+            # an agent, a draft or the permuter starts from it; one with a donor's profile would mislead them.
+            if settings is None and searched and result.score < first.score:
+                try:
+                    net.try_quietly(agent, proj, fn, source, synchronize=False)
+                    compiles += 1
+                except NetworkError:
+                    pass
             return 'miss', f'score {result.score}{label}', compiles
         # The exact recheck records it like any match; with a donor's profile, it publishes that profile for
         # this one function in the same transaction (exact_match_inputs.publish), or nothing at all.

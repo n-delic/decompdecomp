@@ -208,3 +208,19 @@ def test_donor_profile_only_when_its_build_differs(game):
     a, b = game._function('donor', 'destination'), game._function('new', 'destination')
     assert game.twins.donor_profile(proj, a, b) == {'toolchain': 'gcc-2.7.2-kmc', 'flags': ['-O1']}
     assert game.twins.donor_profile(proj, b, b) is None
+
+
+def test_an_improved_inexact_search_under_the_own_profile_is_kept_as_an_attempt(game, monkeypatch):
+    proj, fn = game._project('destination'), game._function('new', 'destination')
+    agent, _ = game.local_agent('autopilot')
+    recorded = []
+    monkeypatch.setattr(game, 'try_quietly', lambda agent, proj, fn, source, **kw: recorded.append((source, kw)) or {})
+    first = lp.Measure(False, 30, code(61), set(), 1)
+    monkeypatch.setattr(lp, 'search', lambda *a, **kw: ('closer', lp.Measure(False, 10, code(61), set(), 1), 1))
+    outcome, why, _ = lp.trial(game, agent, proj, fn, 'plain', None, first=first)
+    assert outcome == 'miss' and why == 'score 10'
+    assert recorded == [('closer', {'synchronize': False})]  # an ordinary attempt: it becomes the best source
+    recorded.clear()
+    monkeypatch.setattr(lp.toolchains, 'installed', lambda tc: True)
+    lp.trial(game, agent, proj, fn, 'plain', {'toolchain': 'gcc-2.7.2-kmc', 'flags': ['-O1']}, first=first)
+    assert not recorded  # under a donor's profile it would mislead whoever starts from it

@@ -1186,6 +1186,14 @@ compile-guided search for the constants they differ in (32-bit LUI/ORI pairs, ne
 per-file compiler the same way (DS's `set_file_compiler`) and its objects are aligned like the similar-code pass; other
 processors need their immediate reader.
 
+The similar-code pass now finds donors by content across every game (a shingle index of four-instruction runs,
+`similarity.ShingleIndex`, before the size-ordered shortlist), works best-first through a game's open functions by how
+alike their closest donor is, compares compiler profiles by the flags that change code (`similar_matches.codegen_key`),
+renames donors with another relocation layout from their aligned instruction runs, tries another game's donor with that
+game's profile the same way as a donor in its own game, and sends a new match to its look-alikes in the user's other active
+games at once. A transfer that doesn't build is tried once more with the donor header's missing types. Still ROM mode
+and MIPS only (project mode: the paragraph above); idle games get a new match on their next pass, not at once.
+
 Cross-game C++ constructor entry replay currently covers N64 overlays with IDO. Main-ROM linking and owned-build
 projects need their own verified constructor-entry selection and export handling before this retry can reach them.
 Cross-game switch-label recovery currently uses verified N64 overlay tables. Other ROM and owned-build modes need

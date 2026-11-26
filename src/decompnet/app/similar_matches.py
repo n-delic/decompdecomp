@@ -19,7 +19,6 @@ from functools import lru_cache
 from .. import permuter, similarity, toolchains
 from ..arch import mips_immediates
 from ..metadata_rows import rows as metadata_rows
-from ..network import NetworkError
 from ..project import compiler_for
 
 MIN_BYTES, MAX_BYTES = 32, 3200
@@ -35,7 +34,7 @@ MANUAL_REPAIRS = 16
 MAX_ATTEMPTS = 128
 MAX_SECONDS = 120
 MAX_REPAIRS = 8
-REPAIR_PERCENT = 94
+REPAIR_PERCENT = 90  # 318 open N64 functions had donor C compiling to 90-95%: worth the repair families
 MUTATION_DRAWS = 48
 # Consume comments, strings and identifiers whole, so edits never touch a symbol's address or documentation.
 TOKENS = re.compile(r'/\*.*?\*/|//[^\n]*|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|'
@@ -137,6 +136,37 @@ def _mnemonics(net, proj, fn) -> list[str]:
 @lru_cache(maxsize=256)
 def _toolchain(profile: str) -> str | None:
     return json.loads(profile).get('toolchain')
+
+
+# Flags that change what a compiler says, never the code it makes: warnings, defines and comment syntax.
+_SILENT = ('-woff', '-W', '-w', '-fullwarn', '-D', '-U', '-Xcpluscomm', '-I', '-nostdinc')
+_TAKES_VALUE = {'-woff', '-G', '-D', '-U', '-I'}
+
+
+def codegen_key(profile) -> str:
+    """A compiler profile as the code it makes: its toolchain and the flags that change code, in a fixed order.
+    Two IDO profiles of one game differing only by `-woff 649,838,712` or `-DNON_MATCHING` were different
+    compilers to the shortlist (47% of close donors passed exact equality; 75% shared the toolchain)."""
+    return _codegen(profile if isinstance(profile, str) else json.dumps(profile or {}, sort_keys=True))
+
+
+@lru_cache(maxsize=1024)
+def _codegen(profile: str) -> str:
+    value = json.loads(profile)
+    if value.get('cmd'):
+        return json.dumps(value, sort_keys=True)
+    flags, items, pending = list(value.get('flags') or []), [], None
+    for flag in flags:
+        if pending is not None:
+            items.append((pending, flag))
+            pending = None
+        elif flag in _TAKES_VALUE:
+            pending = flag
+        else:
+            items.append((flag, ''))
+    kept = sorted(item for item in items if not (item[0].startswith(_SILENT)
+                                                 and not item[0].startswith(('-Wa,', '-Wab,', '-Wb,', '-Wl,'))))
+    return json.dumps([value.get('toolchain'), kept])
 
 
 def _aligned_prints(a, b, pa, pb, ops_a, ops_b):
@@ -267,34 +297,6 @@ def trial_key(source, header, compiler, fn, names) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
-def compiler_trial(net, agent, proj, fn, candidate, settings):
-    """Test a donor compiler profile without changing build settings or misreporting them as accepted project progress."""
-    now = time.time()
-    from .local_claims import expiry_ids
-    store = net.project_store(proj['id'])
-    identities = expiry_ids(net, store)
-    with store.tx() as db:
-        net._expire_claims(db, **identities)
-        current = db.execute('SELECT status FROM functions WHERE id=?', (fn['id'],)).fetchone()
-        if not current or current['status'] != 'open' or db.execute(
-                'SELECT 1 FROM claims WHERE function_id=?', (fn['id'],)).fetchone():
-            return 'skip', 'function is busy or no longer open'
-        db.execute('INSERT INTO claims VALUES(?,?,?,?)', (fn['id'], agent.id, now, now + 300))
-    try:
-        ok, diff, problem = net._judge_with(proj, fn, settings['toolchain'], settings.get('flags', []), candidate)
-        label = settings['toolchain'] + ' ' + ' '.join(settings.get('flags', []))
-        if ok:
-            reason = 'byte match with ' + label + '; review compiler settings before accepting'
-            net.add_note(agent, proj['slug'], reason + '\nCandidate C:\n' + candidate, fn['name'])
-            return 'compiler', reason
-        return 'miss', label + ': ' + (f'score {diff.score}' if diff else (problem or 'did not build')[-160:])
-    except (NetworkError, toolchains.ToolchainError) as error:
-        return 'skip', str(error)[:160]
-    finally:
-        with net.project_store(proj['id']).tx() as db:
-            db.execute('DELETE FROM claims WHERE function_id=? AND agent_id=?', (fn['id'], agent.id))
-
-
 SEARCHED = ('profile', 'literals')  # trial kinds that run lookalike_profiles' compile-guided literal search
 
 
@@ -313,6 +315,20 @@ def _measured(report, b):
                  | {int(r[0]) for r in json.loads(b['relocs'] or '[]')})
     return Measure(bool(report.get('matched')), report['score'], code, relocated,
                    differing(code, b['target'] or b'', relocated))
+
+
+def donor_types(header_a: str, header_b: str, names: dict, syms_b) -> str:
+    """The donor header's types and declarations the destination's header lacks, written with the destination's
+    names (regional.missing_items, as another release's header is brought over), as a prelude for one try."""
+    from .regional import missing_items
+    if not header_a.strip():
+        return ''
+    known = set(getattr(syms_b, 'by_name', {}) or {}) | set(names.values())
+    try:
+        items = missing_items(header_a, header_b, names.get, known.__contains__)
+    except (ValueError, IndexError, re.error):
+        return ''
+    return '\n'.join(items) + '\n' if items else ''
 
 
 def destination_supported(net, proj):
@@ -345,20 +361,107 @@ def lookalikes(net, proj, fid) -> list[int]:
     return out
 
 
+FAN_OUT_PER_GAME = 12  # open look-alikes of a new match tried in each other active game
+
+
+def lookalikes_elsewhere(net, proj, other, fids) -> list[int]:
+    """The open functions of `other` (another game) whose code is close to the matched functions `fids` of
+    `proj`: read by size from `other`'s rows, shortlisted by shared shingles, kept at MIN_SIMILARITY."""
+    store, theirs = net.project_store(proj['id']), net.project_store(other['id'])
+    big = bool(proj['big_endian'])
+    found = {}
+    for fid in fids:
+        fn = store.one("SELECT id,target,size FROM main.functions WHERE id=? AND status='matched'", fid)
+        if fn is None or not fn['target'] or not MIN_BYTES <= len(fn['target']) <= MAX_BYTES:
+            continue
+        shape = similarity.mips_shape(fn['target'], big)
+        index = similarity.ShingleIndex()
+        for row in theirs.all("SELECT id,target FROM main.functions WHERE project_id=? AND status='open' "
+                              "AND size BETWEEN ? AND ?", other['id'], int(fn['size'] * .9), int(fn['size'] / .9) + 1):
+            if row['target']:
+                index.add(row['id'], similarity.mips_shape(row['target'], big))
+        for key in index.query(shape, 6):
+            alike = similarity.score(list(shape), list(index.shapes[key]))
+            if alike >= MIN_SIMILARITY:
+                found[key] = max(found.get(key, 0), alike)
+    return [key for key, _ in sorted(found.items(), key=lambda item: -item[1])[:FAN_OUT_PER_GAME]]
+
+
 def after_match(twins, proj, fids) -> int:
     """Functions just matched: their open look-alikes get their C now, with their profile and the literal search,
     rather than at the next autopilot start (one N64 game's agents matched a dozen look-alikes by hand within the
-    hour after their donors matched, while the pass waited). Bounded like a pass; misses are cached as usual."""
+    hour after their donors matched, while the pass waited). Bounded like a pass; misses are cached as usual.
+
+    The look-alikes in the user's other games too: 92% of the close donors of open N64 functions were in another
+    game. Only games in active use are opened here (project_activity); an idle game's next pass is best-first by
+    donor likeness (`run`), so the new match is near the front of its queue then."""
+    from .project_activity import active
+    from .shared_reuse import compatible
     from .twins import Job
     net = twins.net
     proj = net.project_row(proj['slug'], sync=False)
-    if not destination_supported(net, proj):
-        return 0
-    ids = sorted({b for fid in fids for b in lookalikes(net, proj, fid)})
-    if not ids:
-        return 0
-    twins.index_project(proj)  # the new donors, before the shortlist reads the index
-    return run(twins, proj['slug'], Job(), function_ids=ids)
+    matched = 0
+    ids = sorted({b for fid in fids for b in lookalikes(net, proj, fid)}) if destination_supported(net, proj) else []
+    if net.is_rom(proj):
+        twins.index_project(proj)  # the new donors, before the shortlist reads the index
+    if ids:
+        matched += run(twins, proj['slug'], Job(), function_ids=ids)
+    if not net.is_rom(proj) or proj['arch'] != 'mips':
+        return matched
+    for other in compatible(net, proj, active_only=True):
+        if not net.is_rom(other) or not destination_supported(net, other) or not active(net, other['slug']):
+            continue
+        found = lookalikes_elsewhere(net, proj, other, fids)
+        if found:
+            matched += run(twins, other['slug'], Job(), function_ids=found)
+    return matched
+
+
+def byte_exact_leads(net, proj, others) -> dict[int, list[int]]:
+    """{open function: donors whose C matched it byte for byte under the donor's own profile}: what the pass
+    recorded as a "review compiler settings" lead before such results could become matches. Each is tried first
+    with the donor's profile through lookalike_profiles.trial, which publishes that profile for the function alone
+    on an exact recheck."""
+    out: dict[int, list[int]] = {}
+    for row in net.project_store(proj['id']).all(
+            "SELECT DISTINCT c.function_id,c.source_function_id,c.source_project_id FROM cross_game_attempts c "
+            "JOIN main.functions f ON f.id=c.function_id AND f.status='open' "
+            "WHERE c.project_id=? AND c.outcome='compiler'", proj['id']):
+        if row['source_project_id'] in others:
+            out.setdefault(row['function_id'], []).append(row['source_function_id'])
+    return out
+
+
+PRIORITY_SHARE = .25  # of a pass's remaining time, at most, spent ordering its functions
+_PRIORITIES: dict = {}
+
+
+def best_first(net, proj, donors, targets, leads, deadline) -> dict[int, float]:
+    """{function: how alike its most similar donor is (shared shingles, 0..1)}; byte-exact leads above all.
+    Cached per function for as long as the donor library has the same size, so only the first pass after a
+    change pays for it; when ordering would take more than PRIORITY_SHARE of the pass, the rest keep id order."""
+    out = {fid: 2.0 for fid in leads}
+    wanted = [row['id'] for row in targets if row['id'] not in out]
+    if not wanted or not donors.rows:
+        return out
+    # Keyed by the code itself (a resplit function is another one) and the library's size (new donors).
+    stamp = len(donors.rows)
+    stop = time.monotonic() + max(0.0, deadline - time.monotonic()) * PRIORITY_SHARE
+    index, big = None, bool(proj['big_endian'])
+    store = net.project_store(proj['id'])
+    for start in range(0, len(wanted), 2000):
+        for row in store.all('SELECT id,target FROM main.functions WHERE id IN (SELECT value FROM json_each(?)) '
+                             'AND size BETWEEN ? AND ?', json.dumps(wanted[start:start + 2000]), MIN_BYTES, MAX_BYTES):
+            key = (stamp, row['target'] or b'')
+            if key not in _PRIORITIES:
+                if time.monotonic() >= stop:
+                    continue
+                index = index or donors.index()
+                _PRIORITIES[key] = index.estimate(similarity.mips_shape(key[1], big))
+            out[row['id']] = _PRIORITIES[key]
+    if len(_PRIORITIES) > 400_000:
+        _PRIORITIES.clear()
+    return out
 
 
 def run(twins, slug: str, job, *, function_ids=None) -> int:
@@ -371,7 +474,7 @@ def run(twins, slug: str, job, *, function_ids=None) -> int:
         return 0
     cfg = net.cfg(proj)
     manual = getattr(job, 'cross_exhaustive', False)
-    supported_compilers = {c.id for c in net.console(proj).compilers_for(cfg)} if manual else set()
+    supported_compilers = {c.id for c in net.console(proj).compilers_for(cfg)}
     others = donor_projects(net, proj)
     from . import free_candidates
     free_candidates.budget(job, MAX_SECONDS, MAX_ATTEMPTS)
@@ -433,9 +536,7 @@ def run(twins, slug: str, job, *, function_ids=None) -> int:
         job.cross_tried += 1
         attempted += 1
         job.reuse_attempts += 1
-        if kind == 'compiler':
-            outcome, why = compiler_trial(net, agent, proj, b, candidate, settings)
-        elif kind in SEARCHED:
+        if kind in SEARCHED:
             from . import lookalike_profiles
             outcome, why, compiles = lookalike_profiles.trial(
                 net, agent, proj, b, _noted(candidate, a, other, proj), None if kind == 'literals' else settings,
@@ -479,15 +580,22 @@ def run(twins, slug: str, job, *, function_ids=None) -> int:
     targets = metadata_rows(store, ('id', 'name'),
                             "SELECT id,name FROM main.functions WHERE project_id=? AND status='open'" + selected
                             + " ORDER BY id", proj['id'], *params)
+    leads = byte_exact_leads(net, proj, others)
+    priority = best_first(net, proj, donors, targets, leads, deadline)
     # Manual searches widen each target before moving on. An entire project of
     # cheap misses should not use up the budget before the wider search starts.
+    # Within that, the functions with the most alike donors go first: the pass used to walk them by id, so on a
+    # large game it spent its budget on functions with no close donor and reached few that had one.
     work = [(phase, b) for phase in (0, 1) for b in targets]
-    position = (abs(cursor), int(cursor < 0)) if manual else (int(cursor < 0), abs(cursor))
-    def order(item):
+    def rank(item):
         phase, row = item
-        key = (row['id'], phase) if manual else (phase, row['id'])
-        return key < position, key
-    work.sort(key=order)
+        first = -priority.get(row['id'], 0.0)
+        return (first, row['id'], phase) if manual else (phase, first, row['id'])
+    work.sort(key=rank)
+    # Resume at the saved place in that order (a function and phase), wrapping round.
+    here = next((i for i, (phase, row) in enumerate(work)
+                 if row['id'] == abs(cursor) and phase == int(cursor < 0)), 0) if cursor else 0
+    work = work[here:] + work[:here]
     from .cross_game_progress import report as publish_progress
     for index, (phase, b) in enumerate(work):
         publish_progress(job, 'Checking similar matched functions', function=b['name'], done=index, total=len(work))
@@ -513,23 +621,28 @@ def run(twins, slug: str, job, *, function_ids=None) -> int:
         floor = MANUAL_SIMILARITY if wide else MIN_SIMILARITY
         shortlist = (pb.size, max(MIN_BYTES, int(pb.size * ratio)), min(MAX_BYTES, int(pb.size / ratio)),
                      pb.key, own_key)
-        rows = donors.candidates(*shortlist, MAX_POOL, near=b['vram'], eligible=lambda row, exact=phase == 0,
-                                 key=own_key, tc=own_toolchain: (
-            row['project_id'] in others and (row['compiler'] == key if exact else (
+        own_codegen = codegen_key(own_key)
+        rows = donors.candidates(*shortlist, MAX_POOL, near=b['vram'], code=b['target'],
+                                 eligible=lambda row, exact=phase == 0, key=own_codegen, tc=own_toolchain: (
+            row['project_id'] in others and (codegen_key(row['compiler']) == key if exact else (
                 _toolchain(row['compiler']) == tc or row['project_id'] == proj['id']))))
+        # A donor whose C already matched this function byte for byte under its own profile goes first.
+        pinned = [row for row in (donors.row(fid) for fid in leads.get(b['id'], ())) if row is not None]
+        rows = pinned + [row for row in rows if row['id'] not in {p['id'] for p in pinned}]
         # Keep an independent shortlist for other compiler builds. Rows from a
         # large same-compiler library would otherwise fill the size-based cap.
-        alternate = donors.candidates(*shortlist, OTHER_COMPILER_POOL, eligible=lambda row, tc=own_toolchain: (
+        alternate = donors.candidates(*shortlist, OTHER_COMPILER_POOL, code=b['target'], eligible=lambda row, tc=own_toolchain: (
             row['project_id'] in others and _toolchain(row['compiler']) != tc)) if wide else []
         layout = [(o, t) for o, t, _ in relocations(b)]
-        def eligible(a, layout=layout, wide=wide, own_key=own_key, phase=phase):
+        lead_ids = set(leads.get(b['id'], ()))
+        def eligible(a, layout=layout, wide=wide, own_codegen=own_codegen, phase=phase, lead_ids=lead_ids):
             if not a['has_matched']:
                 return False
-            if wide:
-                return True
+            if wide or a['id'] in lead_ids:
+                return wide or phase == 0
             same_layout = [(o, t) for o, t, _ in relocations(a)] == layout
-            return ((same_layout or maps[a['project_id']])
-                    and (not same_layout or a['compiler'] != own_key) == bool(phase))
+            # Another layout is renamed from the aligned runs of instructions (_aligned_prints) below.
+            return (not same_layout or codegen_key(a['compiler']) != own_codegen) == bool(phase)
 
         rows = [a for a in rows if eligible(a)]
         alternate = [a for a in alternate if eligible(a)]
@@ -545,6 +658,9 @@ def run(twins, slug: str, job, *, function_ids=None) -> int:
         ranked = _rank_donors(rows, ops, ops_cache, b, layout, big, floor)
         extra = _rank_donors(alternate, ops, ops_cache, b, layout, big, floor)[:MANUAL_OTHER_COMPILERS] if alternate else []
         ranked = extra + ranked[:(MANUAL_CANDIDATES if wide else MAX_CANDIDATES) - len(extra)]
+        # A byte-exact lead's donor is tried whatever the ranking's cap.
+        firsts = [(str(a['id']), 1.0) for a in rows if a['id'] in lead_ids]
+        ranked = firsts + [item for item in ranked if item[0] not in {key for key, _ in firsts}]
         for key, score in ranked:
             a = by_id[key]
             # Re-read authoritative source after ranking: donors can be polished during a pass.
@@ -565,8 +681,12 @@ def run(twins, slug: str, job, *, function_ids=None) -> int:
             # In its own game an address is the same thing on both sides: only another game's names are looked up
             theirs = syms_b if other['id'] != proj['id'] else None
             aligned = [(o, t) for o, t, _ in relocations(a)] == layout
-            if wide and not aligned:
+            if not aligned:
                 left, right = _aligned_prints(a, b, pa, pb, ops_cache[a['id']], ops)
+                # Outside a manual search every reference of the target has to be accounted for by an aligned
+                # one of the donor's (or by names learned from accepted transfers): a guess costs a compile.
+                if not wide and len(right.addrs) < len(layout) and not learned:
+                    continue
                 local = rom_renames(syms_a, a['matched_source'], left, right, a['name'], b['name'], theirs)
                 # Keep established mappings when a shifted instruction offers conflicting evidence.
                 if local is not None:
@@ -591,28 +711,20 @@ def run(twins, slug: str, job, *, function_ids=None) -> int:
                          [source, *literals, *regional_layouts.variants(source, a, b, layouts[other['id']], big)]]
             variants = [(v, own, 'parameter transfer') for v in parameter_sources] + transfers[:1]
             donor_toolchain = donor.get('toolchain')
-            flags_differ = donor.get('flags', []) != own.get('flags', [])
-            compiler_differs = donor_toolchain != own_toolchain
             same_game = other['id'] == proj['id']
             # A look-alike in its own game is built with its donor's profile as often as with the default (one N64
             # game: 326 functions at -O1 beside an -O2 default, and SN builds): the donor's C is tried with the
             # donor's profile and the compile-guided literal search, and an exact match makes the profile this
             # function's own (lookalike_profiles.py). The function's own profile keeps the first try.
-            if (same_game and donor_toolchain and (flags_differ or compiler_differs) and not donor.get('cmd')
-                    and not own.get('cmd') and toolchains.installed(donor_toolchain)):
+            # Another game's look-alike is tried the same way: its compiler profile became a "review compiler
+            # settings" note before, never a match (592 byte-exact results, 167 of their functions still open).
+            if (donor_toolchain and codegen_key(donor) != own_codegen and not donor.get('cmd') and not own.get('cmd')
+                    and (same_game or donor_toolchain in supported_compilers) and toolchains.installed(donor_toolchain)):
                 variants.append((source, donor, 'profile'))
             variants += transfers[1:]
             variants.append((source, own, 'literals'))
-            # Another game's profile stays a lead to review (compiler_trial): an installed compiler of this
-            # console can supply a second opinion with the donor's measured flags, even when the flags match.
-            if (not same_game and donor_toolchain and not donor.get('cmd') and not own.get('cmd')
-                    and ((not compiler_differs and flags_differ) or (wide and donor_toolchain in supported_compilers and compiler_differs))
-                    and toolchains.installed(donor_toolchain)):
-                variants.append((source, donor, 'compiler'))
-                if wide and compiler_differs:
-                    variants.extend((v, donor, 'compiler') for v in literals)
             plain = None
-            for variant, settings, kind in variants:
+            for position, (variant, settings, kind) in enumerate(variants):
                 if exhausted():
                     return matched
                 if transfers_exhausted():
@@ -630,14 +742,19 @@ def run(twins, slug: str, job, *, function_ids=None) -> int:
                 outcome, why = attempt(a, b, other, score, candidate, settings, kind, names, header_b, first=first)
                 if kind == 'transfer' and variant == source:
                     plain = dict(feedback)
+                    # 606 transfers didn't build, mostly for a type or declaration only the donor's header has:
+                    # its missing items, in this game's names, are tried once before the variants that follow.
+                    if outcome == 'miss' and plain.get('score') is None and (
+                            types := donor_types(header_a, header_b, names, syms_b)):
+                        variants.insert(position + 1, (types + variant, settings, 'typed transfer'))
                 # Easy transfers get the first pass through the budget. Then repair the closest compiled misses.
                 close = re.fullmatch(r'score (\d+)', why or '')
                 percent = feedback.get('percent', 100 * (1 - int(close[1]) / max(1, (b['n_insns'] or 0) * 100)) if close else 0)
-                if kind in ('transfer', 'parameter transfer') and outcome == 'miss' and close and percent >= REPAIR_PERCENT:
+                if kind in ('transfer', 'parameter transfer', 'typed transfer') and outcome == 'miss' and close and percent >= REPAIR_PERCENT:
                     pair = (a['id'], b['id'])
                     if pair not in repairs or int(close[1]) < repairs[pair][0]:
                         repairs[pair] = (int(close[1]), a, b, other, score, prelude, variant, settings, names, header_b, dict(feedback))
-                if outcome in ('match', 'compiler'):
+                if outcome == 'match':
                     break
             if incomplete:
                 break
