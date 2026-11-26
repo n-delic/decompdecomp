@@ -110,3 +110,19 @@ def test_a_table_in_the_boot_segments_data_is_found_through_another_segments_off
     found = [draft_data.jump_table_extent(name, r, set(cases), ">") for r in readers]
     assert found == [None, (address, 8)]
     assert draft_data.delta_readers(SimpleNamespace(_rom=lambda _: 1 / 0), {}, {}) == []
+
+
+def test_a_dispatch_through_a_table_named_as_data_is_supplied_under_the_jump_table_name():
+    """The splitter named an unlisted table `D_...`: m2c cut the switch because no data came with it."""
+    net = SimpleNamespace(symbols=lambda _: SimpleNamespace(by_name={}), cfg=lambda _: {},
+                          reader=lambda *_: _reader(CASES))
+    fn = {"asm": ASM + "lui $at, %hi(D_800E1DE8)\naddu $at, $at, $v0\nlw $v0, %lo(D_800E1DE8)($at)\njr $v0\nnop\n"}
+    lines = draft_data.read(net, {"id": 1}, fn)
+    assert lines[1:] == ["dlabel jtbl_800E1DE8", *(".word .L%08X" % w for w in CASES)]
+
+
+def test_a_data_word_that_is_only_read_is_not_taken_for_a_jump_table():
+    net = SimpleNamespace(symbols=lambda _: SimpleNamespace(by_name={}), cfg=lambda _: {},
+                          reader=lambda *_: _reader(CASES))
+    fn = {"asm": ASM + "lui $at, %hi(D_800E1DE8)\nlw $v0, %lo(D_800E1DE8)($at)\njr $ra\nnop\n"}
+    assert draft_data.read(net, {"id": 1}, fn) == [".section .rodata"]
