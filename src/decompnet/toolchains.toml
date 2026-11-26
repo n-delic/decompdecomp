@@ -1972,10 +1972,11 @@ license = "proprietary"
 source = "decompme/compilers n64_sn272_0001"
 description = "Original SN64 GCC 2.7.2 build 0001 and ASN64 2.56. Matching uses wibo and the pinned PsyQ-to-ELF converter."
 requires = ["wibo", "psyq-obj-parser"]
+optional = ["sn-n64-272-970404"]  # its native cpp, when installed: consoles/n64/sn64.py, NATIVE_CPP
 driver = "consoles/n64/sn64.py"
 pass_dumps = true  # its cc1 takes -da through the driver and writes the pass dumps beside the preprocessed input
 flags = ["-G0", "-mips3", "-O2", "-mgas", "-meb", "-mhard-float"]
-cmd = ["{python}", "{driver}", "--cc", "{tc}/cc1n64.exe", "--cpp", "{tc}/cppn64.exe", "--assembler", "{tc}/asn64.exe", "--converter", "{tc:psyq-obj-parser}/psyq-obj-parser", "--runner", "{tc:wibo}/wibo", "{src}", "{obj}", "{include}", "{flags}"]
+cmd = ["{python}", "{driver}", "--cc", "{tc}/cc1n64.exe", "--cpp", "{tc}/cppn64.exe", "--native-cpp", "{tc?:sn-n64-272-970404}/cpp", "--assembler", "{tc}/asn64.exe", "--converter", "{tc:psyq-obj-parser}/psyq-obj-parser", "--runner", "{tc:wibo}/wibo", "{src}", "{obj}", "{include}", "{flags}"]
 [["sn-n64-272-0001".parts]]
 url = "https://github.com/decompme/compilers/releases/download/compilers/n64_sn272_0001.tar.gz"
 sha256 = "17c57ccd5f2305fe5445c576d4cc2c1fea681dd78b29dd3d1f15c5ca0fdf2cea"
@@ -2163,10 +2164,11 @@ source = "decompme/compilers n64_sn272_0001 (preprocessor and compiler); Mr-Wise
 description = "Build 0001's preprocessor and compiler with build 0004's ASN64. Both compilers write `l.d` as a macro; 0001's assembler always splits it into two lwc1, 0004's writes one ldc1. Some games' target is this pairing (SN 2.7.2 code that loads doubles with ldc1). Same pinned downloads as the two packs it combines."
 own_copy = false  # two builds' files in one folder: no copy of the user's is laid out like it
 requires = ["wibo", "psyq-obj-parser"]
+optional = ["sn-n64-272-970404"]  # its native cpp, when installed: consoles/n64/sn64.py, NATIVE_CPP
 driver = "consoles/n64/sn64.py"
 pass_dumps = true  # its cc1 takes -da through the driver and writes the pass dumps beside the preprocessed input
 flags = ["-G0", "-mips3", "-O2", "-mgas", "-meb", "-mhard-float"]
-cmd = ["{python}", "{driver}", "--cc", "{tc}/cc1n64.exe", "--cpp", "{tc}/cppn64.exe", "--assembler", "{tc}/asn64-0004.exe", "--converter", "{tc:psyq-obj-parser}/psyq-obj-parser", "--runner", "{tc:wibo}/wibo", "{src}", "{obj}", "{include}", "{flags}"]
+cmd = ["{python}", "{driver}", "--cc", "{tc}/cc1n64.exe", "--cpp", "{tc}/cppn64.exe", "--native-cpp", "{tc?:sn-n64-272-970404}/cpp", "--assembler", "{tc}/asn64-0004.exe", "--converter", "{tc:psyq-obj-parser}/psyq-obj-parser", "--runner", "{tc:wibo}/wibo", "{src}", "{obj}", "{include}", "{flags}"]
 [["sn-n64-272-0001-as0004".parts]]
 url = "https://github.com/decompme/compilers/releases/download/compilers/n64_sn272_0001.tar.gz"
 sha256 = "17c57ccd5f2305fe5445c576d4cc2c1fea681dd78b29dd3d1f15c5ca0fdf2cea"

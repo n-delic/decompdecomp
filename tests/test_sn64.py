@@ -207,3 +207,101 @@ def test_sn_0001_with_0004_assembler_loads_doubles_with_one_ldc1(tmp_path):
     ldc1 = lambda c: [c[i:i + 4] for i in range(0, len(c), 4) if c[i] >> 2 == 0x35]
     assert not ldc1(code[ids[0]]) and len(ldc1(code[ids[1]])) == 2  # 0001 splits l.d into lwc1 pairs
     assert code[ids[1]] == code[ids[2]]  # same code here as 0004, whose compiler differs elsewhere
+
+
+def test_native_cpp_only_for_a_compared_cppn64_on_a_mac(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import sn64
+    compared, other, native = tmp_path / 'cppn64.exe', tmp_path / 'other.exe', tmp_path / 'cpp'
+    compared.write_bytes(b'compared build');other.write_bytes(b'another build');native.touch()
+    monkeypatch.setattr(sn64, 'NATIVE_CPP', {sn64.hashlib.sha256(b'compared build').hexdigest()})
+    monkeypatch.setattr(sn64.sys, 'platform', 'darwin')
+    assert sn64.native_cpp(compared, native) == native
+    assert sn64.native_cpp(other, native) is None  # (0004, 0006 and 2.8.1 ship their own preprocessors)
+    assert sn64.native_cpp(compared, None) is None and sn64.native_cpp(compared, tmp_path / 'missing') is None
+    monkeypatch.setattr(sn64.sys, 'platform', 'linux')  # (wibo is native there: starting it costs little)
+    assert sn64.native_cpp(compared, native) is None
+
+
+def test_the_native_cpp_hands_cc1_the_same_crlf_text(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import sn64
+    tools = {key: tmp_path / key for key in ['cc', 'cpp', 'assembler', 'converter', 'runner']}
+    for tool in tools.values():
+        tool.touch()
+    native = tmp_path / 'native-cpp';native.touch()
+    monkeypatch.setattr(sn64, 'native_cpp', lambda cpp, given: given)
+    src, out = tmp_path / 'probe.c', tmp_path / 'probe.o'
+    src.write_text('int probe(void){return 0;}')
+    seen = []
+    def run(argv, **kwargs):
+        seen.append(argv)
+        output = Path(argv[argv.index('-o') + 1])
+        if argv[0] == str(native):
+            output.write_bytes(b'int probe(void)\n{return 0;}\n')
+        elif Path(argv[1] if argv[0] == str(tools['runner']) else argv[0]).name == 'cc':
+            assert Path(argv[-3]).read_bytes() == b'int probe(void)\r\n{return 0;}\r\n'
+            output.write_bytes(b'.text\n')
+        else:
+            output.write_bytes(b'\x7fELF\x01\x02' if argv[0] == str(tools['converter']) else b'.text\n')
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(subprocess, 'run', run)
+    sn_compile(**tools, source=src, output=out, include=tmp_path, flags=['-O2', '-DTEST=1'], native=native)
+    assert seen[0][0] == str(native) and '-DTEST=1' in seen[0] and seen[0][-3:] == [str(src), '-o', str(out.with_suffix('.sn.i'))]
+    assert seen[1][:2] == [str(tools['runner']), str(tools['cc'])]
+
+
+@pytest.mark.parametrize('present', [True, False])
+def test_an_optional_tool_is_mounted_when_installed_and_its_argument_empty_when_not(tmp_path, monkeypatch, present):
+    tc = toolchains.get('sn-n64-272-0001')
+    assert tc.optional == ['sn-n64-272-970404'] and 'sn-n64-272-970404' not in tc.requires
+    folders = {tid: tmp_path / tid for tid in ['sn-n64-272-0001', *tc.requires, 'sn-n64-272-970404']}
+    monkeypatch.setattr(toolchains, 'runtime_dirs', lambda tid: tuple(folders[t] for t in [tid, *toolchains.get(tid).requires]))
+    monkeypatch.setattr(toolchains, 'installed', lambda tid, *a, **k: {} if present or tid != 'sn-n64-272-970404' else None)
+    monkeypatch.setattr(toolchains, 'path', lambda tid, *a, **k: folders[tid])
+    cfg = compiler_config(tmp_path, {'compiler': {'toolchain': 'sn-n64-272-0001'}})
+    given = cfg.cmd[cfg.cmd.index('--native-cpp') + 1]
+    assert not any('{tc?:' in arg for arg in cfg.cmd)
+    if present:
+        assert given == str(folders['sn-n64-272-970404'] / 'cpp') and str(folders['sn-n64-272-970404']) in cfg.ro_paths
+    else:
+        assert given == '' and str(folders['sn-n64-272-970404']) not in cfg.ro_paths
+
+
+def built(obj):
+    """What an object holds, without the source-file symbol the converter names after its temporary file (two runs
+    of the same pipeline differ there)."""
+    import io
+
+    from elftools.elf.elffile import ELFFile
+    from elftools.elf.relocation import RelocationSection
+    from elftools.elf.sections import SymbolTableSection
+    elf = ELFFile(io.BytesIO(obj))
+    value = []
+    for section in elf.iter_sections():
+        if isinstance(section, SymbolTableSection):
+            value.append(sorted((s.name, s['st_value'], s['st_size'], s['st_info']['type'], s['st_shndx'])
+                                for s in section.iter_symbols() if s['st_info']['type'] != 'STT_FILE'))
+        elif isinstance(section, RelocationSection):
+            value.append((section.name, [(r['r_offset'], r['r_info_type']) for r in section.iter_relocations()]))
+        elif section['sh_type'] in ('SHT_PROGBITS', 'SHT_NOBITS'):
+            value.append((section.name, section['sh_size'], section.data() if section['sh_type'] == 'SHT_PROGBITS' else b''))
+    return value
+
+
+def test_native_cpp_builds_the_same_objects_as_cppn64(tmp_path):
+    """Real compilers: the same code, data, relocations and symbols whether build 0001's preprocessor runs under
+    wibo or natively."""
+    import sys
+    tid = 'sn-n64-272-0001'
+    if sys.platform != 'darwin' or any(toolchains.installed(t) is None for t in [tid, 'wibo', 'psyq-obj-parser', 'sn-n64-272-970404']):
+        pytest.skip('needs a Mac with SN64 0001, wibo, the converter and the reconstructed SN64 GCC installed')
+    cfg = compiler_config(tmp_path, {'compiler': {'toolchain': tid}})
+    assert cfg.cmd[cfg.cmd.index('--native-cpp') + 1].endswith('/cpp')
+    without = compiler_config(tmp_path, {'compiler': {'toolchain': tid}})
+    without.cmd = [arg if not arg.endswith('sn-n64-272-970404/cpp') else '' for arg in without.cmd]
+    header = '#define SQ(x) ((x)*(x))\ntypedef struct { int a, b; } Pair;\nextern int gValue;\n'
+    for source in ['int probe(int a,int b){return a+b;}',
+                   'int probe(Pair *p, int n) { int i, t = 0; for (i = 0; i < n; i++) t += SQ(p[i].a) - p[i].b; return t + gValue; }',
+                   'float probe(float x){ /* comment */ return x*1.25f; }\n#line 40 "other.c"\nint second(void){return __LINE__;}']:
+        native, original = compile_source(cfg, header, source), compile_source(without, header, source)
+        assert native.ok and original.ok, (native.log, original.log)
+        assert built(native.obj) == built(original.obj)
