@@ -36,11 +36,11 @@ def test_compiler_flags_are_part_of_the_policy_profile(monkeypatch):
     assert policy.profile(net, proj, fn) != first
 
 
-def test_adaptive_family_order_interleaves_original_exploration(monkeypatch):
+def test_adaptive_family_order_feeds_unmeasured_families_in_and_leaves_poor_ones_last(monkeypatch):
     net = FakeNet()
     proj, fn = net.project_row('game'), net.function()
     monkeypatch.setattr(policy, 'factors', lambda *a: {'useful':4,'bad':0.25})
-    assert policy.order(net, proj, fn, [], ['bad','unknown','useful']) == ['useful','bad','unknown']
+    assert policy.order(net, proj, fn, [], ['bad','unknown','useful']) == ['useful','unknown','bad']
 
 
 def test_metrics_audit_records_origin_and_collection_window_without_merging_legacy_rates():
@@ -68,3 +68,31 @@ def test_explicit_nonexact_zero_does_not_train_a_verified_win():
     policy.record(net,'same','register','family',20,0,100,exact=False)
     row = net.store.one('SELECT * FROM repair_policy')
     assert row['improved'] == 1 and row['matched'] == 0
+
+
+def test_a_family_with_a_few_matches_counts_as_measured_before_it_has_enough_trials():
+    net = FakeNet()
+    for _ in range(13):
+        policy.record(net, 'profile', 'call', 'narrow_repair', 20, 0, 10)
+    for _ in range(13):
+        policy.record(net, 'profile', 'call', 'misses', 20, None, 10)
+    factors = policy.factors(net, 'profile', 'call')
+    assert 1 < factors['narrow_repair'] <= policy.EARLY_MAX_FACTOR
+    assert 'misses' not in factors  # no match, too few trials: still unmeasured
+
+
+def test_early_evidence_never_outranks_a_family_with_enough_trials_of_the_same_yield():
+    net = FakeNet()
+    for _ in range(40):
+        policy.record(net, 'profile', 'call', 'proven', 20, 0, 10)
+    policy.record(net, 'profile', 'call', 'lucky', 20, 0, 10)
+    factors = policy.factors(net, 'profile', 'call')
+    assert factors['lucky'] <= policy.EARLY_MAX_FACTOR < factors['proven'] <= policy.MAX_FACTOR
+
+
+def test_an_early_match_family_is_ranked_ahead_of_unmeasured_ones(monkeypatch):
+    net = FakeNet()
+    proj, fn = net.project_row('game'), net.function()
+    for _ in range(5):
+        policy.record(net, policy.profile(net, proj, fn), '', 'narrow_repair', 20, 0, 10)
+    assert policy.order(net, proj, fn, [], ['other', 'narrow_repair'])[0] == 'narrow_repair'

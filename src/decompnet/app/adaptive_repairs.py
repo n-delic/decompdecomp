@@ -13,6 +13,13 @@ from ..project import compiler_for
 from . import trial_bookkeeping
 
 MIN_TRIALS = 32
+# A family with verified matches counts as measured before it has MIN_TRIALS, at most EARLY_MAX_FACTOR until it has them.
+# The narrow repairs that match in a few trials apply to few functions, so spread over profiles and mismatch kinds they
+# rarely reach MIN_TRIALS in any one cell: on a 1,931-function N64 game 68 cells held 100 matches (mmio_address: 11
+# matches in 13 trials) and every one of them was queued as unmeasured, one slot in EXPLORE_EVERY. The smoothing below
+# already shrinks a few trials toward the prior; the lower ceiling keeps one lucky hit from leading the queue.
+EARLY_MATCHES = 1
+EARLY_MAX_FACTOR = 2.0
 MIN_FACTOR, MAX_FACTOR = 0.25, 4.0
 SCHEMA = '''CREATE TABLE IF NOT EXISTS repair_policy(
  profile TEXT NOT NULL, focus TEXT NOT NULL, family TEXT NOT NULL,
@@ -92,7 +99,8 @@ def factors(net, key, focus):
     times=[r['elapsed_ms']/r['attempted'] for r in rows if r['attempted']>=MIN_TRIALS and r['elapsed_ms']>0]
     typical=statistics.median(times) if times else None
     for row in rows:
-        if row['attempted'] < MIN_TRIALS:
+        early = row['attempted'] < MIN_TRIALS
+        if early and row['matched'] < EARLY_MATCHES:
             continue
         # Smooth sparse evidence, favour verified wins, and never remove an applicable mutation.
         rate = (row['improved'] + 3 * row['matched'] + 1) / (row['attempted'] + MIN_TRIALS)
@@ -108,8 +116,8 @@ def factors(net, key, focus):
                       if row['elapsed_ms'] > 0 and prior_ms else None)
         reference = 1 / prior_ms if prior_ms else None
         throughput = math.sqrt(exact_rate / reference) if exact_rate and reference else 1
-        result[row['family']] = max(MIN_FACTOR, min(MAX_FACTOR,
-            min(2, math.sqrt(rate * MIN_TRIALS)) * speed * max(.5, min(2, throughput))))
+        factor = min(2, math.sqrt(rate * MIN_TRIALS)) * speed * max(.5, min(2, throughput))
+        result[row['family']] = max(MIN_FACTOR, min(EARLY_MAX_FACTOR if early else MAX_FACTOR, factor))
     from . import repair_promotion
     return repair_promotion.cap(net,key,result)
 
