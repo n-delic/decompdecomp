@@ -48,7 +48,14 @@ class Shared:
         with self.path.open("w+b") as f:
             f.truncate(TOTAL)
             self.map = mmap.mmap(f.fileno(), TOTAL)
+        self.lockstep = lockstep
         self.set_gate(0 if lockstep else FREE)  # lockstep: the emulator parks at its first retrace
+
+    def reset(self) -> None:
+        """As new, for another emulator run on the same file (the last one must have ended): no frame, no retrace
+        published, no sound, the pad released."""
+        self.map[:HEADER] = bytes(HEADER)
+        self.set_gate(0 if self.lockstep else FREE)
 
     def _word(self, at: int) -> int:
         return int.from_bytes(self.map[at:at + 4], sys_order)
@@ -113,18 +120,24 @@ class Shared:
 
 
 
-def start(rom: Path, shared: Shared, *, expansion_pak: bool = False) -> subprocess.Popen:
+def start(rom: Path, shared: Shared, *, expansion_pak: bool = False, saves: Path | None = None) -> subprocess.Popen:
     """The emulator running `rom` live, writing to and reading from `shared`; its configuration folder goes when it
-    ends. Raises EmulatorError when it isn't installed."""
+    ends. `saves`: the folder the game's saves are kept in (else the emulator's usual one in the user's home).
+    Raises EmulatorError when it isn't installed."""
     folder = installed()
     if folder is None:
         raise EmulatorError("The reversing emulator isn't installed: install mupenRE under Compilers & tools → Tools (it builds from its source).")
     folder = current(folder)
     env = {**os.environ, "EMU_LIVE": str(shared.path.resolve())}
-    for key in ("EMU_INPUT", "EMU_DUMP", "EMU_WATCH", "EMU_BREAK", "EMU_FRAME_DUMP", "EMU_INPUT_CLOCK", "EMU_VIS", "EMU_8MB"):
+    for key in ("EMU_INPUT", "EMU_DUMP", "EMU_WATCH", "EMU_BREAK", "EMU_FRAME_DUMP", "EMU_INPUT_CLOCK", "EMU_VIS", "EMU_8MB", "EMU_SAVES", "EMU_UNPACED"):
         env.pop(key, None)
     if expansion_pak:
         env["EMU_8MB"] = "1"
+    if shared.lockstep:  # the viewer's gate paces it
+        env["EMU_UNPACED"] = "1"
+    if saves is not None:
+        Path(saves).mkdir(parents=True, exist_ok=True)
+        env["EMU_SAVES"] = str(Path(saves).resolve())
     tmp = tempfile.TemporaryDirectory(prefix="decomp-emulator-")
     env["EMU_CONFIG"] = tmp.name
     argv = [folder / "mupenre-frontend", folder / f"libmupen64plus.{SO}", folder / f"rsp-hle.{SO}",

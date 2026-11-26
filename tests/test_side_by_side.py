@@ -365,6 +365,7 @@ def test_a_slowed_port_goes_on_for_a_share_of_the_consoles_retraces_and_a_held_o
     ls = sbs.Lockstep.__new__(sbs.Lockstep)
     ls.session, ls.interval, ls.offset, ls.stop = Quiet(), 0.0, 0, False
     ls.running, ls.stepping, ls.speed, ls.port_vi, ls.frame, ls.note = True, False, 0.5, 1, None, ""
+    ls.history, ls.sent_pad = [], None
     asked = []
     ls._wait = lambda n, give_up=30.0, port=None, port_vi=None: (asked.append((n, port_vi, port is not None)), (b"p", b"e"))[1]
     ls._compare = lambda *a: None
@@ -388,3 +389,150 @@ def test_the_speed_asked_for_is_kept_between_held_and_full():
     for asked, kept in ((0.75, 0.75), (3, 1.0), (-1, 0.0), (float("nan"), 1.0)):
         ls.set_speed(asked)
         assert ls.speed == kept
+
+
+class Both:
+    """Both sides as the stepping thread sees them: what each was given, in order."""
+
+    def __init__(self):
+        self.log, self.port_vi, self.gate = [], 1, 0
+        self.shared = self
+        self.saved = None
+
+    # the console's shared file
+    def set_gate(self, n):
+        self.gate = n
+        self.log.append(("console", n))
+
+    def set_pad(self, *pad):
+        self.log.append(("pad", pad))
+
+    def parked(self):
+        return self.gate + 1
+
+    # the session
+    def restart(self, mark):
+        self.log, self.port_vi, self.gate = [], 1, 0
+
+    def port(self, path, post=False, timeout=10):
+        if path.startswith("/gate"):
+            self.log.append(("port", int(path.split("=")[1])))
+            self.port_vi += 1
+        elif path == "/state":
+            return b'{"parked": %d}' % self.port_vi
+        elif path.startswith("/input"):
+            self.log.append(("input", path))
+        return b""
+
+
+def _stepper(both):
+    ls = sbs.Lockstep.__new__(sbs.Lockstep)
+    ls.session, ls.offset, ls.stop, ls.interval = both, 0, False, 0.0
+    ls.n = ls.p = 1
+    ls.history, ls.sent_pad, ls.pad, ls.held, ls.speed = [], None, (0, 0, 0), {}, 1.0
+    ls.lock, ls.frame, ls.number, ls.first_vi, ls.note = threading.Condition(), None, 0, 0, ""
+    ls.running, ls.stepping = True, False
+    ls._port = both.port
+    ls._wait = lambda n, give_up=30.0, port=None, port_vi=None: (bytes(512), bytes(512))
+    ls._compare, ls.new = lambda *a: None, []
+    return ls
+
+
+def test_a_replay_gives_both_sides_what_they_were_given_retrace_by_retrace():
+    both = Both()
+    ls = _stepper(both)
+    for step in range(40):
+        if step == 5:
+            ls.press(0x1000, 0, 0)  # Start, tapped
+            ls.press(0, 0, 0)
+        if step == 20:
+            ls.press(0x8000, 40, -3)
+        advance = not 25 <= step < 30 and step % 7 != 3  # held for a while, and slowed now and then
+        ls._apply_pad(counts=advance)
+        assert ls._go_on(advance)
+    lived, history = list(both.log), [list(run) for run in ls.history]
+    assert sum(run[4] for run in history) == 40 and len(history) < 40
+    same = sbs.fingerprint(bytes(512))
+    ls.running = True
+    ls._replay({"history": history, "first_vi": 7, "port": same, "console": same})
+    assert both.log == lived
+    assert (ls.n, ls.history, ls.first_vi, ls.running) == (41, history, 7, False)  # paused there, and bookmarkable again
+    assert "exactly as they were" in ls.message and ls.new == []
+
+
+def test_a_replay_says_which_side_is_not_as_it_was_and_the_page_is_ignored_meanwhile():
+    both = Both()
+    ls = _stepper(both)
+    ls._replay({"history": [[0, 0, 0, 1, 3]], "port": sbs.fingerprint(b"\1" * 512), "console": sbs.fingerprint(bytes(512))})
+    assert "port (2 blocks differ)" in ls.message and "console" not in ls.message
+    ls.replaying = {"done": 0, "total": 1}
+    ls.press(0x8000, 0, 0)
+    assert ls.pad == (0, 0, 0) and not ls.held
+    with pytest.raises(NetworkError):
+        ls.ask("save")
+    ls.ask("stop")
+    assert ls.cancel
+
+
+def test_bookmarks_are_kept_one_a_file_and_only_the_listed_ones_are_touched(tmp_path):
+    marks = sbs.Bookmarks(tmp_path / "bookmarks")
+    assert marks.list() == []
+    one, two = marks.add({"name": "retrace 5"}), marks.add({"name": "retrace 9"})
+    (tmp_path / "bookmarks" / "broken.json").write_text("{", encoding="utf-8")
+    again = sbs.Bookmarks(tmp_path / "bookmarks")
+    assert [m["id"] for m in again.list()] == [two, one] and again.load(one) == {"name": "retrace 5"}
+    for ident in ("../secret", "broken", ""):
+        with pytest.raises(NetworkError):
+            again.load(ident)
+    again.delete(one)
+    assert [m["name"] for m in again.list()] == ["retrace 9"]
+
+
+def test_a_port_started_again_runs_on_copies_of_the_saves_the_run_started_from(tmp_path, monkeypatch):
+    started, ended = [], []
+
+    class Proc:
+        pid = 41
+
+        def poll(self):
+            return None
+
+        def kill(self):
+            ended.append(self)
+
+        def wait(self, timeout=None):
+            return 0
+
+    monkeypatch.setattr(sbs.subprocess, "Popen", lambda argv, **kw: (started.append((argv, kw["env"])), Proc())[1])
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: type("R", (), {"close": lambda s: None})())
+    (tmp_path / "game.eep").write_bytes(b"progress")
+    port = sbs.Port(Proc(), ["game", "rom"], tmp_path, {})
+    (tmp_path / "game.eep").write_bytes(b"later progress")
+    url = port.restart(port.saves, tmp_path / "replay")
+    env = started[0][1]
+    assert url == f"http://127.0.0.1:{env['PORT_LIVE']}/" and port.pid == 41 and ended
+    assert Path(env["PORT_SAVE"]).read_bytes() == b"progress"
+    assert (tmp_path / "game.eep").read_bytes() == b"later progress"  # the user's own save is left alone
+    assert not Path(env["PORT_SRAM"]).exists()  # none then, none now
+    port.terminate = lambda: None
+    port.closed = True
+    with pytest.raises(NetworkError):
+        port.restart({}, tmp_path / "replay")
+    with pytest.raises(NetworkError):
+        sbs.write_saves({"../out": ""}, tmp_path / "w")
+
+
+def test_the_console_started_again_forgets_its_last_run_and_keeps_its_saves_where_told(tmp_path, monkeypatch):
+    shared = live.Shared(tmp_path / "live.bin", lockstep=True)
+    shared.set_gate(50)
+    shared.map[live.VIVI:live.VIVI + 4] = (50).to_bytes(4, live.sys_order)
+    shared.reset()
+    assert shared.parked() == 0 and shared._word(live.GATE) == 0
+    seen = {}
+    monkeypatch.setattr(live, "installed", lambda: tmp_path)
+    monkeypatch.setattr(live, "current", lambda folder: folder)
+    monkeypatch.setattr(live.limits, "capped", lambda argv: argv)
+    monkeypatch.setattr(live.subprocess, "Popen", lambda argv, **kw: (seen.update(kw["env"]), type("P", (), {})())[1])
+    live.start(tmp_path / "rom.z64", shared, saves=tmp_path / "saves")
+    assert seen["EMU_SAVES"] == str((tmp_path / "saves").resolve()) and seen["EMU_UNPACED"] == "1"
+    shared.close()
