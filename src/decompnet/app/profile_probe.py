@@ -64,7 +64,8 @@ RESERVE = 3  # compiles left in a search's allowance before one more profile: it
 # v3: the project's most used per-function profiles are planned too, so passes finished without them run again (cached
 # verdicts need no compile)
 # v4: every -O level of the function's compiler is judged, so passes finished without them run again
-SIGNATURE = 'profile-probe-v4:'
+# v5: the draft's record arrays are judged under -O1 too (judge_record_arrays)
+SIGNATURE = 'profile-probe-v5:'
 FP_FLAGS = ('-mfp32', '-mfp64')
 # libultra's own names: osXxx, __osXxx, __rmon*, __sc*, the routines whose compiler was the library's, not the game's
 LIBRARY_NAME = re.compile(r'^_{0,2}(?:os[A-Z]|rmon|sc[A-Z])')
@@ -427,6 +428,12 @@ def run(search, agent, proj, fn, source, *, climb=True) -> bool:
                     return True
                 if drafted is not None:
                     scores.append({**item, 'score': drafted, 'draft': True})
+            if item['family'] == 'level' and '-O1' in item['flags']:
+                # spellings that only the old level tells apart: no better under the own settings, so no search keeps them
+                matched, found = judge_record_arrays(search, agent, proj, fn, draft or source, facts, item, profile)
+                if matched:
+                    return True
+                scores.extend(found)
             if item['family'] in ('small_data', 'small_data_fp') and score is not None:
                 # the externs the target splits, declared as arrays above the threshold (extern_size_widen)
                 from . import small_data_fingerprints
@@ -467,6 +474,26 @@ def run(search, agent, proj, fn, source, *, climb=True) -> bool:
     if not matched and search.tested > spent:  # (no allowance for a single compile: a later pass searches)
         keep(net, proj, fn, source, facts.own, {**record, 'searched': True})
     return matched
+
+
+def judge_record_arrays(search, agent, proj, fn, text, facts, item, profile) -> tuple[bool, list[dict]]:
+    """`text` with its byte offsets off one global written as the record array declared there, judged under `profile`:
+    (one was exact, the scores). A table initialiser matched only as that array under `-O1`, from its machine draft
+    that scored the same under either level."""
+    from decomprepair import global_offset_records
+
+    from . import deep_profiles
+    found = []
+    for _, child in global_offset_records.variants(text, fn['name'], facts.header):
+        if search.limit - search.tested < RESERVE:
+            break
+        search.check()
+        score = deep_profiles.probe(search, agent, proj, fn, child, profile, scored=True, review_variants=False)
+        if score == 0:
+            return True, found
+        if score is not None:
+            found.append({**item, 'family': 'level_records', 'score': score, 'draft': True})
+    return False, found
 
 
 def keep(net, proj, fn, source, own, record) -> None:
