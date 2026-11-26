@@ -499,7 +499,11 @@ def _load_images(net, proj) -> list[tuple[int, int, int]]:
             except (OSError, yaml.YAMLError):
                 continue
             if isinstance(data, dict) and isinstance(data.get("segments"), list):
-                images = split.load_images(data)
+                # The raw data after the code is read from the ROM the split describes, only when that is the
+                # project's: a packed game's split is of its unpacked copy, at other offsets.
+                own = (data.get("options") or {}).get("target_path") in (None, net.cfg(proj)["rom"].get("file"))
+                images = split.load_images(data, net._rom(proj)[0] if own else None,
+                                           big_endian=bool(net.cfg(proj).get("big_endian", True)))
                 break
         cache[key] = (rom_entry, images)
     return cache[key][1]
