@@ -877,14 +877,18 @@ class Store:
     def _wal_stamp(self):
         """The WAL index header SQLite keeps at the start of the -shm file (its change counter, frame count and
         salts), or None. Every connection's commit changes it, in this process or another: it is shared memory."""
-        if self.path == IN_MEMORY:
+        if self.path == IN_MEMORY or not hasattr(os, 'pread'):
+            # Windows has no pread. The -shm file was opened and then dropped on every call there, until a long
+            # restore ran out of files ("[Errno 24] Too many open files").
             return None
         fd = getattr(self, '_shm_fd', None)
         try:
             if fd is None:
                 fd = self._shm_fd = os.open(self.path + '-shm', os.O_RDONLY)
             header = os.pread(fd, 48, 0)
-        except (OSError, AttributeError):
+        except OSError:
+            if fd is not None:
+                os.close(fd)
             self._shm_fd = None
             return None
         return header if len(header) == 48 else None
