@@ -159,6 +159,10 @@ def _open_when_ready(port: int) -> None:
 
 
 def run(args) -> int:
+    from . import native_library
+    # first of all: `support` already imports the repair library, whose modules choose a kernel once, when imported
+    native_library.ensure_kernels()
+
     from .support import file_log
 
     headless = getattr(args, 'cmd', None) == 'serve' or os.environ.get('DECOMP_SERVE') == '1'
@@ -179,6 +183,8 @@ def run(args) -> int:
     log = file_log(internal / "logs" / "decomp.log")  # from the first line on: whatever stops the app is in it
     from . import build_info
     log.info("%s %s starting (%s)", edition.NAME, build_info.label(), sys.executable)
+    if why := native_library.unavailable(native_library.package_folder()):
+        log.info("the repair library is not compiled here: %s", why)
     from .. import spawner
     spawner.install()  # macOS: no subprocess forks the app (spawner.py says why)
     print(f"Starting {edition.NAME} {__import__('decompnet').__version__}…", flush=True)
@@ -314,6 +320,8 @@ def _start(args,home,internal,state_file,log,restarted,headless):
     elif not restarted or restarted.get("window", True):
         _open_when_ready(port)
     ready()
+    from . import native_library
+    native_library.compiler.start()  # the rest of the repair library, in the background
     try:
         Server(server_config(app), quit_app).run(sockets=[sock])
     except Exception:  # quit_app ends the process at once: say why first, or the app just vanishes

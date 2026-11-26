@@ -614,11 +614,20 @@ without it. A compile of such a function takes about 20 ms, so this is a few per
 ### Compiled library kernels (Cython, optional)
 
 decomp-repair's `native_build.py` builds its typed Cython kernels (`_scan.pyx`: the bracket and loop scans many families
-share, 10x to 70x faster per call, a few seconds to compile). The bundle builds run it on the library they installed
-(`packaging/build_library_native.py`; skipped with `DECOMP_NATIVE_LIBRARY=0`, with an older library, or without a C
-compiler). Compiling the library's plain modules unchanged (`native_build.py --all`, about an hour) measured only about
-3% on a draft pass (0.96 s against 0.99 s), so bundles don't do it; the larger gains came from fixing the library's
-quadratic scans and regex backtracking in plain Python (1.92 s to 0.27 s on real functions).
+share, 10x to 70x faster per call, a few seconds to compile) and, with `--all`, plain library modules unchanged (measured
+about 3% on a draft pass, 0.96 s against 0.99 s: the larger gains came from fixing the library's
+quadratic scans and regex backtracking in plain Python, 1.92 s to 0.27 s on real functions). All 151 modules build in
+30 s with 8 jobs on an 18-core Mac.
+
+The app runs both itself (`app/native_library.py`), because `uv sync` compiles nothing and a checkout ran interpreted
+until somebody remembered to build. The kernels are built as the app starts, before anything imports the library (a
+module chooses its kernel once). The plain modules follow in the background at low priority on up to four cores,
+only those without a current build, with a row and Stop in Background work; the app itself uses them from its next
+start, processes started later at once. `cython` and `setuptools` are dependencies for this; a C compiler is the
+system's, and without one (or with `DECOMP_NATIVE_LIBRARY=0`) the library stays interpreted and behaves the same.
+
+Bundles are compiled when built (`packaging/build_library_native.py`: the kernels; `DECOMP_NATIVE_LIBRARY=all` adds the
+plain modules), and a signed or read-only copy is never compiled at run time.
 
 ### Incremental notification source cursors
 
