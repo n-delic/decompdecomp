@@ -11,8 +11,9 @@ does), and each half shows its own frame count. With --lockstep (the default whe
 the clock: the port (PORT_LOCKSTEP and PORT_VTIME) and the emulator (the shared file's gate) each park before every
 retrace, the viewer reads both RAMs there, says which regions differ and which are new at this retrace, sets the one
 pad for both and lets them go on one retrace. A game that times its menus in retraces then stays on the same screen on
-both sides, and the first retrace at which the RAMs part is on the page. Pause, Step (one retrace) and the rate are
-in the page.
+both sides, and the first retrace at which the RAMs part is on the page. The port still gets ahead in the game (it loads
+in no time and never drops a frame), so the page can slow it: it then goes on for only that share of the console's
+retraces, or is held while the console catches up. Pause, Step (one retrace) and the port's speed are in the page.
 
     python -m decompnet.port.wasm.side_by_side ROM (--port-url http://127.0.0.1:PORT/ | --program build/game)
 """
@@ -48,7 +49,8 @@ h2{margin:0 0 6px;font-size:14px;font-weight:600}p{text-align:center;margin:6px}
 <div class=side><h2>Port</h2><canvas id=p width=320 height=240></canvas><p id=ps></p></div>
 <div class=side><h2>Console (mupenRE)</h2><canvas id=e width=320 height=240></canvas><p id=es></p></div></div>
 <p>Sound: <select id=snd><option value=''>off</option><option value=/port/audio>port</option><option value=/emu/audio>console</option></select> &nbsp; <button id=shot>Save screenshot</button> <span id=shotmsg></span></p>
-<p id=hud hidden><button id=run>Pause</button> <button id=step>Step</button> <span id=vi></span></p>
+<p id=hud hidden><button id=run>Pause</button> <button id=step>Step</button> &nbsp; <label>Port speed <select id=speed title="Slow or hold the port so the console can keep up with it">
+<option value=100>100%</option><option value=95>95%</option><option value=90>90%</option><option value=80>80%</option><option value=75>75%</option><option value=66>66%</option><option value=50>50%</option><option value=25>25%</option><option value=0>held</option></select></label> &nbsp; <span id=vi></span></p>
 <pre id=diff hidden style="margin:6px auto;max-width:900px;text-align:left;color:#9c9;font:12px ui-monospace,monospace"></pre>
 <p>Arrows steer &middot; X: A &middot; Z: B &middot; Enter: Start &middot; Space: Z &middot; Q/W: L/R &middot; I/J/K/L: C buttons &middot; or a gamepad. Both sides get the same pad.</p>
 <script>
@@ -100,11 +102,14 @@ try{const png=await new Promise((ok,no)=>composite().toBlob(b=>b?ok(b):no(new Er
 const r=await fetch('/screenshot',{method:'POST',headers:{'X-Side-By-Side':'1'},body:png});const answer=await r.json();
 if(!r.ok)throw new Error(answer.error||r.status);shotmsg.textContent='Saved to '+answer.path;}
 catch(e){shotmsg.textContent='Not saved: '+e.message;}finally{shot.disabled=false;}};
-let running=true;
+let running=true,speedSending=false;const speed=document.getElementById('speed');
+// (blurred once chosen: the arrow keys are the game's, not the list's)
+speed.onchange=async()=>{speedSending=true;speed.blur();try{await fetch('/control?speed='+speed.value/100,{method:'POST'});}catch(e){}speedSending=false;};
 async function status(){try{const r=await fetch('/state');const d=await r.json();
 if(d.lockstep){document.getElementById('hud').hidden=false;document.getElementById('diff').hidden=false;
 document.getElementById('run').textContent=d.running?'Pause':'Resume';running=d.running;
-document.getElementById('vi').textContent='retrace '+d.vi+' · '+d.blocks+' differing 256-byte blocks'+(d.first_vi?' · first seen at retrace '+d.first_vi:'');
+if(document.activeElement!==speed&&!speedSending)speed.value=Math.round(d.speed*100);
+document.getElementById('vi').textContent=(d.port_vi===d.vi?'retrace '+d.vi:'console retrace '+d.vi+', port '+d.port_vi)+' · '+d.blocks+' differing 256-byte blocks'+(d.first_vi?' · first seen at retrace '+d.first_vi:'');
 document.getElementById('diff').textContent=(d.new.length?'new at this retrace:\n'+d.new.join('\n')+'\n\n':'')+'regions (port vs console):\n'+d.regions.join('\n')+(d.note?'\n\n'+d.note:'');}}catch(e){}setTimeout(status,250);}
 status();
 document.getElementById('run').onclick=()=>fetch('/control?run='+(running?0:1),{method:'POST'});
@@ -261,6 +266,7 @@ class Lockstep:
         self.session, self.interval, self.offset, self.ranges = session, 1.0 / rate, offset, ranges
         self.symbols = symbols
         self.running, self.stepping, self.stop = True, False, False
+        self.speed, self.port_vi = 1.0, 1  # the share of the console's retraces the port goes on for, and its retrace
         self.pad, self.sent_pad = (0, 0, 0), None
         self.held: dict[int, int] = {}  # button bit: retraces it stays down at least (a tap shorter than a game's poll is still seen)
         self.vi, self.blocks, self.first_vi, self.new, self.regions, self.note = 0, 0, 0, [], [], "starting"
@@ -276,14 +282,16 @@ class Lockstep:
         with urllib.request.urlopen(request, timeout=timeout) as r:
             return r.read()
 
-    def _wait(self, n: int, give_up: float = 30.0):
-        """Both RAMs at retrace n, once both sides have parked there: (port, console), or None if one didn't."""
+    def _wait(self, n: int, give_up: float = 30.0, port: bytes | None = None, port_vi: int | None = None):
+        """Both RAMs once both sides have parked, the console at retrace n and the port at `port_vi` (n unless the port
+        has been slowed): (port, console), or None if one didn't. `port`: its RAM when it was held there already."""
         end = time.monotonic() + give_up
-        port = emu = None
+        port_vi = n if port_vi is None else port_vi
+        emu = None
         while time.monotonic() < end and not self.stop:
             if port is None:
                 try:
-                    port = self._port(f"/ram?vi={n}") or None
+                    port = self._port(f"/ram?vi={port_vi}") or None
                 except OSError:
                     port = None
             if emu is None:
@@ -296,17 +304,21 @@ class Lockstep:
     TAP = 4  # retraces
 
     def press(self, buttons: int, x: int, y: int) -> None:
-        """The page's pad, kept until the next retrace; a button pressed since the last one stays down for TAP retraces."""
+        """The page's pad, kept until the next retrace; a button pressed since the last one stays down for TAP of the
+        port's retraces (the console's while the port is held), so a slowed port still sees it."""
         for bit in range(16):
             if buttons >> bit & 1 and not self.pad[0] >> bit & 1:
                 self.held[bit] = self.TAP
         self.pad = (buttons, x, y)
 
-    def _apply_pad(self) -> None:
+    def set_speed(self, speed: float) -> None:
+        self.speed = min(1.0, max(0.0, speed)) if speed == speed else 1.0  # (a NaN is no speed)
+
+    def _apply_pad(self, counts: bool = True) -> None:
         buttons = self.pad[0]
         for bit in list(self.held):
             buttons |= 1 << bit
-            self.held[bit] -= 1
+            self.held[bit] -= counts
             if self.held[bit] <= 0:
                 del self.held[bit]
         pad = (buttons, self.pad[1], self.pad[2])
@@ -330,17 +342,20 @@ class Lockstep:
         self.regions = regions(blocks, port, emu, 12, self.symbols)
 
     def _run(self) -> None:
-        n = 1
+        n = p = 1  # the retrace each side is parked before: the console's (but for the offset), and the port's
+        owed = 0.0  # port retraces due: `speed` more with each of the console's
+        held: bytes | None = None  # the port's RAM, kept while it isn't let go on
         while not self.stop:
             if not (self.running or self.stepping):
                 time.sleep(0.02)
                 continue
             began = time.monotonic()
-            both = self._wait(n)
+            both = self._wait(n, port=held, port_vi=p)
             if both is None:
                 self.note = f"waiting: retrace {n} not reached by both sides yet (the port needs PORT_LOCKSTEP=1 PORT_VTIME=1)"
                 continue
-            self.note = ""
+            self.note, held = "", both[0]
+            self.port_vi = p
             self._compare(n, *both)
             try:
                 frame = self._port("/frame?after=-1")
@@ -351,12 +366,17 @@ class Lockstep:
                     self.number += 1
                     self.frame = frame[:8] + struct.pack("<I", self.number) + frame[12:]
                     self.lock.notify_all()
-            self._apply_pad()
+            speed = self.speed
+            owed = owed + speed if speed else 0.0
+            advance = owed >= 1 - 1e-9
+            self._apply_pad(counts=advance or not speed)
             self.stepping = False
-            try:  # let both go on to the next retrace
-                self._port(f"/gate?to={n}", post=True)
-            except OSError:
-                continue
+            if advance:
+                try:  # let the port go on to its next retrace
+                    self._port(f"/gate?to={p}", post=True)
+                except OSError:
+                    continue
+                owed, held, p = max(0.0, owed - 1), None, p + 1
             self.session.shared.set_gate(n + self.offset)
             n += 1
             left = self.interval - (time.monotonic() - began)
@@ -369,7 +389,7 @@ class Lockstep:
             return self.frame if self.frame is not None and self.number != after else None
 
     def state(self) -> dict:
-        return {"lockstep": True, "running": self.running, "vi": self.vi, "blocks": self.blocks, "first_vi": self.first_vi,
+        return {"lockstep": True, "running": self.running, "speed": self.speed, "port_vi": self.port_vi, "vi": self.vi, "blocks": self.blocks, "first_vi": self.first_vi,
                 "new": self.new, "regions": self.regions, "note": self.note}
 
     def close(self) -> None:
@@ -479,6 +499,11 @@ class Session:
                         session.lockstep.running = q["run"][0] == "1"
                     if "step" in q:
                         session.lockstep.running, session.lockstep.stepping = False, True
+                    if "speed" in q:
+                        try:
+                            session.lockstep.set_speed(float(q["speed"][0]))
+                        except ValueError:
+                            return self._send(b"", "text/plain", 400)
                     return self._send(b"", "text/plain")
                 if url.path == "/screenshot":
                     return self._screenshot()

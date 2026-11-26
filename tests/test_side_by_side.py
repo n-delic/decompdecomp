@@ -346,3 +346,45 @@ def test_a_screenshot_is_saved_as_a_new_png_and_only_from_the_page_itself(tmp_pa
         assert len(list((tmp_path / "downloads").iterdir())) == 1
     finally:
         session.close()
+
+
+def test_a_slowed_port_goes_on_for_a_share_of_the_consoles_retraces_and_a_held_one_waits():
+    port_gates, emu_gates, pads = [], [], []
+
+    class Shared:
+        def set_gate(self, n):
+            emu_gates.append(n)
+            if len(emu_gates) == 8:
+                ls.set_speed(0)
+            if len(emu_gates) == 12:
+                ls.stop = True
+
+    class Quiet:
+        shared = Shared()
+
+    ls = sbs.Lockstep.__new__(sbs.Lockstep)
+    ls.session, ls.interval, ls.offset, ls.stop = Quiet(), 0.0, 0, False
+    ls.running, ls.stepping, ls.speed, ls.port_vi, ls.frame, ls.note = True, False, 0.5, 1, None, ""
+    asked = []
+    ls._wait = lambda n, give_up=30.0, port=None, port_vi=None: (asked.append((n, port_vi, port is not None)), (b"p", b"e"))[1]
+    ls._compare = lambda *a: None
+    ls._apply_pad = lambda counts=True: pads.append(counts)
+
+    def port(path, post=False, timeout=10):
+        if path.startswith("/gate"):
+            port_gates.append(int(path.split("=")[1]))
+        return b""
+
+    ls._port = port
+    ls._run()
+    assert emu_gates == list(range(1, 13))  # the console goes on every retrace
+    assert port_gates == [1, 2, 3, 4]  # half as often, then not at all while held
+    assert asked[:3] == [(1, 1, False), (2, 1, True), (3, 2, False)]  # a port kept waiting isn't read again
+    assert pads[:4] == [False, True, False, True] and all(pads[8:])  # taps count the port's retraces, the console's if held
+
+
+def test_the_speed_asked_for_is_kept_between_held_and_full():
+    ls = sbs.Lockstep.__new__(sbs.Lockstep)
+    for asked, kept in ((0.75, 0.75), (3, 1.0), (-1, 0.0), (float("nan"), 1.0)):
+        ls.set_speed(asked)
+        assert ls.speed == kept
