@@ -54,15 +54,6 @@ RANDOM_TRIAL_WINDOW = 64
 DRAFT_RESTART_TRIALS = 24  # candidates a stalled function's draft chain may judge in one search
 RANDOM_SECONDS_WINDOW = 30
 LOCAL_PAUSES = {'phase_budget', 'burst_budget'}
-# A search that is still getting better when its budget runs out earns more of it: an improvement in the last
-# EXTEND_WINDOW of the budget extends minutes and compiles by EXTEND_STEP of the original, at most EXTEND_MAX times.
-# The window starts after the original end once extended (0.75 * 1.5 > 1), so each extension needs a fresh
-# improvement; a search that stalls ends at its next limit.
-EXTEND_WINDOW = 0.25
-EXTEND_STEP = 0.5
-EXTEND_MAX = 3
-
-
 # A function that comes back to the deep search again and again with no improvement (deep_sweep records its
 # `stalled_passes`) gets a wider pair search: each such pass adds STALL_STEP of the base width, at most STALL_MAX
 # passes' worth (x3). Pair search found the most matches per compile-second on a 1,200-match PS1 project (18 matches
@@ -165,8 +156,7 @@ class Search(Permuter):
         self.base_seconds, self.base_limit = self.seconds, max_variants
         self.extensions = 0
         self.pair_scale = 1.0  # x the pair search's width (escalate)
-        self.improved_at = None  # (tested, monotonic time) of the latest new best
-        # A caller that caps the run (parallel lanes, maintenance tasks) owns its deadline; only a plain run extends.
+        # A caller that caps the run (release repairs, maintenance tasks) owns its budget and gets no more.
         self.extendable = getattr(log, 'maximum_seconds', None) is None
         self.log = log
         self.tested = self.skipped = self.visited = self.rejected = 0
@@ -262,8 +252,9 @@ class Search(Permuter):
 
     def check(self):
         self.log.check_cancel()
-        if (time.monotonic() >= self.deadline or self.tested >= self.limit) and self._extend():
-            return
+        lane = getattr(self, 'parallel_lane', None)
+        if getattr(lane, 'deadline', None) is not None:
+            self.deadline = max(self.deadline, lane.deadline)  # another thread's improvement bought more time
         if time.monotonic() >= self.deadline:
             raise SearchLimit('Time limit reached')
         if self.tested >= self.limit:
@@ -278,22 +269,38 @@ class Search(Permuter):
                      f'the pair search is x{factor:g} wider.')
         return factor
 
-    def _extend(self):
-        """Grow the budget when the best score improved in its last EXTEND_WINDOW; True when it grew."""
-        if not self.extendable or self.extensions >= EXTEND_MAX or self.improved_at is None or not self.best:
-            return False
-        tested, at = self.improved_at
-        late = tested > self.limit * (1 - EXTEND_WINDOW) or at > self.deadline - self.seconds * EXTEND_WINDOW
-        if not late:
-            return False
+    def _grant(self):
+        """A verified improvement earns the whole budget again from here: the candidates and minutes spent reaching it
+        are added back, so a function that keeps getting closer keeps being searched and one that stalls ends a
+        full budget after its last improvement. A caller's own cap (release repairs, maintenance) still holds."""
+        if not self.extendable or not self.best:
+            return
+        limit = max(self.limit, self.tested + self.base_limit)
+        deadline = max(self.deadline, time.monotonic() + self.base_seconds)
+        if limit == self.limit and deadline <= self.deadline + 1:
+            return
+        self.seconds += deadline - self.deadline
+        self.limit, self.deadline = limit, deadline
         self.extensions += 1
-        self.limit += max(1, round(self.base_limit * EXTEND_STEP))
-        extra = self.base_seconds * EXTEND_STEP
-        self.deadline += extra
-        self.seconds += extra
-        self.log(f'Still improving at the end of its budget (best score {self.best:,}); extending the search by '
-                 f'{round(EXTEND_STEP * 100)}% ({self.extensions}/{EXTEND_MAX}).')
+        lane = getattr(self, 'parallel_lane', None)
+        if hasattr(lane, 'extend'):
+            lane.extend(deadline)
+
+    def next_round(self, start, current):
+        """True when the saved best improved since `start`, so every search pass has new C to work on."""
+        if current['status'] != 'open' or start is None or current['best_score'] is None or current['best_score'] >= start:
+            return False
+        self.best = current['best_score']
+        self._grant()
+        self.check()
+        self.weak_trials = {}  # the low-yield families' allowances are per source worked on
+        self.local_status = {}
+        self.__dict__.pop('random_register_limit', None)
+        self.log(f'Best score improved {start:,} → {current["best_score"]:,}; running the search passes again on the new C.')
         return True
+
+    def _turn_deadline(self, deadline):
+        return max(deadline, self.deadline) if self.extendable else deadline
 
     def _chart(self, score):
         """A point on the run chart; past 200 every other middle point goes, the first and latest stay."""
@@ -310,7 +317,7 @@ class Search(Permuter):
         throughput = self.compile_pool.metrics.snapshot() if getattr(self, 'compile_pool', None) else {}
         return {**({'throughput':throughput} if throughput else {}), 'starting_score': self.starting_score, 'starting_percent': percent(self.starting_score),
                 'best_score': self.best, 'best_percent': percent(self.best), 'improvements': self.improvements,
-                'extensions': self.extensions, 'extension_max': EXTEND_MAX if self.extendable else 0,
+                'extensions': self.extensions, 'extra_variants': self.limit - self.base_limit,
                 'local_search': self.local_status, 'reviewed_seeds':self.reviewed_seed_result,
                 'phases': self.phase_summary(),
                 'allocation_trials':self.allocation_trials,
@@ -2260,7 +2267,7 @@ class Search(Permuter):
                 if self.best is not None:
                     self.improvements += 1
                 self.best = score
-                self.improved_at = (self.tested, time.monotonic())
+                self._grant()
                 self._chart(score)
                 winner = True
             if winner:
@@ -2391,7 +2398,7 @@ def _full_run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, 
             result = _run(net, slug, name, minutes, remaining, log, compiler_profiles, **order)
         result['rank_candidates'] = rank_candidates
         result['tested'] += tried_twin
-        if proj is not None and not result['matched'] and result['tested'] < max_variants:
+        if proj is not None and not result['matched'] and result['tested'] < max_variants + result.get('extra_variants', 0):
             with looking(net):
                 current = net._function(name, slug)
                 if current['best_score'] is not None and (fn['best_score'] is None or current['best_score'] < fn['best_score']):
@@ -2440,6 +2447,7 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
     search.candidate_order = deep_line_order.for_function(net, proj, fn, log, then=search.candidate_order if rank_candidates else None)
     if lane is not None:
         search.deadline = lane.deadline
+        search.extendable = lane.extendable
         search.random_salt = f"-lane-{lane.index}"
         search.parallel_lane = lane
     if not net.fork_slug(slug) and (slug not in net.links or compiler_profiles>1):
@@ -2493,6 +2501,8 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
             search.improvements += preparation['improved']
             proj, fn = net.project_row(slug), net._function(name, slug)
             search.best = fn['best_score']
+            if preparation['improved']:
+                search._grant()
             _candidate_source(fn, search.best)
         # Reviewed alternatives have a bounded share of the same global allowance.
         # Manual ABI changes remain diagnostic; narrow generated returns need staged full-image verification.
@@ -2538,132 +2548,138 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
             proj, fn = net.project_row(slug), net._function(name, slug)
             if fn['status'] == 'matched':
                 reason = 'Matched'
-        if reason not in ('Matched', 'Exact diagnostic needs ordinary review', PROFILE_LEAD):
-            if not search._hold(agent, fn, count_turn=False):
-                raise NetworkError('This function was claimed meanwhile; try again after it is released.')
-            try:
-                fork = net.fork_slug(slug)
-                # Fresh baseline evidence also diagnoses obsolete candidate-owned prototypes.
-                search.phase = 'checking baseline'
-                baseline, _ = search._baseline(agent, proj, fn, state, fork)
-                if baseline is None:
-                    raise NetworkError('The saved C does not compile in the current context; fix its declarations before deep search.')
-                fn = net._function(name, slug)
-                if baseline and not fork and (lane is None or lane.index == 0):
-                    baseline = search.repair_relocated_source(agent, proj, fn, state, baseline)
+        while True:  # one round of every pass; again while a round improves the saved best
+            proj, fn = net.project_row(slug), net._function(name, slug)  # the last round may have moved the best
+            round_start = fn['best_score']
+            if reason not in ('Matched', 'Exact diagnostic needs ordinary review', PROFILE_LEAD):
+                if not search._hold(agent, fn, count_turn=False):
+                    raise NetworkError('This function was claimed meanwhile; try again after it is released.')
+                try:
+                    fork = net.fork_slug(slug)
+                    # Fresh baseline evidence also diagnoses obsolete candidate-owned prototypes.
+                    search.phase = 'checking baseline'
+                    baseline, _ = search._baseline(agent, proj, fn, state, fork)
+                    if baseline is None:
+                        raise NetworkError('The saved C does not compile in the current context; fix its declarations before deep search.')
                     fn = net._function(name, slug)
-                if baseline and not fork and (lane is None or lane.index == 0):
-                    baseline = search.better_saved_baseline(agent, proj, fn, state, baseline)
-                    fn = net._function(name, slug)
-                if baseline and not fork and (lane is None or lane.index == 0):
-                    baseline = search.repair_saved_drafts(agent, proj, fn, state, baseline)
-                    fn = net._function(name, slug)
-                if baseline and not fork and (lane is None or lane.index == 0):
-                    baseline = search.draft_restart_pass(agent, proj, fn, state, baseline)
-                    fn = net._function(name, slug)
-                measured_baseline = baseline
-                relabel = baseline and not fork and search.can_relabel_switch(fn)
-                if baseline and not relabel and (lane is None or lane.index == 0):
-                    baseline = search.near_register_pass(agent, proj, fn, state, baseline, fork)
-                    fn = net._function(name, slug)
-                if baseline and not fork and not relabel and (lane is None or lane.index == 0):
-                    baseline = search.paired_move_pass(agent, proj, fn, state, baseline, fork)
-                    fn = net._function(name, slug)
-                if baseline and not fork and not relabel and (lane is None or lane.index == 0):
-                    if profile := deep_profiles.tail_dispatch(net, proj, fn):
-                        log('Checking the saved tail dispatcher with the installed GCC sibling-call profile.')
-                        if deep_profiles.probe(search, agent, proj, fn, _candidate_source(fn, baseline), profile) == 0:
-                            baseline = search.best = 0
-                if baseline and not relabel and (lane is None or lane.index == 0):
-                    baseline = search.loop_cursor_pass(agent, proj, fn, baseline, fork)
-                    fn = net._function(name, slug)
-                if (baseline and compiler_profiles == 1 and not relabel
-                        and (lane is None or lane.index == 0)):
-                    baseline = search.call_result_pass(agent, proj, fn, baseline, fork)
-                    fn = net._function(name, slug)
-                if baseline and not relabel and (lane is None or lane.index == 0):
-                    baseline = search.store_order_pass(agent, proj, fn, baseline, fork)
-                    fn = net._function(name, slug)
-                if baseline == 0:
-                    reason = 'Matched'
-                else:
-                    from .stack_layout import text as stack_text
-                    if diagnostic := stack_text(proj['arch'], repair_ranking.evidence(net, fn['id'], agent.id)):
-                        log(diagnostic)
-                    if not relabel and (lane is None or lane.index == 0) and (stub := search.stub_note()):
-                        log('Skipping the operand-order and loop-shape passes. ' + stub)
-                    elif not relabel and (lane is None or lane.index == 0):
-                        baseline = search.operand_order_pass(agent, proj, fn, baseline, fork)
+                    if baseline and not fork and (lane is None or lane.index == 0):
+                        baseline = search.repair_relocated_source(agent, proj, fn, state, baseline)
                         fn = net._function(name, slug)
-                        if baseline and not fork:
-                            baseline = search.repair_pair_pass(agent, proj, fn, baseline, fork)
+                    if baseline and not fork and (lane is None or lane.index == 0):
+                        baseline = search.better_saved_baseline(agent, proj, fn, state, baseline)
+                        fn = net._function(name, slug)
+                    if baseline and not fork and (lane is None or lane.index == 0):
+                        baseline = search.repair_saved_drafts(agent, proj, fn, state, baseline)
+                        fn = net._function(name, slug)
+                    if baseline and not fork and (lane is None or lane.index == 0):
+                        baseline = search.draft_restart_pass(agent, proj, fn, state, baseline)
+                        fn = net._function(name, slug)
+                    measured_baseline = baseline
+                    relabel = baseline and not fork and search.can_relabel_switch(fn)
+                    if baseline and not relabel and (lane is None or lane.index == 0):
+                        baseline = search.near_register_pass(agent, proj, fn, state, baseline, fork)
+                        fn = net._function(name, slug)
+                    if baseline and not fork and not relabel and (lane is None or lane.index == 0):
+                        baseline = search.paired_move_pass(agent, proj, fn, state, baseline, fork)
+                        fn = net._function(name, slug)
+                    if baseline and not fork and not relabel and (lane is None or lane.index == 0):
+                        if profile := deep_profiles.tail_dispatch(net, proj, fn):
+                            log('Checking the saved tail dispatcher with the installed GCC sibling-call profile.')
+                            if deep_profiles.probe(search, agent, proj, fn, _candidate_source(fn, baseline), profile) == 0:
+                                baseline = search.best = 0
+                    if baseline and not relabel and (lane is None or lane.index == 0):
+                        baseline = search.loop_cursor_pass(agent, proj, fn, baseline, fork)
+                        fn = net._function(name, slug)
+                    if (baseline and compiler_profiles == 1 and not relabel
+                            and (lane is None or lane.index == 0)):
+                        baseline = search.call_result_pass(agent, proj, fn, baseline, fork)
+                        fn = net._function(name, slug)
+                    if baseline and not relabel and (lane is None or lane.index == 0):
+                        baseline = search.store_order_pass(agent, proj, fn, baseline, fork)
+                        fn = net._function(name, slug)
+                    if baseline == 0:
+                        reason = 'Matched'
+                    else:
+                        from .stack_layout import text as stack_text
+                        if diagnostic := stack_text(proj['arch'], repair_ranking.evidence(net, fn['id'], agent.id)):
+                            log(diagnostic)
+                        if not relabel and (lane is None or lane.index == 0) and (stub := search.stub_note()):
+                            log('Skipping the operand-order and loop-shape passes. ' + stub)
+                        elif not relabel and (lane is None or lane.index == 0):
+                            baseline = search.operand_order_pass(agent, proj, fn, baseline, fork)
                             fn = net._function(name, slug)
-                        if baseline == 0:
-                            reason = 'Matched'
-                        if baseline:
-                            baseline = search.loop_vector_shape_pass(agent, proj, fn, baseline, fork)
-                            fn = net._function(name, slug)
+                            if baseline and not fork:
+                                baseline = search.repair_pair_pass(agent, proj, fn, baseline, fork)
+                                fn = net._function(name, slug)
                             if baseline == 0:
                                 reason = 'Matched'
-                    jump_profile = getattr(search, 'jump_table_profile', None)
-                    if baseline and not fork and not relabel and (jump_profile or baseline == measured_baseline):
-                        from . import profile_climb
-                        search.phase = 'jump-table relocation repair' if jump_profile else 'other compiler profiles'
-                        if profile_climb.explore(search, agent, proj, fn, baseline, jump_profile):
-                            # The usual exact suggestion path verifies the alternate settings.
-                            reason = PROFILE_LEAD
-                if baseline != 0 and reason not in ('Matched', PROFILE_LEAD):
-                    search.phase = 'local repairs'
-                    search.log('Baseline measured; trying targeted local repairs before random rewriting.')
-                    remaining = max(0, search.deadline-time.monotonic())
-                    remaining_trials = search.limit - search.tested
-                    local_deadline = search.deadline - min(RANDOM_SECONDS_WINDOW, remaining / 4)
-                    local_trials = max(1, remaining_trials - min(RANDOM_TRIAL_WINDOW, max(1, remaining_trials // 4)))
-                    best, _ = search.local_repairs(agent, proj, net._function(name, slug), baseline, fork,
-                                                   max_trials=local_trials, phase_deadline=local_deadline)
-                    resume_local = search.local_status.get('reason') in LOCAL_PAUSES
-                    if best and not resume_local and (lane is None or lane.index == 0) and not relabel:
-                        search.phase = 'neutral steps'
-                        best = search.neutral_plateau_pass(agent, proj, net._function(name, slug), best, fork)
-                    if best == 0:
-                        reason = 'Matched'
-            finally:
-                search._let_go(agent, fn)
-        if reason not in ('Matched', 'Exact diagnostic needs ordinary review', PROFILE_LEAD):
-            search.check()
-            search.phase = 'random rewrites'
-            if (getattr(search, 'register_focus', False) and search.winner_diff
-                    and allocation_search.near_registers(search.winner_diff[0], proj['arch'])):
-                search.random_register_limit = search.tested + 24
-            search.log('Local repairs finished; generating random rewrites and judging each compiled candidate.')
-            search.seconds = max(0, search.deadline-time.monotonic())
-            current = net._function(name, slug)
-            if current['status'] == 'matched':
-                reason = 'Matched'
-            else:
-                # _permute ignores the normal size/turn queue filters; the user selected this function.
-                search._permute(agent, proj, current, state)
-                if state.tried == 0:
-                    search.check()
-                    raise NetworkError('This function was claimed meanwhile; try again after it is released.')
-                if net._function(name, slug)['status'] == 'matched':
-                    reason = 'Matched'
-                elif resume_local or (search.local_status.get('reason') == 'burst_budget' and state.improved):
-                    search.check()
-                    current = net._function(name, slug)
-                    if not search._hold(agent, current, count_turn=False):
-                        raise NetworkError('This function was claimed meanwhile; saved progress is preserved.')
-                    try:
+                            if baseline:
+                                baseline = search.loop_vector_shape_pass(agent, proj, fn, baseline, fork)
+                                fn = net._function(name, slug)
+                                if baseline == 0:
+                                    reason = 'Matched'
+                        jump_profile = getattr(search, 'jump_table_profile', None)
+                        if baseline and not fork and not relabel and (jump_profile or baseline == measured_baseline):
+                            from . import profile_climb
+                            search.phase = 'jump-table relocation repair' if jump_profile else 'other compiler profiles'
+                            if profile_climb.explore(search, agent, proj, fn, baseline, jump_profile):
+                                # The usual exact suggestion path verifies the alternate settings.
+                                reason = PROFILE_LEAD
+                    if baseline != 0 and reason not in ('Matched', PROFILE_LEAD):
                         search.phase = 'local repairs'
-                        search.log('Returning the remaining budget to targeted repairs.')
-                        best, _ = search.local_repairs(agent, net.project_row(slug), current, current['best_score'], fork,
-                                                       max_trials=search.limit-search.tested, phase_deadline=search.deadline)
+                        search.log('Baseline measured; trying targeted local repairs before random rewriting.')
+                        remaining = max(0, search.deadline-time.monotonic())
+                        remaining_trials = search.limit - search.tested
+                        local_deadline = search.deadline - min(RANDOM_SECONDS_WINDOW, remaining / 4)
+                        local_trials = max(1, remaining_trials - min(RANDOM_TRIAL_WINDOW, max(1, remaining_trials // 4)))
+                        best, _ = search.local_repairs(agent, proj, net._function(name, slug), baseline, fork,
+                                                       max_trials=local_trials, phase_deadline=local_deadline)
+                        resume_local = search.local_status.get('reason') in LOCAL_PAUSES
+                        if best and not resume_local and (lane is None or lane.index == 0) and not relabel:
+                            search.phase = 'neutral steps'
+                            best = search.neutral_plateau_pass(agent, proj, net._function(name, slug), best, fork)
                         if best == 0:
                             reason = 'Matched'
-                    finally:
-                        search._let_go(agent, current)
+                finally:
+                    search._let_go(agent, fn)
+            if reason not in ('Matched', 'Exact diagnostic needs ordinary review', PROFILE_LEAD):
+                search.check()
+                search.phase = 'random rewrites'
+                if (getattr(search, 'register_focus', False) and search.winner_diff
+                        and allocation_search.near_registers(search.winner_diff[0], proj['arch'])):
+                    search.random_register_limit = search.tested + 24
+                search.log('Local repairs finished; generating random rewrites and judging each compiled candidate.')
+                search.seconds = max(0, search.deadline-time.monotonic())
+                current = net._function(name, slug)
+                if current['status'] == 'matched':
+                    reason = 'Matched'
                 else:
-                    search.check()
+                    # _permute ignores the normal size/turn queue filters; the user selected this function.
+                    search._permute(agent, proj, current, state)
+                    if state.tried == 0:
+                        search.check()
+                        raise NetworkError('This function was claimed meanwhile; try again after it is released.')
+                    if net._function(name, slug)['status'] == 'matched':
+                        reason = 'Matched'
+                    elif resume_local or (search.local_status.get('reason') == 'burst_budget' and state.improved):
+                        search.check()
+                        current = net._function(name, slug)
+                        if not search._hold(agent, current, count_turn=False):
+                            raise NetworkError('This function was claimed meanwhile; saved progress is preserved.')
+                        try:
+                            search.phase = 'local repairs'
+                            search.log('Returning the remaining budget to targeted repairs.')
+                            best, _ = search.local_repairs(agent, net.project_row(slug), current, current['best_score'], fork,
+                                                           max_trials=search.limit-search.tested, phase_deadline=search.deadline)
+                            if best == 0:
+                                reason = 'Matched'
+                        finally:
+                            search._let_go(agent, current)
+                    else:
+                        search.check()
+            if (reason in ('Matched', 'Exact diagnostic needs ordinary review', PROFILE_LEAD)
+                    or not search.next_round(round_start, net._function(name, slug))):
+                break
     except SearchLimit as error:
         reason = str(error)
         if search.local_status.get('reason') == 'searching':
@@ -2695,7 +2711,7 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
     if lane is None and reason=='Matched' and hasattr(net,'_candidate_checks') and slug not in net.links:
         from .export_source_recovery import run as repair_export
         export_report=repair_export(net,net.project_row(slug),{name},state,log,
-                                    budget=min(4,max(0,max_variants-search.tested)),deadline=search.deadline)
+                                    budget=min(4,max(0,search.limit-search.tested)),deadline=search.deadline)
         search.tested+=export_report['tested']
     for phase, row in search.phase_summary().items():
         log(f"Phase {phase}: {row['tested']:,} tested, {row['improvements']} improved"

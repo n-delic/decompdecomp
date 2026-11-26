@@ -35,7 +35,7 @@ function renderDeepActivity(progress = {}) {
     const count = worker.n_insns;
     const instructions = count == null ? "Instruction count unavailable" :
       `${count.toLocaleString()} ${count === 1 ? "instruction" : "instructions"}`;
-    card.querySelector("[data-metrics]").textContent = `${instructions} · ${percent(worker.starting_percent)} → ${percent(worker.best_percent)} · ${worker.improvements || 0} improvements · ${worker.tested || 0} / ${worker.variant_limit || "—"} tested${worker.extensions ? ` · extended ${worker.extensions}/${worker.extension_max}` : ""}`;
+    card.querySelector("[data-metrics]").textContent = `${instructions} · ${percent(worker.starting_percent)} → ${percent(worker.best_percent)} · ${worker.improvements || 0} improvements · ${worker.tested || 0} / ${worker.variant_limit || "—"} tested${worker.extensions ? ` · budget renewed ${worker.extensions}×` : ""}`;
     const bar = card.querySelector("progress");
     bar.max = worker.variant_limit || 1; bar.value = Math.min(bar.max, worker.tested || 0);
     const duration = seconds => {

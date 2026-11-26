@@ -14,10 +14,23 @@ def validate_threads(count):
 
 
 class Lane:
-    def __init__(self, index, count, deadline, ready, preparation=None):
-        self.index, self.count, self.deadline, self.ready = index, count, deadline, ready
+    def __init__(self, index, count, deadline, ready, preparation=None, shared=None):
+        self.index, self.count, self.ready = index, count, ready
+        # The threads share one deadline, which any thread's improvement can move back (extendable runs only).
+        self.shared = shared if shared is not None else {'deadline': deadline, 'extendable': False}
         self.preflight_done = False
         self.preparation = preparation if preparation is not None else {}
+
+    @property
+    def deadline(self):
+        return self.shared['deadline']
+
+    @property
+    def extendable(self):
+        return self.shared['extendable']
+
+    def extend(self, deadline):
+        self.shared['deadline'] = max(self.shared['deadline'], deadline)
 
     def prepared(self):
         self.preflight_done = True
@@ -34,7 +47,8 @@ def run(net, slug, name, minutes, variants, log, profiles, count, *, rank_candid
     # Partition the allowance, including each path's baseline and diagnostics. More
     # threads must never silently multiply the user's requested compile limit.
     count = min(count, variants)
-    deadline = time.monotonic()+min(minutes*60, getattr(log, 'maximum_seconds', minutes*60))
+    shared = {'deadline': time.monotonic()+min(minutes*60, getattr(log, 'maximum_seconds', minutes*60)),
+              'extendable': getattr(log, 'maximum_seconds', None) is None}
     ready, stopped, lock = threading.Event(), threading.Event(), threading.RLock()
     updates, results = {}, []
     preparation = {}
@@ -45,7 +59,7 @@ def run(net, slug, name, minutes, variants, log, profiles, count, *, rank_candid
             raise deep_permuter.SearchLimit('Parallel search stopped')
         if net._function(name, slug)['status'] == 'matched':
             raise deep_permuter.SearchLimit('Matched')
-        if time.monotonic() >= deadline:
+        if time.monotonic() >= shared['deadline']:
             raise deep_permuter.SearchLimit('Time limit reached')
 
     def publish(index, update):
@@ -64,19 +78,19 @@ def run(net, slug, name, minutes, variants, log, profiles, count, *, rank_candid
                 aggregate.update(best_score=min(scores), best_percent=winner.get('best_percent'))
                 if sweeps:
                     sweeps.improvement(before, min(scores))
-            aggregate.update(variant_limit=variants, threads_per_function=count,
+            aggregate.update(variant_limit=variants + sum(v.get('extra_variants', 0) for v in values), threads_per_function=count,
                              starting_score=before['best_score'])
             log.progress(aggregate)
 
     def work(index):
-        lane = Lane(index, count, deadline, ready, preparation)
+        lane = Lane(index, count, shared['deadline'], ready, preparation, shared)
         def output(line):
             with lock:
                 log(f'Thread {index+1}/{count}: {line}')
         output.compile_pool = getattr(log, "compile_pool", None)
         output.check_cancel = check
         output.progress = lambda update: publish(index, update)
-        output.maximum_seconds = max(0, deadline-time.monotonic())
+        output.maximum_seconds = max(0, shared['deadline']-time.monotonic())
         try:
             # Preparation can replace private source/header context. Finish it once,
             # before the other paths capture evidence for their independent judges.
@@ -113,7 +127,7 @@ def run(net, slug, name, minutes, variants, log, profiles, count, *, rank_candid
         from .permute import State
         used = sum(v.get('tested', 0) for v in results)
         exported = repair_export(net, net.project_row(slug), {name}, State(), log,
-                                 budget=min(4, max(0, variants-used)), deadline=deadline)
+                                 budget=min(4, max(0, variants-used)), deadline=shared['deadline'])
         results.append({'tested': exported['tested']})
     values = list(updates.values())
     winner = min(values, key=lambda v: v.get('best_score') if v.get('best_score') is not None else float('inf')) if values else {}
@@ -121,11 +135,11 @@ def run(net, slug, name, minutes, variants, log, profiles, count, *, rank_candid
     from .search_efficiency import combine
     result['efficiency']=combine([v.get('efficiency') for v in results])
     for field in ('tested', 'skipped', 'rejected', 'improvements', 'refinement_rounds',
-                  'allocation_trials', 'allocation_captures', 'allocation_diagnostic_compiles'):
+                  'allocation_trials', 'allocation_captures', 'allocation_diagnostic_compiles', 'extra_variants'):
         result[field] = sum(v.get(field, 0) for v in results)
     matched = current['status'] == 'matched'
-    reason = ('Matched' if matched else 'Time limit reached' if time.monotonic() >= deadline
-              else 'Variant limit reached' if result['tested'] >= variants else 'Exact diagnostic needs ordinary review' if preparation.get('diagnostic_exact') else 'Search paths finished')
+    reason = ('Matched' if matched else 'Time limit reached' if time.monotonic() >= shared['deadline']
+              else 'Variant limit reached' if result['tested'] >= variants + result['extra_variants'] else 'Exact diagnostic needs ordinary review' if preparation.get('diagnostic_exact') else 'Search paths finished')
     if not matched and current['best_source']:
         from .targeted_retry import source_key
 
@@ -137,7 +151,7 @@ def run(net, slug, name, minutes, variants, log, profiles, count, *, rank_candid
     result['reviewed_seeds'] = preparation
     result.update(function=name, matched=matched, reason=reason, compiler_profiles=profiles,
                   threads_per_function=count, best_score=current['best_score'], starting_score=before['best_score'],
-                  variant_limit=variants)
+                  variant_limit=variants + result['extra_variants'])
     log.progress(result)
     log(f'{reason}: {result["tested"]:,} candidates tested across {count} threads. Verified improvements are saved immediately.')
     if sweeps:
