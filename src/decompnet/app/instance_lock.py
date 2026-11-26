@@ -44,14 +44,17 @@ def owner(lock: Path) -> int | None:
 
 
 def alive(pid: int) -> bool:
-    if os.name != 'nt':
-        try:
-            if os.waitpid(pid, os.WNOHANG)[0] == pid:  # our own child that has ended (tests): reap it
-                return False
-        except ChildProcessError:
-            pass
-        except OSError:
-            pass
+    if os.name == 'nt':
+        # Never os.kill(pid, 0) on Windows: 0 is CTRL_C_EVENT there, and for a pid that has ended it raises a plain
+        # OSError, which crashed the second launch over a stale owner file.
+        return _windows_alive(pid)
+    try:
+        if os.waitpid(pid, os.WNOHANG)[0] == pid:  # our own child that has ended (tests): reap it
+            return False
+    except ChildProcessError:
+        pass
+    except OSError:
+        pass
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -59,6 +62,27 @@ def alive(pid: int) -> bool:
     except PermissionError:
         return True
     return True
+
+
+def _windows_alive(pid: int) -> bool:
+    import ctypes
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    kernel.WaitForSingleObject.restype = wintypes.DWORD
+    kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+    if pid <= 0:
+        return False
+    handle = kernel.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE
+    if not handle:
+        return ctypes.get_last_error() == 5  # access denied: it exists, and isn't ours
+    try:
+        return kernel.WaitForSingleObject(handle, 0) == 0x102  # WAIT_TIMEOUT: still running
+    finally:
+        kernel.CloseHandle(handle)
 
 
 def holders(lock: Path) -> list[int]:
