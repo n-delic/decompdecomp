@@ -20,8 +20,11 @@ from __future__ import annotations
 import re
 
 KEYWORDS = {'if', 'while', 'for', 'switch', 'return', 'sizeof', 'do', 'else', 'case', 'goto', 'defined'}
+# A parameter list may hold one level of parentheses: a pointer to an array (`s8 (*box)[4]`) or a function pointer
+# (`void (*cb)(s32)`). Without them a matched callee written that way had no prototype here, so a stray m2c argument
+# to it went unreported (a 182-instruction loader stayed at 120 for hours on one extra `count`, 120 -> 0 dropped).
 DECL = re.compile(r'(?:^|(?<=[;}\n]))[ \t]*((?:(?:extern|static|inline|const|volatile|unsigned|signed|struct|union|enum)'
-                  r'\s+)*[A-Za-z_]\w*(?:[\s*]+))([A-Za-z_]\w*)\s*\(([^()]*)\)\s*(\{|;)', re.M)
+                  r'\s+)*[A-Za-z_]\w*(?:[\s*]+))([A-Za-z_]\w*)\s*\(((?:[^()]|\([^()]*\))*)\)\s*(\{|;)', re.M)
 CALL = re.compile(r'\b([A-Za-z_]\w*)\s*\(')
 ARG_REGS = ('$a0', '$a1', '$a2', '$a3')
 NO_WRITE = re.compile(r'^(?:s[bhwd][lr]?|swc1|sdc1|sc|scd|b\w*|j|jr|jalr?|mt\w*|dmtc1|ctc1|cache|sync|syscall|break|t\w+)$')

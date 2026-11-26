@@ -70,6 +70,21 @@ def test_return_width_from_the_header_against_the_matched_definition():
     assert cs.return_differs("s32", "u8") and cs.return_differs("int", "f32")
 
 
+def test_a_callee_with_an_array_pointer_or_function_pointer_parameter_still_has_its_arity():
+    """A loader passed a 4th argument to a matched callee declared `(Model *m, s8 (*box)[4], Tri *tri)`: the
+    parenthesised parameter hid the definition, so the stray argument (the whole 120-point difference) went unnamed."""
+    callee = {"draw": "void draw(Model *m, s8 (*box)[4], Tri *tri) {\n    m->x = 1;\n}\n",
+              "each": "void each(void (*cb)(s32, s32), s32 n) {\n    cb(n, n);\n}\n"}
+    source = ("void draw(u8 *, s32, s32, s32);\nvoid each(void *, s32);\n"
+              "void f(u8 *buf, s32 count) {\n    draw(buf, 1, 2, count);\n    each(0, 1);\n}\n")
+    found = cs.check("f", source, "", callee)
+    assert ("extra-argument", "draw") in kinds(found) and ("prototype", "draw") in kinds(found)
+    assert "drop `count`" in next(f for f in found if f["kind"] == "extra-argument")["text"]
+    assert not any(f["callee"] == "each" for f in found)  # two parameters, two arguments
+    assert cs.prototypes(callee["draw"])["draw"]["params"] == 3
+    assert "cb" not in cs.prototypes(callee["each"])  # the call inside the body is not a declaration
+
+
 def test_a_clean_function_says_so():
     found = cs.check("f", "void tick(void);\nvoid f(void) {\n    tick();\n}\n", "", CALLEES)
     assert found == [] and "every call agrees" in cs.render(found)[0]
