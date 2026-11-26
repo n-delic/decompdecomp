@@ -296,7 +296,8 @@ class CompilerMixin:
             result["default"] = result["toolchain"] == default["toolchain"] and result["flags"] == default["flags"]
         return {"completed_at": row["completed_at"], "stale": digest != row["input_digest"], "comparison": comparison}
 
-    def run_compiler_comparison(self, slug, log=print, function="", untested_only=True, flags_only=False, auto_apply=False, used_profiles_only=False):
+    def run_compiler_comparison(self, slug, log=print, function="", untested_only=True, flags_only=False, auto_apply=False, used_profiles_only=False,
+                                apply_matches=False):
         lock = self._compiler_comparison_locks.setdefault(slug, threading.Lock())
         if not lock.acquire(blocking=False):
             raise NetworkError("A compiler comparison is already running for this project. Wait for it to finish.")
@@ -306,36 +307,40 @@ class CompilerMixin:
                 if check:
                     check()
                 return self.survey_compilers(slug, log=log, all_installed=True, function=function,
-                                             untested_only=untested_only and not function, flags_only=flags_only, auto_apply=auto_apply, used_profiles_only=used_profiles_only)
+                                             untested_only=untested_only and not function, flags_only=flags_only, auto_apply=auto_apply, used_profiles_only=used_profiles_only,
+                                             apply_matches=apply_matches)
         finally:
             lock.release()
 
     @batched
     def survey_compilers(self, slug: str, log=lambda line: None, limit: int | None = None, state: dict | None = None,
                          all_installed: bool = False, function: str = "", untested_only: bool = False, flags_only: bool = False,
-                         auto_apply: bool = False, used_profiles_only: bool = False) -> dict:
+                         auto_apply: bool = False, used_profiles_only: bool = False, apply_matches: bool = False) -> dict:
         # Saved-file watching owns synchronization. A comparison uses current DB inputs and
         # rejudges before applying; loading a project here must not restore/reverify its files.
         with self.progress.view() if hasattr(self,'progress') else nullcontext():
-            if auto_apply and all_installed and not function:
+            if (auto_apply or apply_matches) and all_installed and not function:
                 from ..compiler_apply_queue import Queue
                 queue = Queue(self, log)
                 try:
                     return self._survey_compilers(slug,queue,limit,state,all_installed,function,untested_only,
-                                                  flags_only,auto_apply,used_profiles_only,apply_queue=queue)
+                                                  flags_only,auto_apply,used_profiles_only,apply_queue=queue,
+                                                  apply_matches=apply_matches)
                 finally:queue.close()
             return self._survey_compilers(slug,log,limit,state,all_installed,function,untested_only,
-                                          flags_only,auto_apply,used_profiles_only)
+                                          flags_only,auto_apply,used_profiles_only,apply_matches=apply_matches)
 
     def _survey_compilers(self, slug: str, log=lambda line: None, limit: int | None = None, state: dict | None = None,
                          all_installed: bool = False, function: str = "", untested_only: bool = False, flags_only: bool = False,
-                         auto_apply: bool = False, used_profiles_only: bool = False, apply_queue=None) -> dict:
+                         auto_apply: bool = False, used_profiles_only: bool = False, apply_queue=None, apply_matches: bool = False) -> dict:
         """The judge's part of the compiler map. Agents' C for functions that don't match yet, built with each other
         compiler the project uses: C that matches the game with another compiler (and not with today's) confirms that
         compiler for its function. Contradicted functions first, then the closest attempts; C already tried is
         skipped. Then each run of the map with confirmations becomes a suggestion, checked like an agent's."""
         if type(auto_apply) is not bool or auto_apply and not all_installed:
             raise NetworkError("Auto-apply requires an installed-compiler comparison and a boolean option.")
+        if type(apply_matches) is not bool or apply_matches and not all_installed:
+            raise NetworkError("Applying matches requires an installed-compiler comparison and a boolean option.")
         if not isinstance(function, str):
             raise NetworkError("Choose a function by name.")
         started=time.monotonic()
@@ -492,7 +497,8 @@ class CompilerMixin:
                             "before": baseline, "best": best, "profile": best_profile, "exact_matches_current": 0,
                             "total": total, "remaining": total - (n - 1) if total is not None else None, "deferred": deferred,
                             "completed": n - 1, "improved": len(improvements), "exact": found,
-                            "skipped": skipped, "results": list(results), "auto_apply": auto_apply, "applied_count": applied_count}
+                            "skipped": skipped, "results": list(results), "auto_apply": auto_apply, "apply_matches": apply_matches,
+                            "applied_count": applied_count}
                 report(progress)
                 if n==1:log(f'Compiler preparation · first compile ready: {time.monotonic()-started:.3f}s')
                 from ..compiler_profiles import check_profiles
@@ -553,9 +559,13 @@ class CompilerMixin:
                     with self.project_store(proj['id']).tx() as db:
                         db.execute("INSERT OR REPLACE INTO compiler_tests VALUES(?,?,?,?)",
                                    (fn["id"], input_digest, time.time(), json.dumps(completed)))
-                if auto_apply and best_profile and (improved or matches) and not draft_gain:
+                # "Apply matches" takes exact C only; "apply better settings" takes partial gains too. An exact
+                # profile wins over one that merely scores 100% without matching.
+                target = matches[0] if matches and best_profile not in matches else best_profile
+                wanted = auto_apply and (improved or matches) or apply_matches and matches
+                if wanted and target and not draft_gain:
                     def apply(fn=fn, source=source, candidates=candidates, input_digest=input_digest,
-                              best_profile=best_profile, completed=completed, result_row=result_row):
+                              target=target, completed=completed, result_row=result_row):
                         nonlocal applied_count
                         applied, apply_error = False, ""
                         check_cancel()
@@ -567,7 +577,7 @@ class CompilerMixin:
                                     self._comparison_digest(current_proj, current, source, candidates) != input_digest):
                                 raise NetworkError("Code or build inputs changed during comparison; review a fresh result before applying.")
                             check_cancel()
-                            self.apply_function_compiler(slug, fn["name"], best_profile[0], best_profile[1])
+                            self.apply_function_compiler(slug, fn["name"], target[0], target[1])
                             applied = True
                             applied_count += 1
                             log(f"{fn['name']}: best settings applied and rechecked.")
@@ -598,7 +608,8 @@ class CompilerMixin:
                         "before": baseline, "best": best, "profile": best_profile,
                         "total": total, "remaining": total - n if total is not None else None, "deferred": deferred,
                         "completed": n, "improved": len(improvements), "exact": found, "skipped": skipped,
-                        "results": list(results), "auto_apply": auto_apply, "applied": applied, "applied_count": applied_count})
+                        "results": list(results), "auto_apply": auto_apply, "apply_matches": apply_matches,
+                        "applied": applied, "applied_count": applied_count})
                 state.update(tried=n, confirmed=found)
                 if n % 25 == 0:
                     log(f"{n} functions tried, {found} with exact matches")
@@ -618,7 +629,7 @@ class CompilerMixin:
                 log(f"{n} functions tried, {found} confirmed")
         if apply_queue:apply_queue.finish()
         if all_installed:
-            # Auto-apply is explicit for this run; the compiler-map agreement preference is separate.
+            # Auto-apply and applying matches are explicit for this run; the compiler-map agreement preference is separate.
             log(f"Finished: {n} functions tested; {len(improvements)} have better tested settings; "
                 f"{found} have exact matches. {applied_count} function profiles applied and rechecked.")
             if not n:
@@ -627,7 +638,7 @@ class CompilerMixin:
             return {"tried": n, "skipped": skipped, "total": total, "remaining": max(0, total - n),
                     "deferred": deferred, "confirmed": found, "matches": confirmed, "comparison": comparison,
                     "improvements": sorted(improvements, key=lambda r: -r["best"]), "results": results,
-                    "auto_apply": auto_apply, "applied_count": applied_count}
+                    "auto_apply": auto_apply, "apply_matches": apply_matches, "applied_count": applied_count}
         self._update_cfg(slug, lambda c: c.__setitem__("compiler_survey", {"tried": tried, "confirmed": confirmed,
                                                                            "t": time.time()}))
         suggested = self._suggest_from_map(proj, confirmed)

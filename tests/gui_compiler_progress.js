@@ -162,7 +162,7 @@ async function checkStopButton() {
     updateCompilerTestScope() { get("testInstalledCompilers").textContent = "Find better settings"; },
     followJob: () => polling,
     api: async (url, options) => {
-      if (url === '/api/compilermap') { assert.equal(options.body.auto_apply, true); assert.equal(options.body.used_profiles_only, true); return {job:'only-this-job'}; }
+      if (url === '/api/compilermap') { assert.equal(options.body.auto_apply, true); assert.equal(options.body.apply_matches, true); assert.equal(options.body.used_profiles_only, true); return {job:'only-this-job'}; }
       assert.equal(url, '/api/job/cancel'); assert.equal(options.body.id, 'only-this-job');
       if (++cancels === 1) throw new Error('Connection failed');
       return {cancelled:true};
@@ -170,7 +170,7 @@ async function checkStopButton() {
   vm.createContext(context);
   const source = read('steering'), start = source.indexOf('$("testInstalledCompilers").onclick');
   vm.runInContext(source.slice(start, source.indexOf('\nfunction renderCompilerImprovements', start)), context);
-  get('compilerAutoApply').checked = true; get('compilerUsedProfilesOnly').checked = true;
+  get('compilerAutoApply').checked = true; get('compilerApplyMatches').checked = true; get('compilerUsedProfilesOnly').checked = true;
   const running = get('testInstalledCompilers').onclick();
   for (let i = 0; i < 20; i++) await Promise.resolve();
   const stop = get('testInstalledCompilers');
@@ -217,6 +217,8 @@ assert.equal(scopeFields.get('compilerUsedProfilesOnly').checked, false);
 ctx.renderCompilerProgress(null, {tried:1, total:1, auto_apply:true, applied_count:1, results:[{function:'applied',applied:true,best:99,improved:true}],improvements:[{}]});
 assert.match(fields.get('[data-profile]').textContent, /1 function profiles applied and rechecked/);
 assert.ok(box._compilerApplied.has('applied'));
+ctx.renderCompilerProgress(null, {tried:2, total:2, apply_matches:true, applied_count:1, results:[],improvements:[]});
+assert.match(fields.get('[data-profile]').textContent, /1 exact matches applied/);
 
 
 // The same renderer supports an isolated function panel without wiring project result buttons.

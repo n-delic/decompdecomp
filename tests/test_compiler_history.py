@@ -252,6 +252,22 @@ def test_auto_apply_rejects_changed_input_and_remains_opt_in(comparison, monkeyp
     with pytest.raises(Exception,match='boolean'):net.run_compiler_comparison('demo',auto_apply='false')
 
 
+def test_apply_matches_takes_exact_matches_and_leaves_partial_gains(comparison, monkeypatch):
+    net,_,_,_=comparison
+    def judge(proj, fn, tc, flags, source):
+        exact = fn['name']=='f1' and tc=='sn-n64-281'
+        percent = 100 if exact else 90 if tc=='sn-n64-281' else 80
+        return exact, SimpleNamespace(percent=percent, score=100-percent), ''
+    monkeypatch.setattr(net,'_judge_with',judge)
+    applied=[]
+    monkeypatch.setattr(net,'apply_function_compiler',lambda *args:applied.append(args[1:3]))
+    result=net.run_compiler_comparison('demo',apply_matches=True)
+    assert applied==[('f1','sn-n64-281')]
+    assert result['apply_matches'] and not result['auto_apply'] and result['applied_count']==1
+    assert [row['applied'] for row in result['results']]==[False,True]
+    with pytest.raises(Exception,match='boolean'):net.run_compiler_comparison('demo',apply_matches='false')
+
+
 def test_auto_apply_changes_only_function_ranges_and_rechecks_current_c(comparison, monkeypatch):
     from decompnet.project import compiler_for
     net,_,_,_=comparison

@@ -1449,6 +1449,7 @@ async function renderProjectSettings(keepRemoved = false) {
   if ($("compilerImprovements").dataset.slug !== S.slug) $("compilerImprovements").replaceChildren();
   if ($("compilerProgress").dataset.slug !== S.slug) {
     $("compilerProgress").hidden = true;
+    $("compilerApplyMatches").checked = true;
     $("compilerAutoApply").checked = false;
     $("compilerLogDetails").hidden = true;
   }
@@ -2262,7 +2263,7 @@ async function followCompilerComparison(existing = null) {
   const work = $("installedCompilerWork");
   const stop = button, stopError = $("compilerStopError");
   let jobId = existing?.job || null;
-  const controls = [$("compilerUsedProfilesOnly"), $("compilerFlagsOnly"), $("compilerRetest"), $("compilerAutoApply")];
+  const controls = [$("compilerUsedProfilesOnly"), $("compilerFlagsOnly"), $("compilerRetest"), $("compilerApplyMatches"), $("compilerAutoApply")];
   const disabled = controls.map(control => control.disabled);
   run.detach = () => {
     if (compilerComparisonFollowing !== run) return;
@@ -2275,6 +2276,7 @@ async function followCompilerComparison(existing = null) {
     $("compilerFlagsOnly").checked = !!scope.flags_only;
     $("compilerUsedProfilesOnly").checked = !!scope.used_profiles_only;
     $("compilerRetest").checked = scope.untested_only === false;
+    $("compilerApplyMatches").checked = !!scope.apply_matches;
     $("compilerAutoApply").checked = !!scope.auto_apply;
     updateCompilerTestScope();
   };
@@ -2317,7 +2319,7 @@ async function followCompilerComparison(existing = null) {
   if (existing?.progress) renderCompilerProgress(existing.progress);
   showJobError(work, "");
   try {
-    const started = existing || await api("/api/compilermap", { method: "POST", body: { slug, all_installed: true, flags_only: $("compilerFlagsOnly").checked, used_profiles_only: $("compilerUsedProfilesOnly").checked, untested_only: !$("compilerRetest").checked, auto_apply: $("compilerAutoApply").checked } });
+    const started = existing || await api("/api/compilermap", { method: "POST", body: { slug, all_installed: true, flags_only: $("compilerFlagsOnly").checked, used_profiles_only: $("compilerUsedProfilesOnly").checked, untested_only: !$("compilerRetest").checked, apply_matches: $("compilerApplyMatches").checked, auto_apply: $("compilerAutoApply").checked } });
     if (!active()) return;
     const {job} = started;
     restoreOptions(started.scope);
