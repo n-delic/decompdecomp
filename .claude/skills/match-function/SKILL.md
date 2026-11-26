@@ -557,6 +557,11 @@ says the fix and the library families it names; try those families with `prove_c
   several guards is never moved at all. `-dL`'s `done move-insn matches` lines show the merge that hoists it.
   decomp-repair `guard_symbol_pointer`, `guard_alias_pointer`, `stepped_cursor_index` (290 -> 230 on a bit-stream
   decoder; docs/learnings/function/bit-stream-decoder-guard-pointers-and-loop-made-registers.md).
+- **Two arms building one word from a command's bytes, the bytes and the shared pointer one register round** (SN 2.8.1):
+  anonymous byte reads are block-local and local-alloc colours them before global.c gives the arms' shared values theirs.
+  Hold the reads in locals both arms assign (global pseudos), put each arm's packet pointer back in its own block, and
+  give the arms one statement order (365 -> 0 together). decomp-repair `arm_operand_share`
+  (docs/learnings/function/modify-vertex-arms-shared-byte-locals.md).
 - **A goto loop stops loop.c hoisting constants** (do/while/for loops get the loop pass's treatment).
 - **Copy a short block in place of a `goto` to it** to give a value an extra use (cross-jumping merges the copies back).
 - **`const` pointer parameters** change the prologue's load order.

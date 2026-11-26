@@ -61,6 +61,8 @@ Left at 365 (315): the two modify-vertex arms' byte temporaries come out one reg
 the target's `$v1, $v0, $a1, $a2`) and the shared pointer in `$a3` (target `$a0`); tried without effect or worse: the
 colour word's association (`(a | b) | (c | d)` 485, reversed 830, `+` 1485, `|=` steps 485), `s32 c`, `w1` stored
 directly (315), block-local pointers again (825), sharing the pointer with arms 0, 1 or 0xFF (330-530).
+Matched afterwards: the bytes in locals both arms share, block pointers again and one statement order
+(docs/learnings/function/modify-vertex-arms-shared-byte-locals.md, decomp-repair `arm_operand_share`).
 
 What is controlled evidence and what is one function:
 
