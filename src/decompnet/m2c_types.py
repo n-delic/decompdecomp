@@ -233,13 +233,16 @@ def _stray_labels(source: str) -> str:
     stack, lines = [], []
     for line in source.split("\n"):
         stripped = line.strip()
+        # m2c numbers each switch in a comment when a function has several (`switch (x) {   /* switch 1 */`): read the
+        # brace behind it, or no switch is open and every one of its labels goes
+        code = re.sub(r"/\*.*?\*/|//.*", "", stripped).rstrip()
         if stripped.startswith("}"):
             if stack:
                 stack.pop()
         if re.match(r"(?:case\b[^:]*|default):\s*(?:/\*.*\*/)?$", stripped) and "switch" not in stack:
             continue
-        if stripped.endswith("{"):
-            stack.append("switch" if re.match(r"switch\s*\(", stripped) else "block")
+        if code.endswith("{"):
+            stack.append("switch" if re.match(r"(?:\w+:\s*)?switch\s*\(", code) else "block")
         lines.append(line)
     return "\n".join(lines)
 

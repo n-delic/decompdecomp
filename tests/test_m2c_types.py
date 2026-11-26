@@ -125,3 +125,12 @@ def test_the_other_half_of_a_double_no_register_pair_could_hold_prints_as_zero()
 def test_an_address_read_through_two_levels_is_cast_at_each():
     out = m2c_types.repair("    s32 t;\n    **t = 5;\n")
     assert "*(s32 *)*(s32 *)t = 5;" in out
+
+
+def test_case_labels_stay_in_switches_that_m2c_numbers_in_a_comment():
+    src = ("void f(int x, int y) {\n    switch (x) {                    /* switch 1; irregular */\n"
+           "    case 0:                         /* switch 1 */\n        switch (y) {                /* switch 2 */\n"
+           "        case 3:                     /* switch 2 */\n            g();\n            break;\n        }\n"
+           "    case 1:                         /* switch 1 */\n        break;\n    }\n}\n")
+    out = m2c_types.repair(src)
+    assert "case 0:" in out and "case 3:" in out and "case 1:" in out
