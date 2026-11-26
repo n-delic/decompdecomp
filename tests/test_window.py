@@ -2,8 +2,10 @@
 the GUI answers (only that window), and what a computer without the window's system packages is told."""
 
 import functools
+import importlib.util
 import sys
 import time
+from pathlib import Path
 
 import pytest
 
@@ -198,3 +200,42 @@ def test_the_tray_borrows_the_systems_gtk_without_its_other_packages(monkeypatch
     for name in [m for m in sys.modules if m == "gi" or m.startswith("gi.")]:
         monkeypatch.delitem(sys.modules, name)
     assert tray._gi() is not None and system not in sys.path
+
+
+def test_linux_window_saves_the_apps_exports(monkeypatch):
+    """WebKitGTK saves nothing by itself: the export buttons did nothing in the Linux window."""
+    from unittest.mock import MagicMock
+    gi = MagicMock()
+    monkeypatch.setitem(sys.modules, "gi", gi)
+    monkeypatch.setitem(sys.modules, "gi.repository", gi.repository)
+    spec = importlib.util.spec_from_file_location("gtk_under_test", Path(window.__file__).with_name("gtkwindow.py"))
+    gtk = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gtk)
+    view = gtk.AppWindow.__new__(gtk.AppWindow)
+    view.origin = ["http:", "", "127.0.0.1:6464"]
+    kinds = gtk.WebKit2.PolicyDecisionType
+
+    decision = MagicMock()
+    decision.get_navigation_action().get_request().get_uri.return_value = "blob:http://127.0.0.1:6464/id"
+    assert view.on_policy(None, decision, kinds.NAVIGATION_ACTION)
+    decision.download.assert_called_once()
+
+    decision = MagicMock()
+    decision.get_navigation_action().get_request().get_uri.return_value = "blob:https://other.example/id"
+    assert view.on_policy(None, decision, kinds.NAVIGATION_ACTION)
+    decision.download.assert_not_called()
+
+    decision = MagicMock()
+    decision.get_response().get_http_headers().get_one.return_value = 'attachment; filename="a.json"'
+    assert view.on_policy(None, decision, kinds.RESPONSE)
+    decision.download.assert_called_once()
+
+    download = MagicMock()
+    view.choose_destination = lambda name: f"file:///tmp/{name}"
+    view.on_destination(download, "repair-examples-full.json")
+    download.set_destination.assert_called_once_with("file:///tmp/repair-examples-full.json")
+    view.choose_destination = lambda name: None
+    download = MagicMock()
+    view.on_destination(download, "x.json")
+    download.cancel.assert_called_once()
+    download.set_destination.assert_not_called()
