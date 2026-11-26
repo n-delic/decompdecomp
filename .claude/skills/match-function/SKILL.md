@@ -765,6 +765,12 @@ says the fix and the library families it names; try those families with `prove_c
 - **`if (G == 1)` with the load and the constant in each other's registers, three local quantities in the block:**
   local-alloc's fixed three-way exchange lets the short-lived constant win; load `G` into a local in a two-deep
   `do { } while (0)` (`compare_load_weight`, 15 -> 0, docs/learnings/finding/three-quantity-block-constant-outranks-load.md).
+- **SN64 GCC 2.8.1: a literal the target loads once, late, in the register reload uses (`li $t6` beside `mflo $t6`), with
+  the block's other values one register round:** the original's constant got no register at all. One local per field
+  (`r = g = b = a = 0xFF;` as four statements at the entry), each a low-priority global pseudo live across the calls, finds
+  the saved registers taken and caller-save unprofitable, so reload rematerialises it (470 -> 82; with the vertices
+  written field by field 0). decomp-repair `constant_channel_locals`
+  (docs/learnings/function/display-list-channel-constant-locals.md). A leaf has no such path.
 - **SN profiles (sn-n64-281, 2.7.2):** `passes.py ... --save DIR` is the one command (see Tool gotchas). By hand it is
   `cppn64.exe -P -undef -nostdinc -D_LANGUAGE_C -D__GNUC__=2` then `cc1n64.exe -quiet <flags> -da FILE.i -o FILE.s`, both under
   wibo; the dumps land beside the `.i` as `FILE.i.lreg` etc. (consoles/n64/sn64.py has the exact commands).
