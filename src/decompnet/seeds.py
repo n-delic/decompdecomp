@@ -16,7 +16,7 @@ from pathlib import Path
 
 from decompnet.hostenv import NO_WINDOW
 
-from . import compile_timing, limits, m2c_fp64, m2c_jump_tables, m2c_types, scoring, toolchains
+from . import compile_timing, limits, m2c_fp64, m2c_jump_tables, m2c_types, m2cfix, scoring, toolchains
 from .elfobj import FunctionObj
 
 # What m2c's --valid-syntax output needs to compile: its unknown types and macros, defined the simplest way that
@@ -511,6 +511,7 @@ def _compilable(source: str | None, name='', asm='', header='', toolchain=None, 
         source = ido_pointer_steps(source)
     source = pointer_bits_as_float(source, name)
     source = declare_written_arguments(source, name)
+    source = own_call_arguments(source, name, asm)
     # a local m2c typed as a function pointer (`M2C_UNK (*sp24)(M2C_UNK, M2C_UNK);`) that the code also steps (`sp24 += 0xC`):
     # the slot held an address that was both called and walked; the draft keeps the word
     for pointer in re.findall(r"^[ \t]+[A-Za-z_][\w \t\*]*\(\*(\w+)\)\([^;\n]*\);", source, flags=re.M):
@@ -582,6 +583,65 @@ def declare_written_arguments(source: str, name: str) -> str:
     if not missing:
         return source
     return source[:head.end()] + "".join(f"    s32 {a};\n" for a in missing) + source[head.end():]
+
+
+def own_call_arguments(source: str, name: str, asm: str) -> str:
+    """The calls a draft makes to itself agree with its own definition. m2c passes an argument register that still
+    held a value (a loop counter masked into $a3) to a recursive call of a three-parameter function: "too many
+    arguments", and the draft never compiled (40 of 101,190 saved drafts of the user's games). An extra argument
+    the code sets up for that call (a write to its register, or its stack slot, in the straight run before the `jal`
+    or its delay slot) is a parameter the function never reads, so the definition takes it; any other is dropped."""
+    head = re.search(rf"^[^\n;{{}}]*\b{re.escape(name)}\s*\(([^)\n]*)\)\s*\{{[ \t]*\n", source, flags=re.M) if name and asm else None
+    if not head or "..." in head.group(1):
+        return source
+    parameters = [p.strip() for p in head.group(1).split(",") if p.strip() not in ("", "void")]
+    calls = []  # (start, end, arguments) of each call to itself
+    for call in re.finditer(rf"\b{re.escape(name)}\(", source[head.end():]):
+        start = head.end() + call.end()
+        end = m2cfix._closing(source, start) - 1
+        inner = source[start:end]
+        calls.append((start, end, [a.strip() for a in m2cfix._split_top_level(inner)] if inner.strip() else []))
+    if not any(len(arguments) > len(parameters) for _, _, arguments in calls):
+        return source
+    count = len(parameters)
+    if all(re.search(rf"\barg{i}$", p) for i, p in enumerate(parameters)):
+        set_up = _arguments_set_for(asm, name)
+        count = max([count] + [i + 1 for _, _, arguments in calls for i in range(count, len(arguments)) if i in set_up])
+    for start, end, arguments in reversed(calls):
+        kept = arguments[:count] + [f"arg{i}" for i in range(len(arguments), count)]
+        if kept != arguments:
+            source = source[:start] + ", ".join(kept) + source[end:]
+    if count == len(parameters):
+        return source
+    parameters += [f"s32 arg{i}" for i in range(len(parameters), count)]
+    return source[:head.start(1)] + ", ".join(parameters) + source[head.end(1):]
+
+
+def _arguments_set_for(asm: str, name: str) -> set[int]:
+    """The argument positions the MIPS code writes for its calls to `name`: $a0-$a3, and the stack words from 0x10."""
+    lines = [re.sub(r"/\*.*?\*/", "", line).split("#")[0].strip() for line in asm.splitlines()]
+    lines = [line for line in lines if line]
+    written: set[int] = set()
+    for at, line in enumerate(lines):
+        if not re.match(rf"jal\s+{re.escape(name)}$", line):
+            continue
+        run = lines[at + 1:at + 2]
+        for before in reversed(lines[:at]):
+            if before.endswith(":") or before.startswith(("glabel", ".L")):
+                break
+            if before.split()[0] in ("j", "jr", "jal", "jalr", "b"):
+                del run[-1:]  # the line just taken is that call's delay slot, its argument, not this one's
+                break
+            run.append(before)
+        for instruction in run:
+            if found := re.match(r"(\w+)\s+\$a([0-3])\b", instruction):
+                if found.group(1) not in m2cfix._NOT_A_WRITE and not found.group(1).startswith(("bl", "bg", "mt")):
+                    written.add(int(found.group(2)))
+            elif found := re.match(r"s[bhw]\w*\s+\$\w+,\s*(0x[0-9A-Fa-f]+|\d+)\(\$sp\)", instruction):
+                offset = int(found.group(1), 0)
+                if offset >= 0x10:
+                    written.add(offset // 4)
+    return written
 
 
 def pointer_bits_as_float(source: str, name: str) -> str:
