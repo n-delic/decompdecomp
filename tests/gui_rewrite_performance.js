@@ -22,6 +22,7 @@ const csv=ctx.rewritePerformanceCsv([{...old,family:'comma,"quote"\nnext'}, {...
 process.stdout.write(csv);
 
 let exported, request, failExport=false;
+const fullRequests=[];
 const output={};
 const button={};
 const host={dataset:{},querySelector:selector=>selector==='[data-export-status]'?output:button,querySelectorAll(){return this.sorts || [];}};
@@ -30,7 +31,10 @@ Object.defineProperty(host,'innerHTML',{get(){return this.html || '';},set(value
 }});
 const ui=vm.createContext({$:()=>host,S:{slug:'game',st:{version:'1',build:'abc',platform:'linux-x86_64'},ov:{platform:'n64'}},
  esc:value=>String(value).replaceAll('<','&lt;'),
- beginWork:()=>()=>{},toast:()=>{},api:async(path,options)=>{request={path,...options};exported=options.body.csv;if(failExport)throw new Error('Downloads is not writable');return {path:'/test/Downloads/metrics.csv'};}});
+ beginWork:()=>()=>{},toast:()=>{},api:async(path,options)=>{
+  // The export asks for every row (the window only holds the first ones), then saves the CSV it built from them.
+  if(!options){fullRequests.push(path);return {recipes:[{family:'a',tested:2,improvements:1},{family:'b',tested:10,improvements:0},{family:'only-in-full',tested:1,improvements:0}]};}
+  request={path,...options};exported=options.body.csv;if(failExport)throw new Error('Downloads is not writable');return {path:'/test/Downloads/metrics.csv'};}});
 
 vm.runInContext(fs.readFileSync('src/decompnet/app/static/js/rewrite-performance.js','utf8'),ui);
 ui.renderDeepSweepResults=status=>ui.renderRewritePerformance(status);
@@ -40,7 +44,7 @@ const sort=host.querySelectorAll().find(b=>b.dataset.performanceSort==='tested')
 assert.equal(host.dataset.performanceSort,'tested');assert.equal(host.dataset.performanceDirection,'desc');
 ui.renderRewritePerformance(status);assert.equal(host.dataset.performanceSort,'tested');
 async function checkExport(){
-await button.onclick();assert.equal(request.path,'/api/permuter/pass');assert.equal(request.body.action,'export-metrics');
+await button.onclick();assert.deepEqual(fullRequests,['/api/permuter/pass?slug=game&full=1']);assert.match(exported,/only-in-full/);assert.equal(request.path,'/api/permuter/pass');assert.equal(request.body.action,'export-metrics');
 assert.match(output.textContent,/Saved CSV:.*metrics.csv/);
 ui.renderRewritePerformance(status);assert.match(output.textContent,/Saved CSV/);
 failExport=true;await button.onclick();assert.match(output.textContent,/Downloads is not writable/);

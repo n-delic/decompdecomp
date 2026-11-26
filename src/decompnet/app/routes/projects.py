@@ -1059,7 +1059,7 @@ def register(app: App) -> None:
     def p_deep_sweep(slug, request, data):
         sweeps = net.deep_sweeps
         if request.method == 'GET':
-            return sweeps.control(slug) if request.query_params.get('view') == 'control' else sweeps.status(slug)
+            return sweeps.control(slug) if request.query_params.get('view') == 'control' else sweeps.status(slug, full=request.query_params.get('full') == '1')
         action = data.get('action', 'start')
         if action == 'export-metrics':
             from ..metrics_export import save

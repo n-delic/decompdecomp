@@ -17,6 +17,8 @@ from .purpose_work import Executor
 
 POLL_SECONDS = 15
 QUEUE_CACHE_SECONDS = 10
+REWRITE_CACHE_SECONDS = 30  # the per-family rewrite totals (tens of thousands of rows in a long pass)
+REWRITE_ROWS_SENT = 2000  # how many of each the status carries; ?full=1 sends them all, for the CSV export
 # Scope checks need candidate inputs, never archived matched source or unrelated function metadata.
 SCOPE_COLUMNS = ",".join("f."+name for name in ("id","project_id","name","status","best_source","best_score",
     "unit","vram","rom_offset","asm","seed","relocs","target"))
@@ -240,10 +242,24 @@ class Sweeps:
             last = db.execute('SELECT COALESCE(MAX(id),0) FROM deep_permutation_recipe_wins').fetchone()[0]
             db.execute('INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)',
                        (f'deep-metrics-reset:{project_id}', str(last)))
+        self.forget_rewrite_rows(project_id)
         self.save(slug, self.config(slug) | {'metrics_started': False})
         with self.lock:
             self.active.pop(slug, None)
         return self.status(slug)
+
+    def _cached_rows(self, project_id, kind, build):
+        """The rewrite tables' per-family totals, rebuilt at most every REWRITE_CACHE_SECONDS. A long pass has tens of
+        thousands of families, and the window asked for them every few seconds: each answer was a 12 MB, 5 s query that
+        held the database while the pass's own writes waited behind it."""
+        return self._store(project_id).read_cache.get(('deep-' + kind, project_id), None, lambda: build(project_id),
+                                                      ttl=REWRITE_CACHE_SECONDS)
+
+    def forget_rewrite_rows(self, project_id):
+        cache = self._store(project_id).read_cache
+        with cache.lock:
+            for kind in ('recipes', 'measurements'):
+                cache.entries.pop(('deep-' + kind, project_id), None)
 
     def recipes(self, project_id):
         rows = self._store(project_id).all("""SELECT r.family, SUM(r.tested) tested, SUM(r.skipped) skipped,
@@ -423,7 +439,7 @@ class Sweeps:
         return cfg | {'control_only':True, 'threads_default':workers.default_workers(), 'threads_default_maximum':deep_throughput.lanes(True),
                       'runtime_seconds':runtime, 'has_activity':bool(job or cfg.get('metrics_started')), 'state':'idle', **current, **live}
 
-    def status(self, slug):
+    def status(self, slug, full=False):
         # A status poll must never queue behind a writer to repair old pass records.
         # The search worker performs recovery; until then transport errors and rotations are retryable.
         proj = self.net.project_row(slug)
@@ -473,7 +489,12 @@ class Sweeps:
             (cfg['minutes'], cfg['max_variants'], cfg['compiler_profiles'], cfg['rank_candidates'], self._store(slug).read_version('inputs', proj['id']), self._store(slug).read_version('passes', proj['id']), claim_stalls.repair_rules()),
             count_queue, ttl=QUEUE_CACHE_SECONDS if self.net.fork_slug(slug) else None)
         job = self.jobs.jobs.get(current.get('job'), {})
-        recipes, measurements, wins = self.recipes(proj['id']), self.measurements(proj['id']), self.recipe_wins(proj['id'])
+        all_recipes = self._cached_rows(proj['id'], 'recipes', self.recipes)
+        all_measurements = self._cached_rows(proj['id'], 'measurements', self.measurements)
+        wins = self.recipe_wins(proj['id'])
+        # The tables show a few hundred rows; only the CSV export wants every one (`full`).
+        recipes = all_recipes if full else all_recipes[:REWRITE_ROWS_SENT]
+        measurements = all_measurements if full else all_measurements[:REWRITE_ROWS_SENT]
         reset = self._store(slug).one('SELECT value FROM settings WHERE key=?', f'deep-metrics-reset:{proj["id"]}')
         has_activity = bool(job or improvements or recipes or measurements or wins
                             or cfg.get('metrics_started', bool((completed or errors) and not reset)))
@@ -481,7 +502,8 @@ class Sweeps:
                       'total': counts['total'], 'ready': ready, 'queue_done': done_open + done_matched,
                       'queue_left': max(0, ready - done_open - blocked), 'queue_rotated': rotated, 'queue_blocked': blocked, 'awaiting_source': max(0, counts['total'] - ready),
                                    'improved': len(improvements), 'improvements': improvements, 'recipes': recipes, 'recipe_wins': wins,
-                                   'measurements': measurements,
+                                   'measurements': measurements, 'recipes_total': len(all_recipes),
+                                   'measurements_total': len(all_measurements),
                                    'completed': completed, 'errors': errors, 'attention': attention, 'state': job.get('state', 'idle'), **current,
                                    'progress': job.get('progress', {}), 'error': job.get('error')}
 

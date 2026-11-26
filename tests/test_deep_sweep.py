@@ -1370,3 +1370,21 @@ def test_the_pair_search_widens_with_stalled_passes_and_is_capped():
     assert search.pair_scale == 1.0
     search.escalate(2)
     assert search.pair_scale == 2.0 and search.seconds == 60 and search.limit == 10
+
+
+def test_status_sends_the_first_rewrite_rows_and_the_export_all_of_them(sweep, monkeypatch):
+    """A long pass has tens of thousands of rewrite families; the window asked for them all every few seconds (12 MB, 5 s)."""
+    from decompnet.app import deep_sweep
+    obj, net, _, _ = sweep
+    monkeypatch.setattr(deep_sweep, 'REWRITE_ROWS_SENT', 3)
+    fn = net._function('f0', 'game')
+    for i in range(5):
+        obj.record_recipes(fn['id'], {f'rewrite_{i}': [i + 1, 0, 0, i, 0, 0]}, [])
+    shown, full = obj.status('game'), obj.status('game', full=True)
+    assert len(shown['recipes']) == 3 and shown['recipes_total'] == 5
+    assert [r['family'] for r in shown['recipes']] == [r['family'] for r in full['recipes']][:3]
+    assert len(full['recipes']) == 5
+    obj.record_recipes(fn['id'], {'rewrite_late': [1, 0, 0, 9, 0, 0]}, [])
+    assert obj.status('game')['recipes_total'] == 5  # cached for a few seconds: the window does not need the last trial
+    obj.reset_metrics('game')
+    assert obj.status('game')['recipes_total'] == 0  # a reset shows at once
