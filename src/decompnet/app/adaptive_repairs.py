@@ -24,6 +24,14 @@ EARLY_MAX_FACTOR = 2.0
 # POOLED_MAX_FACTOR: a repair that matched in one kind of mismatch is worth trying earlier in another, but a different
 # mismatch is weaker proof than this one's own trials, so it never leads the queue and never demotes a family.
 POOLED_MAX_FACTOR = 2.0
+# A family a setup (one compiler with its flags) has no evidence about borrows what the other setups on the same processor
+# measured for the same mismatch kind, upward only and below what its own other kinds can lend. Measured on a dev
+# database (31M trials, 42 N64 setups): where a setup had under MIN_TRIALS of its own, families the others rated well
+# matched 170 per 10,000 trials, the rest 9 to 32, and compiler relatives did no better than any other MIPS compiler.
+BORROWED_MAX_FACTOR = 1.5
+# Other setups' counts move slowly and the policy is read before every batch of candidates.
+BORROWED_SECONDS = 600
+SETUPS = 'CREATE TABLE IF NOT EXISTS repair_policy_setups(profile TEXT PRIMARY KEY, processor TEXT NOT NULL)'
 MIN_FACTOR, MAX_FACTOR = 0.25, 4.0
 SCHEMA = '''CREATE TABLE IF NOT EXISTS repair_policy(
  profile TEXT NOT NULL, focus TEXT NOT NULL, family TEXT NOT NULL,
@@ -40,15 +48,63 @@ def profile(net, proj, fn):
         # Imported settings belong to a file/build system. Do not guess their compiler from config.
         settings = ('project', candidate_scope.key(net, proj, fn))
     else:
-        settings = ('rom', proj['arch'], bool(proj['big_endian']), cfg.get('platform'),
-                    compiler_for(cfg, fn['vram'], fn))
+        settings = _rom_settings(proj, cfg, compiler_for(cfg, fn['vram'], fn))
+    key = _key(settings)
+    _remember_projects(net)
+    _remember(net, [(key, _processor(proj))])
+    return key
+
+
+def _rom_settings(proj, cfg, compiler):
+    return ('rom', proj['arch'], bool(proj['big_endian']), cfg.get('platform'), compiler)
+
+
+def _key(settings):
     return hashlib.sha256(json.dumps(settings, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def _processor(proj):
+    return f"{proj['arch']}:{'big' if proj['big_endian'] else 'little'}"
+
+
+def _remember(net, setups):
+    """Note which processor each setup compiles for: the counts are kept under a hash, which doesn't say."""
+    known = getattr(net, '_repair_setups', None)
+    if known is None:
+        known = net._repair_setups = set()
+    if new := [setup for setup in setups if setup[0] not in known]:
+        prepare(net)
+        with net.store.tx() as db:
+            db.executemany('INSERT OR IGNORE INTO repair_policy_setups VALUES(?,?)', new)
+        known.update(key for key, _ in new)
+
+
+def _remember_projects(net):
+    """The setups every ROM project's settings name, once: history counted before setups were noted can be borrowed
+    without searching each of those projects again. Only the catalog is read, so no idle project's database opens."""
+    if getattr(net, '_repair_setups_read', False):
+        return
+    setups = []
+    for proj in net.store.all('SELECT * FROM projects'):
+        try:
+            cfg = json.loads(proj['config'])
+            if cfg.get('kind') == 'fork':
+                continue
+            default = cfg['compiler']
+            others = [*(cfg.get('compiler_ranges') or []), *(cfg.get('function_compilers') or {}).values()]
+            compilers = [default, *({**default, 'toolchain': o['toolchain'], 'flags': o['flags']} for o in others)]
+        except (KeyError, TypeError, ValueError):
+            continue  # settings this can't read: that project's setups are noted when it is next searched
+        setups += [(_key(_rom_settings(proj, cfg, compiler)), _processor(proj)) for compiler in compilers]
+    _remember(net, dict(setups).items())
+    net._repair_setups_read = True
 
 
 def prepare(net):
     if not getattr(net, '_repair_policy_ready', False):
         with net.store.tx() as db:
             db.execute(SCHEMA)
+            db.execute(SETUPS)
             db.execute("CREATE TABLE IF NOT EXISTS repair_policy_coverage(origin TEXT PRIMARY KEY, first_at REAL NOT NULL,last_at REAL NOT NULL,attempted INTEGER NOT NULL,improved INTEGER NOT NULL,matched INTEGER NOT NULL,elapsed_ms INTEGER NOT NULL)")
         net._repair_policy_ready = True
 
@@ -178,15 +234,36 @@ def _weights(rows, ceiling):
     return result
 
 
+def borrowed_weights(net, key, focus):
+    """{family: factor} from the other setups on this setup's processor, for the same mismatch kind."""
+    cache = getattr(net, '_repair_borrowed', None)
+    if cache is None:
+        cache = net._repair_borrowed = {}
+    if (found := cache.get((key, focus))) and time.monotonic() - found[0] < BORROWED_SECONDS:
+        return found[1]
+    sums = ','.join(f'SUM({column}) AS {column}' for column in POLICY_COLUMNS)
+    rows = net.store.all(f"""SELECT family,{sums} FROM repair_policy WHERE focus=? AND profile IN (
+        SELECT profile FROM repair_policy_setups WHERE profile<>? AND processor=(
+            SELECT processor FROM repair_policy_setups WHERE profile=?)) GROUP BY family""", focus, key, key)
+    result = _weights([dict(row) for row in rows], BORROWED_MAX_FACTOR)
+    cache[(key, focus)] = (time.monotonic(), result)
+    return result
+
+
 def factors(net, key, focus):
     prepare(net)
     result = _weights(policy_rows(net, key, focus), MAX_FACTOR)
     if '@' not in focus:
         # A family this mismatch kind hasn't measured borrows what it earned on the profile's other kinds, upward only:
         # evidence from another kind may bring a family forward, never demote one here (that takes this kind's own trials).
-        for family, factor in _weights(pooled_rows(net, key, focus), POOLED_MAX_FACTOR).items():
+        pooled = _weights(pooled_rows(net, key, focus), POOLED_MAX_FACTOR)
+        for family, factor in pooled.items():
             if family not in result and factor > 1:
                 result[family] = min(factor, POOLED_MAX_FACTOR)
+        # Then what the processor's other setups measured, only where this one has no verdict of its own at all.
+        for family, factor in borrowed_weights(net, key, focus).items():
+            if family not in result and family not in pooled and factor > 1:
+                result[family] = min(factor, BORROWED_MAX_FACTOR)
     from . import repair_promotion
     return repair_promotion.cap(net,key,result)
 
