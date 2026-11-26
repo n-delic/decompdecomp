@@ -679,6 +679,7 @@ class Sweeps:
         count = deep_throughput.lanes(True) if maximum and not threads else workers.clamp(threads) if threads != 1 else 1
         stats = {'visited': twin_trials + recovered_matches, 'tested': twin_trials + recovery_trials, 'matched': twin_matches + recovered_matches, 'rotated':0, 'activity': Activity(log)}
         visited_turns = set()
+        caught_up = set()  # (finished functions given the profile probe this run: once each)
         lock = threading.Lock()  # (the counters are shared by every thread's function)
         cycle = 1
         order = []
@@ -793,6 +794,7 @@ class Sweeps:
                         fn = rows.get(fid)
                         if fn is None or fid in visited_turns or fid in futures.values():
                             continue
+                        probe_only = False
                         with looking(self.net):
                             fn = deep_permuter.prepare_source(self.net, proj, fn)
                             if not fn['best_source'] or fn['best_score'] is None:
@@ -808,7 +810,20 @@ class Sweeps:
                             # Never-tried/pending candidates need no costly historical-scope comparison.
                             if (fn['pass_state'] == 'error' or (not loop and fn['pass_state'] == 'completed')) and fn['pass_scope'] == signature(
                                     self.net, proj, fn, minutes, variants, profiles, shared, fn['pass_residual'], rank_candidates=cfg['rank_candidates']):
-                                continue
+                                # Not searched again, but a probe added since it finished still reaches it.
+                                probe_only = fid not in caught_up and self.probe_pending(proj, fid)
+                                if not probe_only:
+                                    continue
+                        if probe_only:
+                            caught_up.add(fid)
+                            while len(futures) >= count * 2:
+                                log.check_cancel()
+                                finished, _ = wait(futures, timeout=.1, return_when=FIRST_COMPLETED)
+                                for future in finished:
+                                    futures.pop(future)
+                                    future.result()
+                            futures[pool.submit(self.probe_only, slug, fid, minutes, variants, log, stats, lock)] = fid
+                            continue
                         candidates.append(fn['name'])
                         if slug in self.net.links and (fn['claim_expires'] or 0) > time.time():
                             waiting += 1
@@ -821,6 +836,7 @@ class Sweeps:
                                 futures.pop(future)
                                 future.result()
                         futures[pool.submit(search, {'id': fid}, waiting)] = fid
+                        caught_up.add(fid)  # (its full turn probes it)
                         if fid in order:
                             order.remove(fid)
                         order.append(fid)
@@ -861,6 +877,25 @@ class Sweeps:
             if getattr(log, 'deep_lanes', None) is not None:
                 log.deep_lanes.close()
                 log.deep_lanes = None
+
+    def probe_pending(self, proj, function_id):
+        from . import profile_probe
+        fn = self._store(proj['id']).one('SELECT * FROM functions WHERE id=? AND project_id=?', function_id, proj['id'])
+        return bool(fn) and profile_probe.pending(self.net, proj, fn)
+
+    def probe_only(self, slug, function_id, minutes, variants, log, stats, lock):
+        """A finished function's profile probe, without another search turn."""
+        log.check_cancel()
+        from . import profile_probe_autopilot
+        try:
+            matched = profile_probe_autopilot.catch_up(self.net, slug, function_id, minutes, variants, log)
+        except Exception as error:  # noqa: BLE001 - one function's probe never ends the sweep
+            log.check_cancel()  # (a Stop still does)
+            log(f'Profile probe of a finished function failed: {error}')
+            return
+        if matched:
+            with lock:
+                stats['matched'] += 1
 
     def search_one(self, slug, proj, fn, scope, minutes, variants, log, stats, lock, total, blocked, *, expanded_budget=False):
         """One function's bounded turn, on whichever thread is free."""

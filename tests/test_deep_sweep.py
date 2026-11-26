@@ -1164,6 +1164,22 @@ def test_sweep_recovers_exact_candidates_before_search(sweep, monkeypatch):
     assert calls == ['f1']
 
 
+def test_a_finished_function_still_gets_a_probe_it_has_not_had(sweep, monkeypatch):
+    # a pass that doesn't repeat finished searches skipped them before the profile probe learnt the -O levels
+    from decompnet.app import profile_probe_autopilot
+    obj, net, calls, _ = sweep
+    probed = []
+    monkeypatch.setattr(obj, 'probe_pending', lambda proj, fid: False)
+    obj.run('game', 1, 10, Log(), loop=False)
+    assert calls == ['f0', 'f1']
+    monkeypatch.setattr(obj, 'probe_pending', lambda proj, fid: True)  # (still pending: asked once a run all the same)
+    monkeypatch.setattr(profile_probe_autopilot, 'catch_up',
+                        lambda engine, slug, fid, minutes, variants, log: probed.append(fid) or True)
+    result = obj.run('game', 1, 10, Log(), loop=False)
+    assert len(probed) == 2 == len(set(probed)) and result['matched'] == 2
+    assert calls == ['f0', 'f1']  # no function was searched again
+
+
 def _record_pass(obj, net, name, state, result, completed_at):
     cfg, proj = obj.config('game'), net.project_row('game')
     fn = net._function(name, 'game')

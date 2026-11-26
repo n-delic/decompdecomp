@@ -7,6 +7,7 @@ float_literal_global (it needs the words of the constants) never proposed, and i
 each round, spending its compiles walking the same list again: a replay stalled at 10, 40 and 30. It now gives the
 families the context the local lane gives and, under a profile that only flips the floating-point model, first runs a
 best-child chain of the families under it (repair_chain)."""
+import time
 from types import SimpleNamespace
 
 from decompnet.app import profile_climb
@@ -114,9 +115,20 @@ def test_the_chain_is_bounded_by_half_the_climb_budget(monkeypatch):
 def test_another_profile_keeps_the_ordinary_climb(monkeypatch):
     given, probed = setup(monkeypatch, {'A': [('float_literal_global', 'C')]}, options={})
     monkeypatch.setattr(profile_climb, 'repair_chain', lambda *a, **k: (_ for _ in ()).throw(AssertionError('not FP')))
-    other = {'toolchain': 'sn', 'flags': ['-G0', '-O1', '-mfp64']}
+    other = {'toolchain': 'sn', 'flags': ['-G8', '-O2', '-mfp64']}
     search = Search({'A': 45, 'C': 0})
     assert profile_climb.climb(search, None, PROJ, FN, 'A', other, 45) == 0
+
+
+def test_another_optimisation_level_gets_the_chain_too(monkeypatch):
+    # a draft far closer under -O1 was exact three repairs further on
+    level = {'toolchain': 'sn', 'flags': ['-G0', '-O1', '-mfp64']}
+    given, probed = setup(monkeypatch, {'A': [('allocation_lever', 'B')], 'B': [('local_weight_ladder', 'C')]}, options={})
+    search = Search({'A': 250, 'B': 40, 'C': 0})
+    search.deadline = time.monotonic() + 600
+    assert profile_climb.level_variant(search, PROJ, FN, level) and not profile_climb.level_variant(search, PROJ, FN, OWN)
+    assert profile_climb.explore_level(search, None, PROJ, FN, [(level, 'A', 250)]) is True
+    assert probed == [('C', level)] and any('local_weight_ladder' in line for line in search.logs)
 
 
 def test_the_families_are_given_the_local_lanes_context(monkeypatch):

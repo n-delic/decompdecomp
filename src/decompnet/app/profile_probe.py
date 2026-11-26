@@ -9,9 +9,10 @@ does it where the permuter and the autopilot already are, with no model:
 
 1. decide (`plan`): from the saved C's diff, the target's bytes, the function's library identity and the profiles its
    matched neighbours were built with, which profiles are plausible. No evidence, no compile: a function with nothing
-   pointing anywhere costs nothing. `Console.profile_probes` adds the console's own (consoles/n64/profile_probes.py:
+   pointing anywhere is not tried. `Console.profile_probes` adds the console's own (consoles/n64/profile_probes.py:
    SN 2.7.2 builds and KMC for libultra); the MIPS GCC ones that depend only on flags (`-mfp32`, `-G`, and both) and the
-   neighbours' vote are here.
+   neighbours' vote are here. The -O levels need no evidence (opt_levels.py): every function's own flags at each other
+   level of its compiler, on any processor.
 2. judge (`run`): each profile through deep_profiles.probe, the same call the permuter's profile sweep uses, so a result
    is cached durably per (function, saved C, build inputs, profile) and never compiled twice, and an EXACT pair is
    rechecked and applied for that function only through `suggest`, with the project's own rule for automatic compiler
@@ -21,9 +22,20 @@ does it where the permuter and the autopilot already are, with no model:
    they are what this step is for, and only an exact, rechecked pair is ever applied.
 3. say (`diagnose`): the best profile that was not exact is a note on the function ("-mfp32: 20 against 380") for the
    agent that picks it up next. It changes nothing: never a compiler range, never a non-exact profile.
+4. search (`closer_level`, profile_climb.explore_level): when a level is clearly closer, the Deep Permuter repairs the C
+   under that level. The draft is compared with itself (its score under the level against its score under the
+   function's own settings): the saved C was climbed under the own settings, and one that scored 145 there and 450
+   under -O1 hid a draft at 250 under -O1 that three repairs made exact.
+
+Cost, once per function, saved C and build inputs, for a GCC function at -O2 (-O0, -O1, -O3, -Os): up to 4 compiles
+for the saved C, 4 for the draft and 1 for the draft under its own settings. A verdict the sweep or an earlier pass
+kept is not compiled again. The search under a closer level comes out of the pass's own allowance (at most a quarter of
+what is left, profile_climb).
 
 Both callers hold the function the way they always do and stop through their own Stop: the Deep Permuter after its
-profile sweep (deep_permuter.py) and the autopilot's saved-source pass (profile_probe_autopilot.py). A project nobody is
+profile sweep (deep_permuter.py) and the autopilot's saved-source pass (profile_probe_autopilot.py, which leaves the
+search of step 4 to the Deep Permuter). A Deep Permuter pass that doesn't repeat finished functions still gives them
+this probe (profile_probe_autopilot.catch_up). A project nobody is
 working on is not touched (project_activity). ROM mode only: a project-mode build gives each source file its compiler
 (`Console.file_compiler`) and `try_compiler` switches it; that is ROADMAP.md's "Profile probes for project mode".
 The decision rules read code and flags only; they never compile.
@@ -39,7 +51,7 @@ from typing import Callable
 
 from ..arch.mips_profile_evidence import float_pool_through_at, words_of
 
-MAX_PROBES = 10  # profiles judged per function and saved C: the plan is cut here, the rest wait for another pass
+MAX_PROBES = 10  # profiles the evidence names, judged per function and saved C (the -O levels come on top)
 NEIGHBOUR_MIN = 3  # matched neighbours on one other profile that make it the first profile to judge
 NEIGHBOUR_SHARE = 2 / 3
 NOTE_AT = 0.9  # a non-exact profile is told to the next agent when it scores at most this share of the saved C's own score
@@ -51,7 +63,8 @@ RESERVE = 3  # compiles left in a search's allowance before one more profile: it
 # new signature redoes those passes once, from the judge's cache, so they need no compile
 # v3: the project's most used per-function profiles are planned too, so passes finished without them run again (cached
 # verdicts need no compile)
-SIGNATURE = 'profile-probe-v3:'
+# v4: every -O level of the function's compiler is judged, so passes finished without them run again
+SIGNATURE = 'profile-probe-v4:'
 FP_FLAGS = ('-mfp32', '-mfp64')
 # libultra's own names: osXxx, __osXxx, __rmon*, __sc*, the routines whose compiler was the library's, not the game's
 LIBRARY_NAME = re.compile(r'^_{0,2}(?:os[A-Z]|rmon|sc[A-Z])')
@@ -205,6 +218,47 @@ def plan(console, facts) -> list[dict]:
     return chosen[:MAX_PROBES]
 
 
+def level_probes(facts) -> list[dict]:
+    """The function's own flags at each other -O level of its compiler: no evidence needed, and on every processor."""
+    from . import opt_levels
+    own = facts.own
+    if own.get('cmd') or not own.get('toolchain') or not facts.ready(own['toolchain']):
+        return []
+    return [probe({'toolchain': own['toolchain'], 'flags': flags}, 'level', 'another optimisation level of its compiler')
+            for flags in opt_levels.variants(own['toolchain'], own['flags'])]
+
+
+def with_levels(planned, levels) -> list[dict]:
+    """The evidence's strongest first (the neighbours' vote, a console's settling hint), then the levels, then the rest:
+    a profile in both is judged once, where it comes first."""
+    first = [p for p in planned if p.get('lead') or p['family'] == 'neighbours']
+    out, seen = [], set()
+    for item in [*first, *levels, *planned]:
+        if key(item) not in seen:
+            seen.add(key(item))
+            out.append(item)
+    return out
+
+
+def closer_level(scores, level_keys, own_score, draft_own) -> list[dict]:
+    """The entries of `scores` worth searching under: those of the one level that is clearly closer, lowest score first,
+    or []. Closer means at most NOTE_AT of the same text's score under the own settings (`own_score` for the saved C,
+    `draft_own` for the draft), or at most NOTE_AT of the saved best."""
+    ranked = []
+    for entry in scores:
+        if entry['score'] is None or key(entry) not in level_keys or own_score is None:
+            continue
+        reference = draft_own if entry.get('draft') else own_score
+        below = entry['score'] <= own_score * NOTE_AT
+        if not below and (reference is None or entry['score'] > reference * NOTE_AT):
+            continue
+        ranked.append(((not below, entry['score'] / max(1, reference or own_score), entry['score']), entry))
+    if not ranked:
+        return []
+    best = key(min(ranked, key=lambda item: item[0])[1])
+    return sorted((entry for _, entry in ranked if key(entry) == best), key=lambda entry: entry['score'])
+
+
 # --- running it ---------------------------------------------------------------------------------------------------------
 
 def supported(net, proj) -> bool:
@@ -260,24 +314,67 @@ def finished(net, proj, fn, source, own) -> dict | None:
         return None
 
 
-def run(search, agent, proj, fn, source) -> bool:
-    """Judge `source` under the planned profiles. True when one was exact (applied, or the exact pair is waiting on the
-    project page: the search says which). Compiles count against the search's own allowance and stop with its Stop."""
+def pending(net, proj, fn) -> bool:
+    """Whether this open function's saved C has not had its probe (or a closer level still waits to be searched): what
+    a Deep Permuter pass asks about a function it would otherwise skip as already finished."""
+    from ..project import compiler_for
+    from . import deep_permuter, opt_levels
+    try:
+        if not supported(net, proj) or fn['status'] != 'open' or not fn['best_source'] or fn['best_score'] is None:
+            return False
+        own = compiler_for(net.cfg(proj), fn['vram'], fn)
+        if own.get('cmd') or not own.get('toolchain') or not opt_levels.variants(own['toolchain'], own['flags']):
+            return False
+        record = finished(net, proj, fn, deep_permuter._candidate_source(fn, fn['best_score']),
+                          {'toolchain': own['toolchain'], 'flags': own['flags']})
+    except Exception:  # noqa: BLE001 - a function that can't be asked about is left to its next full pass
+        return False
+    return record is None or bool(record.get('lead') and not record.get('searched'))
+
+
+def draft_under_own(search, agent, proj, fn, draft, own) -> int | None:
+    """The draft's score under the function's own settings: what its score at another level is compared with."""
+    from ..network import NetworkError
+    from ..toolchains import ToolchainError
+    from . import ido_compat
+    net = search.net
+    if not hasattr(net, '_judge_with'):
+        return None
+    search.check()
+    search.tested += 1
+    try:
+        draft = ido_compat.adapted(own['toolchain'], draft)
+        exact, diff, _ = net._judge_with(proj, fn, own['toolchain'], list(own['flags']), draft)
+        if exact:  # (the ordinary recheck and save: a draft that matches as it is)
+            net.try_quietly(agent, proj, fn, draft, exact_only=True)
+            return 0
+    except (NetworkError, ToolchainError) as error:
+        search.log(f'The machine draft could not be judged under its own settings: {error}')
+        return None
+    return max(1, diff.score) if diff is not None else None
+
+
+def run(search, agent, proj, fn, source, *, climb=True) -> bool:
+    """Judge `source` and the machine draft under the planned profiles, and with `climb` search under a clearly closer
+    -O level. True when one was exact (applied, or the exact pair is waiting on the project page: the search says
+    which). Compiles count against the search's own allowance and stop with its Stop."""
     from .. import consoles
     from . import deep_profiles, project_activity
+    from .function_names import canonical_source
     net = search.net
     if not (supported(net, proj) and source and fn['status'] == 'open' and project_activity.active(net, proj['slug'])):
         return False
     console = consoles.of(net.cfg(proj))
-    own_profile = None
     try:
         facts = gather(net, proj, fn, source)
         if facts is None:
             return False
-        own_profile = facts.own
-        if finished(net, proj, fn, source, own_profile) is not None:
+        before = finished(net, proj, fn, source, facts.own)
+        if before is not None and not (climb and before.get('lead') and not before.get('searched')):
             return False
-        planned = plan(console, facts)
+        levels = level_probes(facts) if hasattr(net, '_judge_with') else []  # (an engine with a judge)
+        planned = with_levels(plan(console, facts), levels)
+        level_keys = {key(item) for item in levels}
     except Exception:  # noqa: BLE001 - a planning fault must never stand between a function and its search
         import logging
         logging.getLogger('decompdecomp').exception('profile probe planning failed for %s', fn['name'])
@@ -285,11 +382,14 @@ def run(search, agent, proj, fn, source) -> bool:
     if not planned:
         return False
     seed = fn['seed'] if 'seed' in fn.keys() else None
-    draft = seed if seed and seed.strip() != source.strip() else None
+    draft = canonical_source(fn, seed) if seed else None
+    if draft and draft.strip() == source.strip():
+        draft = None
     previous, search.phase = search.phase, 'profile probes'
-    search.log(f'Profile probe: {len(planned)} per-function profile(s) the target points to: '
+    search.log(f'Profile probe: {len(planned)} per-function profile(s): '
                + '; '.join(f"{p['toolchain']} {' '.join(p['flags'])} ({p['family']})" for p in planned) + '.')
     scores, complete, matched = [], False, False  # (finished only when the loop below ends: a Stop or a spent allowance raises past it)
+    draft_own = None
     try:
         for item in planned:
             search.check()
@@ -326,35 +426,68 @@ def run(search, agent, proj, fn, source) -> bool:
                     if wide is not None and wide < score:
                         scores.append({**item, 'family': item['family'] + '_arrays', 'score': wide})
         else:
+            if draft and levels and search.limit - search.tested >= RESERVE:
+                draft_own = draft_under_own(search, agent, proj, fn, draft, facts.own)
+                if draft_own == 0:
+                    matched = True
+                    return True
             complete = True
     finally:
         search.phase = previous
         if not matched and (scores or complete):
-            diagnose(search, agent, proj, fn, source, facts.own, scores, complete)
-    return False
+            lead = closer_level(scores, level_keys, fn['best_score'], draft_own)
+            record = diagnose(search, agent, proj, fn, source, facts.own, scores, complete, lead=lead,
+                              draft_own=draft_own, said=before is not None)
+    if not (climb and complete and lead):
+        return False
+    from . import ido_compat, profile_climb
+    search.phase = 'closer optimisation level'
+    try:
+        texts = [({'toolchain': e['toolchain'], 'flags': e['flags']},
+                  ido_compat.adapted(e['toolchain'], draft if e.get('draft') else source), e['score']) for e in lead]
+        spent = search.tested
+        matched = profile_climb.explore_level(search, agent, proj, fn, texts)
+    finally:
+        search.phase = previous
+    if not matched and search.tested > spent:  # (no allowance for a single compile: a later pass searches)
+        keep(net, proj, fn, source, facts.own, {**record, 'searched': True})
+    return matched
 
 
-def diagnose(search, agent, proj, fn, source, own, scores, complete) -> None:
-    """Keep what the probes scored and tell the next agent the best of it, once. Exact pairs were handled by the judge
-    call; this is only the non-exact ones. A pass the allowance cut short is not recorded as finished."""
+def keep(net, proj, fn, source, own, record) -> None:
+    with net.project_store(proj['id']).tx() as db:
+        db.execute('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason,feedback) VALUES(?,?,?,?,?)',
+                   (fn['id'], marker_key(net, fn, source, own), 'probed', 'profile probe', json.dumps(record)))
+
+
+def diagnose(search, agent, proj, fn, source, own, scores, complete, *, lead=(), draft_own=None, said=False) -> dict:
+    """Keep what the probes scored and tell the next agent the best of it, once (`said`: an earlier pass over this C
+    already did). Exact pairs were handled by the judge call; this is only the non-exact ones. A pass the allowance cut
+    short is not recorded as finished. Returns the record."""
     from ..network import NetworkError
     net = search.net
     scored = [s for s in scores if s['score'] is not None]
     best = min(scored, key=lambda s: s['score'], default=None)
-    record = {'own_score': fn['best_score'], 'probes': scores, 'complete': complete,
+    record = {'own_score': fn['best_score'], 'draft_own_score': draft_own, 'probes': scores, 'complete': complete,
+              'lead': bool(lead), 'searched': False,
               'best': best and {**{k: best[k] for k in ('toolchain', 'flags', 'family', 'score')},
                                 **({'draft': True} if best.get('draft') else {})}}
     if complete:
-        with net.project_store(proj['id']).tx() as db:
-            db.execute('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason,feedback) VALUES(?,?,?,?,?)',
-                       (fn['id'], marker_key(net, fn, source, own), 'probed', 'profile probe', json.dumps(record)))
-    if best is None or fn['best_score'] is None or best['score'] > fn['best_score'] * NOTE_AT:
-        return
+        keep(net, proj, fn, source, own, record)
+    if said or fn['best_score'] is None:
+        return record
+    if best is None or best['score'] > fn['best_score'] * NOTE_AT:
+        # a level closer for the draft than its own settings are, though not closer than the saved C
+        best = next((e for e in lead if e.get('draft')), None)
+        if best is None or draft_own is None:
+            return record
     settings = f"{best['toolchain']} {' '.join(best['flags'])}"
     which = 'the machine draft (get_function section=draft)' if best.get('draft') else 'this saved C'
+    against = (f"{draft_own} under its own settings (the saved C: {fn['best_score']})"
+               if best.get('draft') and draft_own is not None and best['score'] > fn['best_score'] * NOTE_AT else
+               f"{'the saved C scores ' if best.get('draft') else ''}{fn['best_score']} under its own settings")
     line = (f"Profile probe: {which} scores {best['score']} under {settings} ({best['why']}), "
-            f"{'the saved C scores ' if best.get('draft') else ''}{fn['best_score']} under its own settings; not exact. "
-            "Nothing was changed.")
+            f"{against}; not exact. Nothing was changed.")
     search.log(f"{fn['name']}: {line}")
     if complete and not any(s['score'] == 0 for s in scores):
         try:
@@ -363,3 +496,4 @@ def diagnose(search, agent, proj, fn, source, own, scores, complete) -> None:
                          score_before=fn['best_score'], score_after=best['score'])
         except NetworkError as error:
             search.log(f'Profile probe not noted on the function: {error}')
+    return record
