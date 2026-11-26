@@ -2330,10 +2330,11 @@ def _full_run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, 
     # One explicit deep search per function, including credential issuance. Agents may keep working.
     fn = net._function(name, slug)
     if fn['status'] == 'open' and fn['target']:
-        from .sdk_assembly import discover_known
+        from .sdk_assembly import discover_c, discover_known
         log.check_cancel()
         with looking(net):
-            found = discover_known(net, net.project_row(slug), function_id=fn['id'], check_cancel=log.check_cancel)
+            found = (discover_known(net, net.project_row(slug), function_id=fn['id'], check_cancel=log.check_cancel)
+                     or discover_c(net, net.project_row(slug), function_id=fn['id']))
         if found:
             reason = 'Identified and set aside as SDK library code'
             log(reason)

@@ -523,6 +523,12 @@ class Console:
         `identify(builtin=True)`; display names stay exact-match). {"name", "corpus", "evidence"} or None."""
         return None
 
+    def sdk_without_source(self, corpora) -> bool:
+        """Whether a detected library routine (`corpora`: the signature collections that name it) is from a library
+        no public source builds, so neither a port nor anybody else can have its C from there: it's set aside as SDK
+        code on the detection alone (app/sdk_assembly._lead), not left to agents."""
+        return False
+
     def scan_sdk(self, net, proj, job=None) -> None:
         """Optional binary SDK evidence, refreshed by the shared background naming task.
 

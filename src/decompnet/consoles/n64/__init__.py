@@ -41,6 +41,10 @@ from .port import KIT as PORT_KIT
 _MUL64_LOW_FIRST_SHA256 = "3de77e7c110a869794ff2998de80fb3fd6e4a7fc046d21378dc764a11b1676d0"
 
 
+# a signature collection of the n_audio library: the built-in table or an indexed SDK archive
+_N_AUDIO = re.compile(r"\bn_audio\b|\blibg?n_audio", re.I)
+
+
 class Nintendo64(Console):
     id = "n64"
     name = "Nintendo 64"
@@ -232,6 +236,12 @@ class Nintendo64(Console):
 
     def profile_probes(self, facts):
         return profile_probes.probes(facts)
+
+    def sdk_without_source(self, corpora):
+        # n_audio (libn_audio / libgn_audio, the app's table or the user's archives): ultralib has none of its C. A
+        # name the ultralib rebuild has too is libultra's own, and goes the usual way.
+        return (any(_N_AUDIO.search(c) for c in corpora)
+                and not any(c.startswith("built in / decompals/ultralib") for c in corpora))
 
     def sdk_assembly_identity(self, code, big_endian=True):
         return sdk_assembly.identify(code, big_endian)
