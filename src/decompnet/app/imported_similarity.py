@@ -1,6 +1,7 @@
 """Find and verify close imported functions whose instruction layouts have changed."""
 
 import json
+import logging
 import time
 from collections import Counter, defaultdict
 from dataclasses import replace
@@ -15,6 +16,7 @@ from . import donor_build, donor_relocations, free_candidates
 from .cross_game_progress import report
 from .twins import Print, renames
 
+log = logging.getLogger('decompdecomp')
 MIN_SCORE = .84
 MIN_ORDER_WITH_OPERANDS = .74
 MIN_OPERAND_AGREEMENT = .60
@@ -211,19 +213,26 @@ def search_partition(twins, proj, function_ids, since, job):
             return
         if not net.fork_slug(other['slug']):
             continue
-        _, fork, _ = net.forks.get(other['slug'])
-        prints = twins._fork_prints(other, matched_only=True)
-        units = {unit.name: unit for unit in fork.units()}
+        # A project added from a repository but never set up (no objdiff.json) has no matched C to lend. One of
+        # those, or any other unreadable donor, must not end the search of all the games after it.
         donor_rows = net.project_store(other['id']).all(
             "SELECT id,project_id,name,unit,meta FROM functions WHERE project_id=? AND status='matched'", other['id'])
-        hits = imported_literals.index(units, donor_rows, prints, bool(proj['big_endian']), job)
-        if not hits:
+        if not donor_rows:
             continue
-        checked = defaultdict(set)
-        for row in store.all(
-                "SELECT function_id,source_function_id FROM cross_game_attempts "
-                "WHERE source_project_id=? AND created_at>=? AND function_id IN (SELECT value FROM json_each(?))",
-                other['id'], since, json.dumps(function_ids)):
-            checked[row['function_id']].add(row['source_function_id'])
-        run(twins, agent, proj, other, hits, units, donor_build.Settings(fork), job, checked,
-            function_ids=function_ids)
+        try:
+            _, fork, _ = net.forks.get(other['slug'])
+            prints = twins._fork_prints(other, matched_only=True)
+            units = {unit.name: unit for unit in fork.units()}
+            hits = imported_literals.index(units, donor_rows, prints, bool(proj['big_endian']), job)
+            if not hits:
+                continue
+            checked = defaultdict(set)
+            for row in store.all(
+                    "SELECT function_id,source_function_id FROM cross_game_attempts "
+                    "WHERE source_project_id=? AND created_at>=? AND function_id IN (SELECT value FROM json_each(?))",
+                    other['id'], since, json.dumps(function_ids)):
+                checked[row['function_id']].add(row['source_function_id'])
+            run(twins, agent, proj, other, hits, units, donor_build.Settings(fork), job, checked,
+                function_ids=function_ids)
+        except (NetworkError, OSError, ValueError):
+            log.warning('similar imported source: skipped donor %s for %s', other['slug'], proj['slug'], exc_info=True)
