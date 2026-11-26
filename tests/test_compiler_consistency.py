@@ -339,3 +339,35 @@ def test_parallel_rescore_failure_preserves_settings_and_all_saved_scores(net, m
     assert net.project_row('demo')['config'] == before
     assert net._function('f84','demo')['best_score'] == 20
     assert net._function('f84','demo')['seed'] == 'draft'
+
+
+def test_compare_with_another_profile_is_read_only_then_moves(cleanup_net, monkeypatch):
+    from decompnet.app import compiler_cleanup
+    from decompnet.project import compiler_for
+    n = cleanup_net
+    source = {'toolchain': 'ido-5.3', 'flags': ['-O1']}
+    target = {'toolchain': 'ido-5.3', 'flags': ['-O3']}
+    monkeypatch.setattr(n, '_judge_with', lambda proj, fn, tc, flags, src: (fn['name'] == 'f0', None, ''))
+    monkeypatch.setattr(n, 'regression_test', lambda *a, **k: [])
+    before = n.project_row('demo')['config']
+    out = compiler_cleanup.compare(n, 'demo', source, target, log=lambda _: None)
+    assert out['matches'] == ['f0'] and [f['function'] for f in out['failures']] == ['f1']
+    assert n.project_row('demo')['config'] == before
+    moved = compiler_cleanup.cleanup(n, 'demo', log=lambda _: None, source_profile=source, target_profile=target)
+    assert [item['function'] for item in moved['changed']] == ['f0'] and moved['unchanged'] == 1
+    cfg = n.cfg(n.project_row('demo'))
+    assert compiler_for(cfg, 0x80001000)['flags'] == ['-O3'] and compiler_for(cfg, 0x80001010)['flags'] == ['-O1']
+    with pytest.raises(NetworkError, match='different compiler profile'):
+        compiler_cleanup.compare(n, 'demo', source, source, log=lambda _: None)
+
+
+def test_moving_a_function_with_its_own_setting_changes_that_setting():
+    from decompnet.app import compiler_cleanup
+    from decompnet.project import compiler_for
+    fn = {'name': 'f0', 'vram': 0x80001000, 'rom_offset': 0x40}
+    own = {'vram': 0x80001000, 'function': 'f0', 'toolchain': 'ido-5.3', 'flags': ['-O1']}
+    config = {'compiler': {'toolchain': 'ido-5.3', 'flags': ['-O2']}, 'function_compilers': {'64:2147487744': own}}
+    compiler_cleanup.move_function(config, fn, 0x80001010, ('ido-5.3', ('-O3',)))
+    assert compiler_for(config, fn['vram'], fn)['flags'] == ['-O3'] and not config.get('compiler_ranges')
+    compiler_cleanup.move_function(config, fn, 0x80001010, ('ido-5.3', ('-O2',)))
+    assert config['function_compilers'] == {}

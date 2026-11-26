@@ -918,3 +918,10 @@ const api=async()=>({state:++polls>=3?'done':'running',log:[],progress:{},result
     # the callback's guard, as source: hidden window or another tab returns before drawing or fetching
     guard = callback[callback.index('if (document.hidden'):]
     assert 'document.hidden' in guard and 'S.tab !== "matching"' in guard
+
+
+def test_compiler_profile_compares_with_a_chosen_profile():
+    if NODE is None:
+        pytest.skip("needs node to run the GUI scripts")
+    subprocess.run([NODE, str(Path(__file__).with_name("gui_profile_compare.js"))],
+                   cwd=Path(__file__).resolve().parents[1], check=True, timeout=GUI_TIMEOUT_SECONDS)

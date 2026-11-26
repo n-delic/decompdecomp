@@ -89,7 +89,7 @@ def register(app: App) -> None:
                     # The per-function publisher uses current DB inputs with exact/revision
                     # guards. Let autosave export it rather than blocking the response on a full import.
                     function_profile = request.url.path == '/api/compiler' and data.get('function')
-                    if request.method == "POST" and not function_profile and request.url.path not in ("/api/verification", "/api/compiler/test-default", "/api/agent-review", "/api/data-regions", "/api/rom-explorer", "/api/rom-explorer/annotation", "/api/rom-explorer/preview", "/api/rom-explorer/loaders", "/api/rom-explorer/inspect", "/api/rom-explorer/discovery", "/api/knowledge/verify") and not comparison_started and not (request.url.path == "/api/suggestion" and data.get("background") and data.get("action") in ("apply", "apply-all")) and (project := net.store.one("SELECT * FROM projects WHERE slug=?", slug)) \
+                    if request.method == "POST" and not function_profile and request.url.path not in ("/api/verification", "/api/compiler/test-default", "/api/compiler/compare", "/api/agent-review", "/api/data-regions", "/api/rom-explorer", "/api/rom-explorer/annotation", "/api/rom-explorer/preview", "/api/rom-explorer/loaders", "/api/rom-explorer/inspect", "/api/rom-explorer/discovery", "/api/knowledge/verify") and not comparison_started and not (request.url.path == "/api/suggestion" and data.get("background") and data.get("action") in ("apply", "apply-all")) and (project := net.store.one("SELECT * FROM projects WHERE slug=?", slug)) \
                             and not net.project_missing(project):
                         net.progress.sync(slug, force=True)
                     return result
@@ -251,6 +251,19 @@ def register(app: App) -> None:
     def p_compiler_cleanup(slug, request, data):
         net._rom_only(slug, "compiler profile cleanup")
         return {"job": jobs.start("compiler-cleanup", lambda log: compiler_cleanup.cleanup(net, slug, log, source_profile=data.get("profile")))}
+
+    def p_compiler_compare(slug, request, data):
+        """Try one profile's matches with another (read-only), or move the ones that stay byte-identical."""
+        net._rom_only(slug, "comparing compiler profiles")
+        source, target, action = data.get("profile"), data.get("target"), data.get("action", "compare")
+        if action == "compare":
+            work = lambda log: compiler_cleanup.compare(net, slug, source, target, log)
+        elif action == "move":
+            work = lambda log: compiler_cleanup.cleanup(net, slug, log, source_profile=source, target_profile=target)
+        else:
+            raise NetworkError("Choose compare or move.")
+        return {"job": jobs.start("compiler-compare", work, project=slug,
+                                  cancel_message="Comparison stopped. No settings changed.")}
 
     def p_unverified_profiles(slug, request, data):
         """Function-only compiler settings no match supports (GET: how many, any running recheck; POST: recheck
@@ -1542,6 +1555,7 @@ def register(app: App) -> None:
         "/api/compiler": (p_compiler, ["POST"]),
         "/api/compiler/test-default": (p_compiler_default_test, ["POST"]),
         "/api/compiler/cleanup": (p_compiler_cleanup, ["POST"]),
+        "/api/compiler/compare": (p_compiler_compare, ["POST"]),
         "/api/compiler/unverified": (p_unverified_profiles, ["GET", "POST"]), "/api/export": (p_export, ["POST"]),
         "/api/project-layout": (p_project_layout, ["POST"]), "/api/open": (p_open, ["POST"]),
         "/api/reimport": (p_reimport, ["GET", "POST"]), "/api/code-audit": (p_code_audit, ["POST"]),
