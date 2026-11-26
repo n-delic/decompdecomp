@@ -56,7 +56,8 @@ def test_sync_reports_the_owner_while_the_wait_is_still_blocked(tmp_path, monkey
                 assert 'depth=2 phase=Reading saved files' in message
                 assert 'progress.py:sync:' in message and 'waiter_native=' in message and 'held=' in message
                 assert len(message) < 3000
-                for secret in ('private-project', 'proprietary C body', 'Bearer', 'private-credential', str(tmp_path)):
+                assert ' project=private-project wait=' in message  # which project's queue, nothing else of it
+                for secret in ('proprietary C body', 'Bearer', 'private-credential', str(tmp_path)):
                     assert secret not in message
             finally:release.set()
             assert owner.result(timeout=3) is False

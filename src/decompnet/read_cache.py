@@ -3,6 +3,8 @@ import threading
 import time
 from collections import OrderedDict
 
+from . import db_diagnostics
+
 READ_WAIT_SECONDS = 10
 
 
@@ -36,6 +38,7 @@ class ReadCache:
             self._trim()
         try:
             if not entry['lock'].acquire(timeout=READ_WAIT_SECONDS):
+                db_diagnostics.read_pending(key)
                 raise ReadPending('Shared metadata is still being prepared. Try again shortly.')
             try:
                 if entry.get('builder') == threading.get_ident():

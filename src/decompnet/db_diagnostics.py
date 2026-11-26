@@ -47,6 +47,29 @@ def caller(depth=2) -> str:
     return f'{Path(frame.f_code.co_filename).name}:{frame.f_lineno} ({frame.f_code.co_name})'
 
 
+def label(value, limit=80) -> str:
+    """A name safe to put on one log line: a project's slug, or a part of a cache key (ids, kinds, source file names).
+    Anything but text and numbers is named by its type only."""
+    if value is None or isinstance(value, (bool, int)):
+        return str(value)
+    if isinstance(value, str):
+        text = ''.join(c if c.isalnum() or c in '-_./' else '?' for c in value[:limit])
+        return text + ('...' if len(value) > limit else '')
+    return f'<{type(value).__name__}>'
+
+
+def cache_key(key) -> str:
+    parts = key[:8] if isinstance(key, tuple) else (key,)
+    return ','.join(label(part) for part in parts)[:240]
+
+
+def read_pending(key):
+    """Which shared metadata a reader gave up waiting for."""
+    text = cache_key(key)
+    if due('read_pending', text):
+        log.warning('Shared metadata wait timed out: key=%s', text)
+
+
 def due(kind, key, now=None) -> bool:
     """Whether this warning may be written now: once a minute per kind and place."""
     now = time.monotonic() if now is None else now
@@ -65,10 +88,11 @@ def long_write(held, where, *, thread_cpu=-1.):
                     held, where, thread_cpu)
 
 
-def write_waited(waited, where, holder):
-    if waited >= WRITE_WAIT_SECONDS and due('write_waited', where):
-        log.warning('Database write waited %.3fs at %s, last behind %s', waited, where,
-                    holder or 'another process (the permuter, a tool reader or a second app)')
+def write_waited(waited, where, holder, project=None):
+    if waited >= WRITE_WAIT_SECONDS and due('write_waited', (where, project)):
+        log.warning('Database write waited %.3fs at %s, last behind %s; project=%s', waited, where,
+                    holder or 'another process (the permuter, a tool reader or a second app)',
+                    label(project) if project else '-')
 
 
 def plan_shape(conn, sql, args) -> str:

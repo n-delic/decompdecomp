@@ -67,6 +67,7 @@ class Files:
             store = Store(path,project_namespace=row['id'],repair_archive=self.catalog.conn.repair_archive,require_existing=True)
         except CorruptDatabaseError as error:
             raise CorruptDatabaseError(path,project=row['slug']) from error
+        store.project_slug = row['slug']
         if not store.one('SELECT 1 FROM projects WHERE id=? AND slug=?',row['id'],row['slug']):
             store.conn.close()
             raise ValueError('The project database belongs to a different project. Restore a consistent backup.')
@@ -117,6 +118,7 @@ class Files:
         path = self.path(pid,relative)
         path.parent.mkdir(exist_ok=True)
         store = Store(path,project_namespace=pid,repair_archive=self.catalog.conn.repair_archive)
+        store.project_slug = values[0]
         from .app.transcript_storage import TranscriptStore
         from .app.transcripts import Transcripts
         transcript = TranscriptStore(str(path)+'.transcripts.sqlite3',repair_archive=self.catalog.conn.repair_archive)

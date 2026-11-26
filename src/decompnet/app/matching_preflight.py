@@ -10,6 +10,7 @@ from . import switch_tables
 from .candidate_diagnostics import unresolved
 
 MAX_PROFILES = 4
+MAX_COMBINED = 3  # improving additions whose unions are probed
 
 
 class PreflightStopped(Exception):
@@ -130,12 +131,14 @@ def _run(net, proj, fn, log, check, max_profiles):
     candidates = [(own['toolchain'], tuple(flags)) for flags, _ in probes]
     input_digest = net._comparison_digest(proj, fn, fn['best_source'], candidates)
     from .baseline_status import revision
-    key = 'matching-preflight-v9:'+revision()+':'+input_digest+':'+hashlib.sha256(repr(probes).encode()).hexdigest()
+    key = 'matching-preflight-v10:'+revision()+':'+input_digest+':'+hashlib.sha256(repr(probes).encode()).hexdigest()
     result = {'tested': 0, 'best': None, 'pending': 0}
     best_key = None
     relocation_source = None
     allowance = min(MAX_PROFILES, max_profiles)
     jump_probes = []
+    baseline = None  # the saved C's score under its own flags
+    improvers = []  # flag additions that each brought the saved C closer
     def ensure():
         if check() is False:
             raise PreflightStopped()
@@ -227,6 +230,11 @@ def _run(net, proj, fn, log, check, max_profiles):
                         result.pop('link', None)
                         result['best'] = item
                     break
+                if source == fn['best_source'] and item['score'] is not None and not item.get('link'):
+                    if index == 0:
+                        baseline = item['score']
+                    elif baseline is not None and item['score'] < baseline:
+                        combine(probes, index, own['flags'], list(flags), source, improvers)
                 if item.get('link'):
                     result['link'] = item['link']
                     if (set(item['link']['symbols']) <= {'sqrt', 'sqrtf'} and
@@ -315,6 +323,27 @@ def _run(net, proj, fn, log, check, max_profiles):
                 log('Compiler preflight found a better source/profile hypothesis: '+' '.join(best['flags'])+
                     '. Partial results need review; exact results also respect automatic compiler settings.')
     return result
+
+
+def combine(probes, index, own, flags, source, improvers):
+    """Queue the union of this improving flag addition with each earlier, disjoint one, right after it.
+
+    Two settings the game turned off together each only bring the saved C part of the way: a spawn loop of 136
+    instructions (KMC gcc 2.7.2, -O2) went 5422 -> 3390 without strength reduction and -> 2059 with both scheduling
+    passes off, and was exact only with all three flags, which no single-change variant tries. Only flags added to the
+    function's own count (a replaced level or -G is not combined), at most MAX_COMBINED unions per function."""
+    if flags[:len(own)] != list(own):
+        return
+    added = flags[len(own):]
+    if not added:
+        return
+    for other in list(improvers):
+        if set(added) & set(other):
+            continue
+        probe = ([*own, *other, *added], source)
+        if len(improvers) <= MAX_COMBINED and probe not in probes:
+            probes.insert(index + 1, probe)
+    improvers.append(added)
 
 
 def recover_exact(net, proj, fn, digest, candidates, candidate=None):
