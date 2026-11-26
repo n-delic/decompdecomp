@@ -22,3 +22,7 @@ the wrong flags, since the C was shaped for them.
 
 Controlled and one-function evidence: one function. That inlining is what stops the address sharing is a hypothesis,
 not confirmed in the compiler source.
+
+Library reach from the other starts under `-O2` (`prove_chain`): the saved goto ladder 3791 -> 3751, the machine
+draft 7926 -> 5581 (`switch_arm_return_helpers` was one of its steps). The draft's arms leave through shared `goto`
+tails, which the family does not outline; writing each tail back into its arm first is the remaining gap.
