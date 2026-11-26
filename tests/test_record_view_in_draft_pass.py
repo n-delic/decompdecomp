@@ -9,3 +9,11 @@ def test_a_limited_draft_pass_keeps_the_record_view():
               '    M2C_FIELD(arg0, s32 *, 0x10) = D_80001000;\n    M2C_FIELD(arg0, s32 *, 0x14) = D_80001004;\n}\n')
     children = draft_repairs.variants(source, 'func_80002000', 'mips', '', ['-O2'])
     assert any('Rec_func_80002000_arg0' in child for child in children)
+
+
+def test_both_modes_draft_the_record_view():
+    # ROM mode (autopilot's draft candidates) and project mode (forkengine's autopilot drafts) both offer it
+    from pathlib import Path
+    root = Path(draft_repairs.__file__).parent
+    assert 'm2c_field_record_view.variants(' in (root / 'engine' / 'autopilot.py').read_text()
+    assert 'm2c_field_record_view.variants(' in (root / 'forkengine.py').read_text()
