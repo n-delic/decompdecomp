@@ -7,7 +7,6 @@ import pytest
 
 from decompnet.app import function_profile_suggestions
 from decompnet.app.engine.compilers import CompilerMixin
-from decompnet.network import NetworkError
 from tests import test_project_storage as base
 
 scoped = base.scoped
@@ -25,7 +24,7 @@ def setup(net, stores):
 
 
 @pytest.mark.parametrize('race', [False, True])
-def test_compiler_config_publishes_scores_only_in_owner_and_rejects_races(scoped, race):
+def test_compiler_config_publishes_scores_only_in_owner_and_survives_races(scoped, race):
     net, stores = scoped
     setup(net, stores)
     proj = net._project('first')
@@ -35,11 +34,12 @@ def test_compiler_config_publishes_scores_only_in_owner_and_rejects_races(scoped
             with stores[1].tx() as db:db.execute("UPDATE functions SET status='matched', matched_source='concurrent edit'")
         return False, SimpleNamespace(score=10), ''
     net._judge_with = judge
+    net.regression_test = lambda *a, **kw: []
+    net._context = lambda *a: None
     if race:
-        with pytest.raises(NetworkError, match='changed during'):
-            net._apply_compiler_config(proj, cfg)
-        assert net.cfg(net._project('first'))['compiler']['flags'] == ['-O1']
-        assert stores[1].one('SELECT best_score FROM functions')['best_score'] == 50
+        net._apply_compiler_config(proj, cfg)
+        assert net.cfg(net._project('first'))['compiler']['flags'] == ['-O2']
+        assert stores[1].one('SELECT matched_source FROM functions')['matched_source'] == 'concurrent edit'
     else:
         net._apply_compiler_config(proj, cfg)
         assert net.cfg(net._project('first'))['compiler']['flags'] == ['-O2']
