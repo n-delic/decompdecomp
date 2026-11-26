@@ -333,3 +333,34 @@ def test_a_rooms_first_sync_comes_before_its_drafts(built, tmp_path, monkeypatch
     finally:
         net.drafter.stop(SLUG)
         net.links.pop(SLUG, None)
+
+
+def test_a_branch_to_a_label_the_function_lacks_is_drafted_as_a_return():
+    asm = "glabel f\n  beql $s3, $s5, .L8024F95C\n   nop\n  jr $ra\n   nop\n"
+    error = "Cannot find branch target .L8024F95C"
+    cut = seeds.cut_missing_label(asm, error)
+    assert "beql $s3, $s5, .Loutside_branch" in cut and cut.endswith(".Loutside_branch:\njr $ra\nnop\n")
+    assert seeds.cut_missing_label(asm + ".L8024F95C:\n  nop\n", error) is None  # (defined: another problem)
+    assert seeds.cut_missing_label(cut, "Cannot find branch target .Loutside_branch") is None
+
+
+@needs_demo
+def test_a_draft_that_never_compiled_is_tried_again_by_a_newer_repair_library_and_comes_first(net, monkeypatch):
+    """A game's drafts that didn't compile kept that verdict after the repair for them shipped."""
+    from decompnet.app import draft_reports
+    proj = net._project(SLUG)
+    store = net.project_store(proj["id"])
+    monkeypatch.setattr(net, "_draft_plan", lambda fn, *a, **k: (fn["seed_key"], "", ""))  # (every seed is current)
+    with store.tx() as db:
+        db.execute("UPDATE functions SET seed='int x;', seed_key='k', best_score=100 WHERE project_id=? AND status='open'",
+                   (proj["id"],))
+    last = store.one("SELECT id FROM functions WHERE project_id=? AND status='open' ORDER BY n_insns DESC LIMIT 1", proj["id"])["id"]
+    with store.tx() as db:
+        db.execute("UPDATE functions SET best_score=NULL WHERE id=?", (last,))
+    draft_reports.save(net, last, {"complete": True, "repairs": "old"}, project_id=proj["id"])
+    assert net.stale_drafts(proj) == [last]
+    draft_reports.save(net, last, {"complete": True, "repairs": draft_reports.repairs()}, project_id=proj["id"])
+    assert net.stale_drafts(proj) == []
+    with store.tx() as db:  # one with a stale seed and no compiling C goes before every smaller one
+        db.execute("UPDATE functions SET seed=NULL WHERE project_id=? AND status='open'", (proj["id"],))
+    assert net.stale_drafts(proj)[0] == last

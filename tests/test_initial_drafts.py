@@ -373,7 +373,7 @@ def test_completed_autopilot_receipt_skips_seed_preparation(network,monkeypatch)
     monkeypatch.setattr(net,'_seed_for',lambda *a:pytest.fail('unchanged completion must skip seed preparation'))
     ctx=net._context(proj['id'],fn['unit'])
     key=draft_reports.key('same-plan',ctx['header'],'',fn)
-    draft_reports.save(net,fn['id'],{'key':key,'complete':True},project_id=proj['id'])
+    draft_reports.save(net,fn['id'],{'key':key,'complete':True,'repairs':draft_reports.repairs()},project_id=proj['id'])
     agent,_=net.local_agent('autopilot')
     assert net._autopilot_one_work(agent,proj,fn['id'])=='skip'
 

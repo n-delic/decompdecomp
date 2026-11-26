@@ -728,6 +728,7 @@ _DELAY_SLOT_LABEL = re.compile(r"Label \._m2c_(\.?L[0-9A-Fa-f]{8}\w*?)before ref
 
 
 _ENTRY_BRANCH = re.compile(r"Cannot find branch target (\w+)")
+_MISSING_LABEL = re.compile(r"Cannot find branch target (\.L\w+)")
 _BRANCH_LINE = re.compile(r"^[ \t]*(?:/\*.*?\*/[ \t]*)?(?:b[a-z]*|j)[ \t]")
 
 
@@ -872,6 +873,21 @@ def cut_outside_branches(asm_text: str) -> str:
     return out + "\n.Loutside_branch:\njr $ra\nnop\n" if outside else out
 
 
+def cut_missing_label(asm_text: str, error: str) -> str | None:
+    """A branch to a local label the function's text never defines (the split cut the function short, or data was
+    filed as code): m2c drafts nothing. It becomes a branch to a return, as `cut_outside_branches` does."""
+    found = _MISSING_LABEL.search(error)
+    if not found or ".Loutside_branch" in found[1]:
+        return None
+    label = re.escape(found[1])
+    if re.search(rf"(?m)^[ \t]*{label}:", asm_text):
+        return None
+    cut = re.sub(rf"(?<![\w.]){label}(?!\w)", ".Loutside_branch", asm_text)
+    if cut == asm_text:
+        return None
+    return cut if "\n.Loutside_branch:\n" in cut else cut + "\n.Loutside_branch:\njr $ra\nnop\n"
+
+
 @compile_timing.timed('generation')
 def run_m2c(asm_text: str, name: str, target: str, context_header: str = "", data_asm: str | None = None,
             timeout: float = 20, valid: bool = False, strict: bool = False, options: tuple[str, ...] = ()) -> str | None:
@@ -901,6 +917,9 @@ def run_m2c(asm_text: str, name: str, target: str, context_header: str = "", dat
             if any(text in str(error) for text in _MISSING_TABLE) and (cut := cut_missing_switches(asm_text)) != asm_text:
                 drafted = _run_m2c(cut, name, target, context_header, data_asm, timeout, valid, strict, options)
                 return MISSING_SWITCH_NOTE + drafted if drafted else drafted
+            if cut := cut_missing_label(asm_text, str(error)):
+                drafted = run_m2c(cut, name, target, context_header, data_asm, timeout, valid, strict, options)
+                return OUTSIDE_BRANCH_NOTE + drafted if drafted else drafted
             found = _DELAY_SLOT_LABEL.search(str(error))
             if not found:
                 raise

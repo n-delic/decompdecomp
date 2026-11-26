@@ -325,6 +325,7 @@
 - Done: compiler-tested fresh drafts, bounded private MIPS callback/argument/frame recovery,
   owner-aware ROM data context, persistent generation/compiler/link diagnostics and cancellable
   draft regeneration without clearing matches or attempts. Draft refresh now preserves exact call names, rejects partial m2c output and tries at most six private compilation repairs after a raw ROM draft fails. Cached draft failures retry after this generator revision. The default pass targets missing compiling C; an optional full refresh includes all unmatched functions. Room members compile locally with host leases and match confirmation. Imported m2c projects use their own build.
+- Done (ROM mode): a draft that never compiled is tried again after a newer repair library, functions with no compiling C are drafted first, a branch to a label the function lacks is drafted as a return, and IDO's two subscript errors are repaired. Planned: the same retry and order for project-mode (Ghidra) drafts, whose recorded failures come from the fork engine, not `draft_reports`.
 - Planned: callback/frame evidence readers for PowerPC, ARM and x86; explicit variadic, floating-point
   and complex/variable-frame ABI recovery. Ambiguous frames and unbounded data remain unresolved.
 
