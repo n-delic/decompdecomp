@@ -20,6 +20,10 @@ MIN_TRIALS = 32
 # already shrinks a few trials toward the prior; the lower ceiling keeps one lucky hit from leading the queue.
 EARLY_MATCHES = 1
 EARLY_MAX_FACTOR = 2.0
+# A family this mismatch kind has no measurement of borrows its profile's other kinds' evidence, upward only and at most
+# POOLED_MAX_FACTOR: a repair that matched in one kind of mismatch is worth trying earlier in another, but a different
+# mismatch is weaker proof than this one's own trials, so it never leads the queue and never demotes a family.
+POOLED_MAX_FACTOR = 2.0
 MIN_FACTOR, MAX_FACTOR = 0.25, 4.0
 SCHEMA = '''CREATE TABLE IF NOT EXISTS repair_policy(
  profile TEXT NOT NULL, focus TEXT NOT NULL, family TEXT NOT NULL,
@@ -92,32 +96,72 @@ def policy_rows(net, key, focus):
     return [rows[family] for family in sorted(rows)]
 
 
+def pooled_rows(net, key, focus):
+    """One row per family summed over the profile's OTHER mismatch kinds (not `focus`, and never a `kind@shape` key:
+    each trial is counted under both, so adding them would count it twice), with what this search has counted and not
+    yet written, like `policy_rows`."""
+    stored = trial_bookkeeping.stored(net.store, ('policy-profile', key), lambda: [dict(row) for row in net.store.all(
+        'SELECT * FROM repair_policy WHERE profile=?', key)])
+    rows = [dict(row) for row in stored]
+    for (profile, queued_focus, family), args in trial_bookkeeping.pending_counters(net.store, POLICY_COUNT).items():
+        if profile == key:
+            rows.append({'profile': key, 'focus': queued_focus, 'family': family,
+                         **dict(zip(POLICY_COLUMNS, args[3:]))})
+    pooled = {}
+    for row in rows:
+        if row['focus'] == focus or '@' in row['focus']:
+            continue
+        total = pooled.setdefault(row['family'], {'profile': key, 'focus': '', 'family': row['family'],
+                                                  **dict.fromkeys(POLICY_COLUMNS, 0)})
+        for column in POLICY_COLUMNS:
+            total[column] += row[column]
+    return [pooled[family] for family in sorted(pooled)]
+
+
+def _weight(row, typical, ceiling):
+    """The factor one row of counts earns, at most `ceiling`; None while it has too little evidence to weigh."""
+    early = row['attempted'] < MIN_TRIALS
+    if early and row['matched'] < EARLY_MATCHES:
+        return None
+    # Smooth sparse evidence, favour verified wins, and never remove an applicable mutation.
+    rate = (row['improved'] + 3 * row['matched'] + 1) / (row['attempted'] + MIN_TRIALS)
+    # Prefer wins per unit of observed compiler time within this exact profile/focus.
+    # Unknown durations are neutral; bounded factors and queue interleaving keep exploration.
+    elapsed=row['elapsed_ms']/row['attempted']
+    speed=max(.5,min(2,math.sqrt(typical/elapsed))) if typical and elapsed>0 else 1
+    # Verified exact throughput leads once a cohort has enough trials. Smooth one
+    # win over 32 typical trials so a lucky fast hit cannot monopolize the queue.
+    # These are summed elapsed trial durations, not measured CPU seconds.
+    prior_ms = MIN_TRIALS * typical if typical else 0
+    exact_rate = ((row['matched'] + 1) / (row['elapsed_ms'] + prior_ms)
+                  if row['elapsed_ms'] > 0 and prior_ms else None)
+    reference = 1 / prior_ms if prior_ms else None
+    throughput = math.sqrt(exact_rate / reference) if exact_rate and reference else 1
+    factor = min(2, math.sqrt(rate * MIN_TRIALS)) * speed * max(.5, min(2, throughput))
+    return max(MIN_FACTOR, min(EARLY_MAX_FACTOR if early else ceiling, factor))
+
+
+def _typical(rows):
+    times=[r['elapsed_ms']/r['attempted'] for r in rows if r['attempted']>=MIN_TRIALS and r['elapsed_ms']>0]
+    return statistics.median(times) if times else None
+
+
 def factors(net, key, focus):
     prepare(net)
     result = {}
     rows = policy_rows(net, key, focus)
-    times=[r['elapsed_ms']/r['attempted'] for r in rows if r['attempted']>=MIN_TRIALS and r['elapsed_ms']>0]
-    typical=statistics.median(times) if times else None
+    typical = _typical(rows)
     for row in rows:
-        early = row['attempted'] < MIN_TRIALS
-        if early and row['matched'] < EARLY_MATCHES:
-            continue
-        # Smooth sparse evidence, favour verified wins, and never remove an applicable mutation.
-        rate = (row['improved'] + 3 * row['matched'] + 1) / (row['attempted'] + MIN_TRIALS)
-        # Prefer wins per unit of observed compiler time within this exact profile/focus.
-        # Unknown durations are neutral; bounded factors and queue interleaving keep exploration.
-        elapsed=row['elapsed_ms']/row['attempted']
-        speed=max(.5,min(2,math.sqrt(typical/elapsed))) if typical and elapsed>0 else 1
-        # Verified exact throughput leads once a cohort has enough trials. Smooth one
-        # win over 32 typical trials so a lucky fast hit cannot monopolize the queue.
-        # These are summed elapsed trial durations, not measured CPU seconds.
-        prior_ms = MIN_TRIALS * typical if typical else 0
-        exact_rate = ((row['matched'] + 1) / (row['elapsed_ms'] + prior_ms)
-                      if row['elapsed_ms'] > 0 and prior_ms else None)
-        reference = 1 / prior_ms if prior_ms else None
-        throughput = math.sqrt(exact_rate / reference) if exact_rate and reference else 1
-        factor = min(2, math.sqrt(rate * MIN_TRIALS)) * speed * max(.5, min(2, throughput))
-        result[row['family']] = max(MIN_FACTOR, min(EARLY_MAX_FACTOR if early else MAX_FACTOR, factor))
+        if (factor := _weight(row, typical, MAX_FACTOR)) is not None:
+            result[row['family']] = factor
+    if '@' not in focus:
+        # A family this mismatch kind hasn't measured borrows what it earned on the profile's other kinds, upward only:
+        # evidence from another kind may bring a family forward, never demote one here (that takes this kind's own trials).
+        pooled = pooled_rows(net, key, focus)
+        pooled_typical = _typical(pooled)
+        for row in pooled:
+            if row['family'] not in result and (factor := _weight(row, pooled_typical, POOLED_MAX_FACTOR)) and factor > 1:
+                result[row['family']] = min(factor, POOLED_MAX_FACTOR)
     from . import repair_promotion
     return repair_promotion.cap(net,key,result)
 

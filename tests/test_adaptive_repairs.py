@@ -96,3 +96,36 @@ def test_an_early_match_family_is_ranked_ahead_of_unmeasured_ones(monkeypatch):
     for _ in range(5):
         policy.record(net, policy.profile(net, proj, fn), '', 'narrow_repair', 20, 0, 10)
     assert policy.order(net, proj, fn, [], ['other', 'narrow_repair'])[0] == 'narrow_repair'
+
+
+def test_a_family_unmeasured_for_this_mismatch_kind_borrows_the_profiles_other_kinds_upward():
+    net = FakeNet()
+    for _ in range(40):
+        policy.record(net, 'profile', 'control', 'useful', 20, 0, 10)
+    assert 'useful' not in policy.policy_rows(net, 'profile', 'call')
+    factors = policy.factors(net, 'profile', 'call')
+    assert 1 < factors['useful'] <= policy.POOLED_MAX_FACTOR
+    assert policy.factors(net, 'other profile', 'call') == {}  # another compiler's evidence is never borrowed
+
+
+def test_borrowed_evidence_never_demotes_and_never_overrides_the_kinds_own_measurement():
+    net = FakeNet()
+    for _ in range(200):
+        policy.record(net, 'profile', 'register', 'bad', 20, None)
+    for _ in range(40):
+        policy.record(net, 'profile', 'control', 'useful', 20, 0, 10)
+        policy.record(net, 'profile', 'call', 'useful', 20, None, 10)
+    factors = policy.factors(net, 'profile', 'call')
+    assert 'bad' not in factors              # poor elsewhere says nothing against it here
+    assert factors['useful'] < 1             # this kind's own 40 failures outweigh its wins in another kind
+
+
+def test_pooling_counts_a_trial_once_even_though_it_is_recorded_under_its_shape_too():
+    net = FakeNet()
+    for _ in range(5):
+        policy.record(net, 'profile', 'call', 'narrow', 20, 0, 10)
+        policy.record(net, 'profile', 'call@field', 'narrow', 20, 0, 10, coverage=False)
+    [row] = policy.pooled_rows(net, 'profile', 'register')
+    assert row['attempted'] == row['matched'] == 5
+    assert policy.pooled_rows(net, 'profile', 'call') == []
+    assert policy.factors(net, 'profile', 'call@field')['narrow'] > 1   # a shape key keeps its own evidence and no pool
