@@ -48,16 +48,32 @@ def chain(source, generate, score, families=None, steps=STEPS, children=CHILDREN
             if (not families or family in families) and child not in seen:
                 seen.add(child)
                 options.append((family, child))
-        if len(options) > children:
-            notes.append(f"step {step}: {len(options) - children} of {len(options)} children left out by "
-                         f"children={children}; name families to narrow it")
-        options = options[:children]
+        scores = []
+        offset = 0
         try:
-            check()
-            scores = score([child for _, child in options]) if options else []
+            # The cap is the size of a batch, not the end of the search: a batch with no improving child is not a stall
+            # while children are left out (a 528-child step whose only improving child was number 131 stalled at 215 under
+            # children=40, the 488 others never judged: the cap's order is one child per family, so a family's later
+            # children come only after every family's earlier ones). Further batches are judged until one improves,
+            # the children run out or the time does.
+            while options and offset < len(options):
+                check()
+                batch = options[offset:offset + children]
+                scores += score([child for _, child in batch]) if batch else []
+                offset += len(batch)
+                if any(s is not None and s < best for s in scores):
+                    break
         except TimeoutError:
-            notes.append(f"stopped at step {step}: out of time")
-            break
+            notes.append(f"stopped at step {step}: out of time (judged {offset} of {len(options)} children)")
+            if not any(s is not None and s < best for s in scores):
+                break
+        if 0 < offset < len(options) and any(s is not None and s < best for s in scores):
+            notes.append(f"step {step}: {len(options) - offset} of {len(options)} children left out: a batch of "
+                         f"children={children} already improved; name families to narrow it")
+        elif offset > children:
+            notes.append(f"step {step}: judged {offset} children in batches of {children}: the first batch "
+                         "did not improve")
+        options = options[:len(scores)]
         scored = [(s, i) for i, s in enumerate(scores) if s is not None]
         if not scored or min(scored)[0] >= best:
             notes.append(f"step {step}: no child of {len(options)} improves on {best} (judged {len(scored)})")

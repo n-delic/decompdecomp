@@ -134,24 +134,34 @@ def prove(source, generate, score, families, steps=DEFAULT_STEPS, children=DEFAU
             if (families is None or family in families) and child not in seen:
                 seen.add(child)
                 options.append((family, child))
-        cut = len(options) - children
-        if cut > 0:
-            log(f"step {step}  note: {cut} of {len(options)} children cut off by --children {children}; "
-                f"raise it (or name --families) if the right child may be among them")
         scored, cover, bad = [], {}, {}
         parent_rows = rows(current)[1] if rows and combine else None
         parent_bad = row_coverage.bad(parent_rows) if parent_rows else None
-        for family, child in options[:children]:
-            if rows and combine:
-                result, child_rows = rows(child)
-                if result is not None and child_rows:
-                    bad[child] = _bad_count(child_rows)
-                    if parent_bad:
-                        cover[child] = row_coverage.coverage(parent_bad, child_rows)
-            else:
-                result = score(child)
-            if result is not None:
-                scored.append((result, family, child))
+        offset = 0
+        # --children is the size of a batch: a batch with no improving child is not a stall while children are left
+        # out (func_8005502C: 528 children, the improving one number 131, stalled at 215 under --children 40 because the
+        # cap's order is one child per family, so a family's later children come after every family's earlier ones).
+        while offset < len(options):
+            for family, child in options[offset:offset + children]:
+                if rows and combine:
+                    result, child_rows = rows(child)
+                    if result is not None and child_rows:
+                        bad[child] = _bad_count(child_rows)
+                        if parent_bad:
+                            cover[child] = row_coverage.coverage(parent_bad, child_rows)
+                else:
+                    result = score(child)
+                if result is not None:
+                    scored.append((result, family, child))
+            offset += children
+            if scored and min(row[0] for row in scored) < best:
+                break
+            if offset < len(options):
+                log(f"step {step}  note: no child of the first {offset} improves on {best}; judging the other "
+                    f"{len(options) - offset} of {len(options)}")
+        if offset < len(options):
+            log(f"step {step}  note: {len(options) - offset} of {len(options)} children left out: a batch of "
+                f"--children {children} already improved (name --families to narrow it)")
         taken = None
         if (not scored or min(row[0] for row in scored) >= best) and combine and scored:
             taken = _combined_step(step, current, best, best_bad, scored, cover, bad, parent_bad, generate, families,

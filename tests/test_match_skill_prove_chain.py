@@ -115,13 +115,24 @@ def test_the_generator_passes_the_functions_jump_tables_and_context_to_the_repai
     assert seen["entry_scope"] == {"language": "c"} and seen["header"] == "h"
 
 
-def test_children_cut_off_by_the_cap_are_reported_and_a_larger_cap_scores_them():
+def test_children_left_out_by_the_cap_are_reported_when_a_batch_improves():
     lines = []
     prove_chain.prove("xyz", generate, score, None, steps=1, children=1, log=lines.append)
-    assert any("cut off by --children 1" in line for line in lines)
+    assert any("left out" in line and "--children 1" in line for line in lines)
     lines.clear()
     prove_chain.prove("xyz", generate, score, None, steps=1, children=50, log=lines.append)
-    assert not any("cut off" in line for line in lines)
+    assert not any("left out" in line for line in lines)
+
+
+def test_a_batch_with_no_improving_child_goes_on_to_the_children_left_out():
+    # fix_0 improves but sits behind four children that do not (the cap's family order puts it late)
+    def late(text):
+        return [("noop", text + str(i)) for i in range(4)] + [("fix_0", "a" + text[1:])]
+    lines = []
+    final, best, chain = prove_chain.prove("xyz", late, lambda t: score(t[:3]), None,
+                                           steps=1, children=2, log=lines.append)
+    assert chain and chain[0][0] == "fix_0" and best == 2
+    assert any("judging the other" in line for line in lines)
 
 
 def test_a_stalled_step_merges_the_best_children_in_pairs_and_triples():
