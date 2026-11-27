@@ -96,6 +96,12 @@ def extend_startup_trap(config: Path, rom: bytes, log=print) -> bool:
         return False
     if not padding and vram + 8 in callers and vram + 4 not in callers:
         skip = 8
+    elif (all(32 <= byte < 127 for byte in rom[at+4:at+8])
+          and vram+8 in callers and vram+4 not in callers
+          and ((vram-4) & 0xf0000000) | ((call & 0x3ffffff) << 2) == vram+8
+          and is_frame(struct.unpack_from('>I', rom, at+8)[0])):
+        # A printable descriptor follows the terminal trap, before its called frame.
+        skip = 8
     elif (padding >> 26 == 15 and (padding >> 16) & 31 and vram + 4 not in callers
           and any(vram + 4 < target < vram + 0x100 for target in callers)):
         # A separate helper immediately follows the trap; keep its first instruction.

@@ -147,3 +147,18 @@ def test_version_stamp_is_read_only_data_when_it_follows_the_boot_trap(tmp_path,
     image[at:at+len(stamp)] = stamp
     assert mark_boot_version(path, image) == bool(trap)
     assert all(lo != at for lo,_,_ in code_ranges(path)) == bool(trap)
+
+
+@pytest.mark.parametrize('referenced', [False, True])
+def test_startup_trap_and_printable_descriptor_precede_called_frame(tmp_path, referenced):
+    from decompnet.consoles.n64.boot_mapping import extend_startup_trap
+
+    path, rom, _, _ = layout(tmp_path)
+    rom = bytearray(rom)
+    target = 0x80000480 if referenced else 0x80000488
+    call = lambda address: 0x0c000000 | (address >> 2) & 0x3ffffff
+    struct.pack_into('>4I', rom, 0x1078, call(target), 0, 0x0001008d, 0x20696e74)
+    struct.pack_into('>I', rom, 0x1088, 0x27bdffe8)
+    assert extend_startup_trap(path, rom, log=lambda _: None) != referenced
+    entry, main, *_ = segments_from_config(path)
+    assert entry.rom_end == main.rom_start == (0x1080 if referenced else 0x1088)
