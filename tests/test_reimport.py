@@ -510,3 +510,44 @@ def test_reimport_rejudges_same_rom_function_when_its_link_address_changes(tmp_p
         assert judged == [('old_entry', source)]
         assert net.store.one('SELECT address FROM symbols WHERE project_id=? AND name=?', pid, 'old_entry')['address'] == 0x80402000
         assert net.store.one('SELECT vram FROM functions WHERE name=?', 'other_entry')['vram'] == 0x80401000
+
+
+def test_reimport_aborts_if_entries_change_after_preservation_stage(tmp_path, monkeypatch):
+    import hashlib
+
+    from decompnet import consoles
+
+    root = tmp_path/'game'
+    root.mkdir()
+    (root/'old.z64').write_bytes(b'original')
+    net = RomNetwork(tmp_path/'app.db', tmp_path)
+    image = bytes(16)
+    cfg = {'kind':'rom', 'platform':'n64', 'big_endian':True,
+           'rom':{'file':'old.z64', 'sha1':'same', 'analysis_sha1':hashlib.sha1(image).hexdigest()},
+           'segments':[], 'compiler':{'toolchain':'gcc-2.7.2-kmc','flags':['-O2']}}
+    with net.store.tx() as db:
+        pid = db.execute('INSERT INTO projects(slug,name,root,arch,config) VALUES(?,?,?,?,?)',
+                         ('game','Game',str(root),'mips',json.dumps(cfg))).lastrowid
+        db.execute('INSERT INTO functions(project_id,name,vram,rom_offset,size,n_insns,target,relocs,status) '
+                   'VALUES(?,?,?,?,?,?,?,?,?)',(pid,'old',0x80001000,0,4,1,bytes(4),'[]','open'))
+
+    def replacement(work, *args, **kwargs):
+        line = split.AsmLine(0,0x80001000,0,'nop','')
+        fn = split.RomFunction('new',0x80001000,0,'code',[line],work/'new.s')
+        return split.SplitResult([fn],[],[split.Segment('code',0,16,0x80001000)],{},work/'splat.yaml','KMC','',image='rom.z64')
+
+    def changed_during_stage(network, project, result, data, rows, log):
+        with network.project_store(pid).tx() as db:
+            db.execute("UPDATE functions SET name='changed' WHERE project_id=?",(pid,))
+        return 1
+
+    monkeypatch.setattr(split, 'split_rom', replacement)
+    console = consoles.get('n64')
+    monkeypatch.setattr(console, 'preserve_reimport_entries', changed_during_stage)
+    picked = Picked('n64',image,'rom.z64',{'title':'Game','size':16,'sha1':'same',
+                    'game_code':'DEMO','region':'Test','compiler_guess':'KMC'},True)
+    with pytest.raises(NetworkError, match='entries changed during reimport'):
+        net.import_split(console,picked,reimport_slug='game',log=lambda *_:None)
+    assert (root/'old.z64').read_bytes() == b'original'
+    assert not (root/'rom.z64').exists()
+    assert net.project_store(pid).one('SELECT name FROM functions WHERE project_id=?',pid)['name'] == 'changed'
