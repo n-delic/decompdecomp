@@ -475,6 +475,23 @@ def _next_marker(rom: bytes, start: int) -> int:
     return min(hits) if hits else -1
 
 
+def verify_unpacked_analysis(original: bytes, analysis: bytes) -> bool:
+    """Check every byte against the original cartridge and its decoded code blocks.
+
+    Formats without a reversible encoder can still establish an exact rebuild:
+    the linked analysis must match the independently decoded cartridge and all
+    padding before the original bytes are copied to the output.
+    """
+    blocks = unpack_code(original)
+    if not blocks:
+        return False
+    expected = bytearray(original)
+    for _, payload in blocks:
+        expected.extend(bytes(-len(expected) % 16 + 0x2000))
+        expected.extend(payload)
+    return expected == analysis
+
+
 def unpack_code(rom: bytes) -> list[tuple[int, bytes]]:
     """(rom offset, unpacked bytes) of every compressed block in the ROM that holds code. Perfect Dark packs its game
     code as 4 KiB pages (loaded one at a time through the TLB), one after another: those are joined into one block
