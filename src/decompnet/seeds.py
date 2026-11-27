@@ -16,7 +16,7 @@ from pathlib import Path
 
 from decompnet.hostenv import NO_WINDOW
 
-from . import compile_timing, limits, m2c_fp64, m2c_jump_tables, m2c_types, m2cfix, scoring, toolchains
+from . import compile_timing, limits, m2c_call_tails, m2c_fp64, m2c_jump_tables, m2c_types, m2cfix, scoring, toolchains
 from .elfobj import FunctionObj
 
 # What m2c's --valid-syntax output needs to compile: its unknown types and macros, defined the simplest way that
@@ -1020,6 +1020,7 @@ def _run_m2c(asm_text: str, name: str, target: str, context_header: str = "", da
             asm_text = m2c_jump_tables.inline_tables(asm_text, data_asm)
         if data_asm:
             asm_text = draft_asm(_mips_table_aliases(asm_text, data_asm), name, data_asm=data_asm)
+        asm_text = m2c_call_tails.write_out(asm_text)
     if target.startswith("gba"):  # a public GBA decomp (pret style): function macros, pre-UAL load mnemonics
         asm_text = re.sub(r"^\s*(?:non_word_aligned_)?thumb_func_start\s+(\w+)", r"glabel \1", asm_text, flags=re.M)
         asm_text = re.sub(r"^\s*arm_func_start\s+(\w+)", r"glabel \1", asm_text, flags=re.M)
