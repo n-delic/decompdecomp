@@ -1,4 +1,4 @@
-"""Exact, self-contained libultra assembly fingerprints. No SDK instructions are bundled.
+"""Exact, self-contained N64 SDK assembly fingerprints. No SDK instructions are bundled.
 
 These bodies have no external references or data: full bytes are invariant at their
 link address. The public ultralib references identify each routine. The digests cover complete
@@ -449,8 +449,16 @@ KNOWN_C = {
     'aac63b79d1aa11732d40ebb8756952c6444a9984b67546da8fcb89c4d73849cb': ('strlen', 76, 'libultra 2.0I debug library'),
 }
 
+# Complete relocation-free KMC runtime bodies. The multiply's 56 bytes were
+# compared instruction by instruction across four independently imported
+# projects and their KMC runtime sources; all four are identical.
+KMC_ASSEMBLY = {
+    '13cb3d5a4c97202ce93535c8a83499feb6da54c55a40590b17c074fecd62aa09':
+        ('__muldi3', 56, 'KMC 64-bit integer multiply'),
+}
+
 SIZES = tuple(sorted({size for _, size, _, _ in KNOWN.values()} | {size for size, _ in _MTX_CAT_ASM}
-                     | {size for _, size, _ in KNOWN_C.values()}))
+                     | {size for _, size, _ in KNOWN_C.values()} | {size for _, size, _ in KMC_ASSEMBLY.values()}))
 
 
 # The cartridge's entry stub (libultra's makerom boot code, which the port replaces with its own start-up): clear BSS
@@ -481,6 +489,10 @@ def identify(code,big_endian=True):
     if big_endian and (entry := identify_entry(code)):return entry
     if not big_endian or len(code) not in SIZES:return None
     digest=hashlib.sha256(code).hexdigest()
+    if (kmc := KMC_ASSEMBLY.get(digest)) and len(code) == kmc[1]:
+        name, size, variant = kmc
+        return {'name': name, 'names': [name], 'corpus': 'KMC handwritten runtime', 'bytes': size,
+                'target_sha256': digest, 'reference': '', 'variant': variant}
     found=KNOWN.get(digest)
     if found is None and len(code) in (240, 360):
         variant = _MTX_CAT_ASM.get((len(code), hashlib.sha1(code + b'[]').hexdigest()))
