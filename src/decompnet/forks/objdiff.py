@@ -106,8 +106,16 @@ def _exclude_stubs(project: Path, cfg: dict, rep: dict) -> dict:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
+        # A stub recognized by csource is a single line containing one of these macros and the
+        # function's simple name. Avoid parsing every C definition in a large, mostly recovered file.
+        stub_lines = [line for line in text.splitlines()
+                      if any(macro in line for macro in ("INCLUDE_ASM", "GLOBAL_ASM", "INCLUDE_RODATA_FN"))]
+        if not stub_lines:
+            continue
         count = size = 0
         for fn in unit.get("functions", []):
+            if not any(fn["name"].split("::")[-1] in line for line in stub_lines):
+                continue
             span = csource.find(text, fn["name"])
             if span and csource.is_stub(text[span[0]:span[1]]):
                 if float(fn.get("fuzzy_match_percent") or 0) >= 100:
