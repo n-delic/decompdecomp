@@ -3,8 +3,8 @@
 `start_boundaries` suggests that a function's first word(s) may not be its own; a person decides. An N64 game had
 28 functions whose extent was wrong in a way the bytes prove (agents spent hours on each before anyone looked):
   start  the previous function returned, then a few words of its leftovers (its `jr $ra` delay filler, an
-         `addiu $sp,+0x20; addiu $sp,-0x20` pair, a `break 7` from its divide check, a dead load, a `j self; nop`
-         loop tail, a `lui`/`addiu` pair that built a callback's address), then the real entry, which other code
+         `addiu $sp,+0x20; addiu $sp,-0x20` pair, a `break 7` from its divide check, a dead load, or a
+         `lui`/`addiu` pair that built a callback's address), then the real entry, which other code
          stores as a callback `func + 8` or calls;
   end    a function ends in a loop that never returns (`for (;;)`, `osViBlack(1); for (;;);`), and the function
          after it, which other code calls or points at, was left inside its extent.
@@ -26,7 +26,7 @@ The start rule. The stray words [S, E) and the real entry E = S + 4k (k <= 3) mu
   - and either other code enters E (a callback `lui`/`addiu` pair, a `jal`, a stored word), or the stray words
     contradict being an entry outright (`contradiction`: they read a temporary nobody set, use a callee-saved
     register's value, give back a frame never taken, open a second frame, trap with `break`, load `$ra`, call out
-    before saving `$ra`, jump to themselves or over the frame, store into the caller's frame, or compute a value
+    before saving `$ra`, jump over the frame, store into the caller's frame, or compute a value
     that is lost before anything reads it: an ALU result is hard evidence, a load soft, as a device register's read
     is a load nobody uses).
 Whole pieces of at most three words that hold the same way between two functions are archived as padding.
@@ -414,6 +414,12 @@ def _start(e, words, pointed, entered, returned_before, starts, owner_words):
         return None
     for k in range(1, min(MAX_WORDS, len(words)) + 1):
         E = S + 4 * k
+        # A complete backward loop can be a standalone no-return routine (including SDK panic stubs), even when
+        # nobody in the discovered code calls it. A preceding return does not make that routine padding.
+        if k >= 2 and _unconditional(words[k - 2]):
+            target = _target(words[k - 2], E - 8)
+            if target is not None and S <= target < E - 4:
+                return None  # _end may still split the following independently referenced entry, preserving the loop
         stray = set(range(S, E, 4))
         if entered(S, E, stray):
             return None  # something enters the words that would be cut off: they are this function's own
