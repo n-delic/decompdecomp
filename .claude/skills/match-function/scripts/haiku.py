@@ -348,7 +348,15 @@ def next_function(args):
 # --- try --------------------------------------------------------------------------------------------------------------
 
 def app_function(info, name):
-    return judge.App(info["home"]).function(info["slug"], name)
+    """The app's record of the session's function: by the address recorded at the claim when there is one, since the
+    app renames a function after matching it and the old name then finds nothing. Overlays share addresses, so only the
+    same function's record counts; else by name."""
+    app = judge.App(info["home"])
+    if info.get("address"):
+        record = app.function(info["slug"], info["address"])
+        if record.get("name") and record.get("id") == info.get("function_id"):
+            return record
+    return app.function(info["slug"], name)
 
 
 def wait_matched(info, name):
