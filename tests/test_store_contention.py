@@ -9,6 +9,26 @@ import pytest
 from decompnet.store import Store
 
 
+def test_store_closes_checkpoint_cursor_before_opening_savepoint(tmp_path, monkeypatch):
+    from decompnet.payload_storage import Connection
+
+    execute = Connection.execute
+    retained = []
+
+    def keep_checkpoint(connection, sql, parameters=()):
+        cursor = execute(connection, sql, parameters)
+        if sql == 'PRAGMA wal_checkpoint(TRUNCATE)':
+            retained.append(cursor)  # do not let garbage collection close it for the store
+        return cursor
+
+    monkeypatch.setattr(Connection, 'execute', keep_checkpoint)
+    store = Store(tmp_path/'app.db')
+    assert retained
+    with pytest.raises(sqlite3.ProgrammingError, match='closed'):
+        retained[0].fetchone()
+    store.conn.close()
+
+
 def test_external_writer_does_not_pin_local_mutex_for_whole_busy_timeout(tmp_path):
     store = Store(tmp_path / 'app.db')
     blocker = sqlite3.connect(store.path, isolation_level=None)

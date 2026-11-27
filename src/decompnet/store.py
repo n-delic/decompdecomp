@@ -749,7 +749,9 @@ class Store:
         from .project_views import install as install_views
         install_views(self.conn)
         # what the last run left in the log goes into the database now, and the log starts empty
-        self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        # This pragma returns a row. Leaving its cursor active can make the
+        # savepoint below fail until Python happens to collect the cursor.
+        self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").close()
         self.conn.execute("CREATE TABLE IF NOT EXISTS read_revisions(kind TEXT PRIMARY KEY, revision INTEGER NOT NULL)")
         self.read_cache = ReadCache(lambda: getattr(getattr(self, '_local', None), 'in_tx', False))
         for table, columns in (
