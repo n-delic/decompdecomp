@@ -327,6 +327,16 @@ class DiffResult:
         return text(self.rows)+"\n"+render_rows(self.rows, context, max_rows, more_hint=more_hint)
 
 
+@dataclass
+class ScoreEvidence:
+    """The aligned instruction differences consumed by the verifier's Rust scorer."""
+
+    operand_penalty: int
+    missing: dict[str, int]
+    extra: dict[str, int]
+    bytes_match: bool
+
+
 def first_mismatch(rows: list[tuple[str, str, str]]) -> tuple[int, int, tuple[str, str, str] | None]:
     """(how many target instructions match from the start, the target's length, the first row that differs): one
     small change per compile works best, and this says where the next one goes."""
@@ -553,7 +563,11 @@ def diff(target: FunctionObj, candidate: FunctionObj) -> DiffResult:
     return result
 
 
-def _diff(target: FunctionObj, candidate: FunctionObj, *, details=True) -> DiffResult:
+def score_evidence(target: FunctionObj, candidate: FunctionObj) -> ScoreEvidence:
+    return _diff(target, candidate, details=False, evidence=True)
+
+
+def _diff(target: FunctionObj, candidate: FunctionObj, *, details=True, evidence=False):
     """Compare a candidate with the target instruction by instruction: a score (0 is a match, lower is closer), the
     rows to show, and what's missing or extra. Equal bytes are a match whatever the score."""
     t_ins, target_fingerprint = _prepared_target(target)
@@ -609,6 +623,9 @@ def _diff(target: FunctionObj, candidate: FunctionObj, *, details=True) -> DiffR
             else:
                 if details:rows.append((">", "", b.text))
                 extra[b.text] += 1
+    if evidence:
+        return ScoreEvidence(score, dict(missing), dict(extra), bytes_match)
+
     # instructions that are merely in the wrong place are cheaper than real insert/delete
     reordered = sum((missing & extra).values())
     score += reordered * PENALTY_REORDER

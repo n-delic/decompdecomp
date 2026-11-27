@@ -295,3 +295,10 @@ The desktop still rejudges a proposed winner through the normal attempt path.
 The search continues locally for unavailable scores, including when a verifier
 has yet to download an updated pack. Interactive attempts, diff-row batches,
 and PROJECT-mode builds use their existing paths.
+
+For queued search trials, the verifier scores aligned ROM instruction differences
+in Rust. The Python adapter still invokes the original compiler, links the
+candidate, and supplies the strict linked verdict and instruction differences.
+The Rust scorer applies reorder, insertion and deletion penalties and returns
+the final score. Older judge workers can still return a complete verdict through
+the same verifier protocol.

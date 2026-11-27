@@ -19,6 +19,7 @@
 
 mod hosted;
 mod native;
+mod rom_judge;
 mod verifier;
 mod window;
 

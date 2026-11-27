@@ -708,9 +708,9 @@ class JudgeMixin:
 
     @timed_build
     @trial
-    def _judge_with(self, proj, fn, toolchain: str, flags: list[str], source: str):
+    def _judge_with(self, proj, fn, toolchain: str, flags: list[str], source: str, *, evidence=False):
         """(matched, diff or None, log) for C built with this compiler and flags, judged like an attempt, recording
-        nothing. The candidate's advisory checks stay in `_last_judge_checks` for the caller that wants them (`jump_tables`:
+        nothing. A queued score-only judge can request aligned evidence in place of a rendered diff. Advisory checks stay in `_last_judge_checks` for the caller that wants them (`jump_tables`:
         the cases whose compiled table entry differs, when every instruction is exact and only the table's data is not)."""
         self._last_judge_checks = {}
         from ...compiler import compile_source
@@ -729,7 +729,8 @@ class JudgeMixin:
         cand, verdict, problems = self._evaluate(fn, proj, result.obj)
         if cand is None:
             return False, None, "the function isn't in what it compiled to"
-        d = scoring.diff(self._target_obj(fn, proj), cand)
+        compare = scoring.score_evidence if evidence else scoring.diff
+        d = compare(self._target_obj(fn, proj), cand)
         matched = verdict if verdict is not None else d.bytes_match
         if not matched and proj['arch'] == 'mips':
             self._last_judge_checks = dict(self._candidate_checks(fn, proj, result.obj))

@@ -82,7 +82,7 @@ def test_judging_from_packs(tmp_path, monkeypatch):
     net = game(tmp_path)
     folder = tmp_path / "packs"
     hosted_pack.export_pack(net, "game", folder / "game.sqlite3")
-    monkeypatch.setattr(RomNetwork, "_judge_with", lambda self, proj, fn, tc, flags, source:
+    monkeypatch.setattr(RomNetwork, "_judge_with", lambda self, proj, fn, tc, flags, source, **kwargs:
                         (True, None, "") if proj["root"].endswith("root") and "MATCH" in source else (False, None, "no"))
     packs = hosted_judge.Packs(folder, tmp_path / "cache")
     assert packs.describe()["projects"] == ["game"]
@@ -94,6 +94,17 @@ def test_judging_from_packs(tmp_path, monkeypatch):
     assert packs.judge(trial)["pack_sha256"] == digest
     assert "different revision" in packs.judge(trial | {"pack_sha256": "a" * 64})["error"]
     assert "different context" in packs.judge(trial | {"header_sha256": "b" * 64})["error"]
+    from decompnet.scoring import SCORE_VERSION, ScoreEvidence
+
+    comparison = ScoreEvidence(5, {"a": 1}, {"a": 1}, False)
+    monkeypatch.setattr(RomNetwork, "_judge_with",
+                        lambda *args, evidence: (False, comparison if evidence else None, "compiler log"))
+    reply = packs.judge(trial | {"score_evidence": SCORE_VERSION})
+    assert reply["pack_sha256"] == digest
+    assert reply["score_evidence"] == {"version": SCORE_VERSION, "matched": False, "comparison": {
+        "operand_penalty": 5, "missing": {"a": 1}, "extra": {"a": 1}, "bytes_match": False,
+    }}
+
     assert "no verification pack" in packs.judge(request | {"slug": "other"})["error"]
     assert "another build" in packs.judge(request | {"function": request["function"] | {"target": "00"}})["error"]
 
@@ -130,6 +141,11 @@ def test_only_verifiers_get_packs_and_a_verifier_keeps_them_current(tmp_path, ma
         judge = tmp_path / "judge.py"
         judge.write_text(textwrap.dedent("""
             import json, sys
+            from dataclasses import asdict
+
+            from decompnet.elfobj import FunctionObj
+            from decompnet.scoring import SCORE_VERSION, score_evidence
+
             open(sys.argv[1], "w").write(json.dumps(sys.argv[2:]))
             for line in sys.stdin:
                 request = json.loads(line)
@@ -137,7 +153,25 @@ def test_only_verifiers_get_packs_and_a_verifier_keeps_them_current(tmp_path, ma
                     reply = {"projects": ["game"], "toolchains": ["gcc-2.7.2-kmc"]}
                 else:
                     assert request["compiler"]["flags"] == ["-O2"]
-                    reply = {"score": 0, "pack_sha256": request["pack_sha256"]}
+                    variant = request["source"]
+                    target = FunctionObj("f1", "mips", True, bytes.fromhex("240200013403000203e0000800000000"))
+                    candidates = {
+                        "match": target,
+                        "link mismatch": target,
+                        "changed constant": FunctionObj("f1", "mips", True, bytes.fromhex("240200023403000203e0000800000000")),
+                        "reorder": FunctionObj("f1", "mips", True, bytes.fromhex("340300022402000103e0000800000000")),
+                    }
+                    reply = {"pack_sha256": request["pack_sha256"]}
+                    if variant == "legacy":
+                        reply["score"] = 7
+                    elif variant == "compile error":
+                        reply["score"] = None
+                    else:
+                        assert request["score_evidence"] == SCORE_VERSION
+                        reply["score_evidence"] = {
+                            "version": SCORE_VERSION, "matched": variant == "match",
+                            "comparison": asdict(score_evidence(target, candidates[variant])),
+                        }
                 print(json.dumps(reply), flush=True)
         """))
         mine = tmp_path / "mine"
@@ -147,7 +181,16 @@ def test_only_verifiers_get_packs_and_a_verifier_keeps_them_current(tmp_path, ma
                               "--judge", sys.executable, "--judge-arg", str(judge), "--judge-arg", str(tmp_path / "argv")],
                              stdin=subprocess.PIPE if managed else None, stderr=subprocess.PIPE, text=True)
         try:
-            assert remote.batch(["candidate"], lambda: None) == {0: 0}
+            from decompnet.elfobj import FunctionObj
+            from decompnet.scoring import score
+
+            target = FunctionObj("f1", "mips", True, bytes.fromhex("240200013403000203e0000800000000"))
+            changed = FunctionObj("f1", "mips", True, bytes.fromhex("240200023403000203e0000800000000"))
+            reordered = FunctionObj("f1", "mips", True, bytes.fromhex("340300022402000103e0000800000000"))
+            variants = ["match", "link mismatch", "changed constant", "reorder", "legacy", "compile error"]
+            assert score(target, reordered).score == 60
+            expected = [0, 1, max(1, score(target, changed).score), score(target, reordered).score, 7, None]
+            assert remote.batch(variants, lambda: None) == dict(enumerate(expected))
             if managed:
                 run.stdin.close()
             assert run.wait(10) == 0, run.stderr.read()

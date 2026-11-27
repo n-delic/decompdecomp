@@ -246,6 +246,7 @@ impl Verifier {
         let mut request = json!({"op": "judge", "slug": slug, "function": item.get("function"),
                                  "compiler": item.get("compiler"), "source": item.get("source")});
         if let Some(trial) = item["trial"].as_object() {
+            request["score_evidence"] = json!(crate::rom_judge::SCORE_VERSION);
             for (key, value) in trial {
                 request[key] = value.clone();
             }
@@ -260,6 +261,12 @@ impl Verifier {
             },
             Err(e) => Err(e),
         };
+        let outcome = outcome.and_then(|mut reply| {
+            if let Some(evidence) = reply.get("score_evidence") {
+                reply["score"] = json!(crate::rom_judge::score(evidence)?);
+            }
+            Ok(reply)
+        });
         let result = match outcome {
             Ok(reply) if reply.get("error").is_none()
                 && (request["pack_sha256"].is_null() || request["pack_sha256"] == reply["pack_sha256"]) => {

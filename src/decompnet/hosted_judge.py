@@ -87,6 +87,7 @@ def _installed(toolchains, tid) -> bool:
 
 def judge(net, request: dict) -> dict:
     from .network import Network
+    from .scoring import SCORE_VERSION
     slug = str(request.get("slug") or "")
     wanted = request.get("function") or {}
     compiler = request.get("compiler") or {}
@@ -122,7 +123,15 @@ def judge(net, request: dict) -> dict:
     if not toolchain:
         return {"error": "no compiler named"}
     net._last_judge_checks = {}
-    matched, diff, log = net._judge_with(proj, fn, toolchain, list(flags), source)
+    evidence = request.get("score_evidence") == SCORE_VERSION and not (request.get("diff") or request.get("raw_rows"))
+    options = {"evidence": True} if evidence else {}
+    matched, diff, log = net._judge_with(proj, fn, toolchain, list(flags), source, **options)
+    if evidence and diff is not None:
+        from dataclasses import asdict
+
+        detail = "byte-identical" if matched else (log or "")[-2000:]
+        return {"score_evidence": {"version": SCORE_VERSION, "matched": matched, "comparison": asdict(diff)},
+                "detail": detail}
     checks = getattr(net, "_last_judge_checks", None) or {}
     rows = request.get("rows")  # how many rows the diff shows (default 60); the rest is counted in its last line
     shown = {}
