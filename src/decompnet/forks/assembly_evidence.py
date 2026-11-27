@@ -11,7 +11,7 @@ from elftools.elf.relocation import RelocationSection
 
 
 def dispatches(console, root: Path, target: Path | None) -> dict[str, dict]:
-    """Classify complete, relocation-free null-jump entries using the console's ABI rules.
+    """Classify complete, relocation-free dispatch entries using the console's ABI rules.
 
     A project's assembly can contain whole tables of dispatch entries, none of which
     should get a C scaffold. SDK identities take precedence over the generic rule.
@@ -38,7 +38,7 @@ def dispatches(console, root: Path, target: Path | None) -> dict[str, dict]:
         order = 'big' if console.big_endian else 'little'
         for sym in table.iter_symbols():
             name, size, index = sym.name, int(sym['st_size']), sym['st_shndx']
-            if not name or sym['st_info']['type'] != 'STT_FUNC' or size != 8 or not isinstance(index, int):
+            if not name or sym['st_info']['type'] != 'STT_FUNC' or size not in (8, 12) or not isinstance(index, int):
                 continue
             section = elf.get_section(index)
             if not section or not section['sh_flags'] & 4:
@@ -50,7 +50,13 @@ def dispatches(console, root: Path, target: Path | None) -> dict[str, dict]:
             if any(offset <= r - base < offset + size for r in relocs.get(index, [])):
                 continue
             code = section.data()[offset:offset + size]
-            if int.from_bytes(code[:4], order) != 8:
+            words = [int.from_bytes(code[i:i + 4], order) for i in range(0, size, 4)]
+            # The longer table jumps to a fixed dispatcher and passes its service
+            # number in $t0, outside the C calling convention. Restrict the delay
+            # slot to the two observed ways of loading that register.
+            long_dispatch = (size == 12 and words[:2] == [0x3c091000, 0x01200008]
+                             and (words[2] & 0xffff0000 == 0x24080000 or words[2] == 0x00004025))
+            if not (size == 8 and words[0] == 8) and not long_dispatch:
                 continue
             if code not in classified:
                 classified[code] = None if console.sdk_assembly_identity(code) else console.asm_reason(code)
