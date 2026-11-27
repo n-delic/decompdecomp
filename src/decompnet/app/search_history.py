@@ -46,13 +46,13 @@ class FunctionMisses:
         compile_timing.add('history_read_rows', len(self.saved))
 
     def _load(self, rows, check):
-        for index, row in enumerate(rows):
-            if not index % 1024:
-                check()
-            value = row['feedback'] if row['outcome'] == 'miss' else None
-            if isinstance(value, bytes):
-                value = (value, row['packed'])
-            self.saved[row['signature']] = value
+        while page := rows.fetchmany(1024):
+            check()
+            for row in page:
+                value = row['feedback'] if row['outcome'] == 'miss' else None
+                if isinstance(value, bytes):
+                    value = (value, row['packed'])
+                self.saved[row['signature']] = value
 
     def get(self, key):
         queued = self.pending.get(key)
