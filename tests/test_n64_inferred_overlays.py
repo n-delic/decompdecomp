@@ -45,6 +45,23 @@ def test_ambiguous_self_calls_leave_the_original_mapping():
     assert inferred_overlays.recover(image,found)==(found,set())
 
 
+def test_close_scores_need_unique_closed_callees():
+    image = bytearray(0x3000)
+    mapping, other = 0x80010000, 0x80011000
+    body = (0x27bdffe8, 0xafbf0014, 0x24020007, 0x8fbf0014, 0x03e00008, 0x27bd0018)
+    targets = set()
+    for index in range(12):
+        at = 0x1200+index*0x40
+        struct.pack_into('>6I', image, at, *body)
+        struct.pack_into('>I', image, at-0x1000, body[0])
+        targets.add(mapping+at)
+    scores = {mapping: 40, other: 8}
+    assert inferred_overlays._unique_closed_mapping(image, 0, len(image), targets, scores, mapping, lambda: None)
+    for index in range(12):
+        struct.pack_into('>6I', image, 0x200+index*0x40, *body)
+    assert not inferred_overlays._unique_closed_mapping(image, 0, len(image), targets, scores, mapping, lambda: None)
+
+
 def test_runtime_observed_range_needs_internal_call_corroboration():
     image,found=fixture()
     old=(0,0x4000,0x80040000)

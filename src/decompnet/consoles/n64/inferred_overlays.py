@@ -9,6 +9,24 @@ _MIN_CALLS = 32
 _MAX_PAIRS = 1_000_000
 
 
+def _unique_closed_mapping(image, lo, hi, targets, scores, mapping, check):
+    """Break a close raw-score tie when other well-supported mappings lack closed callees."""
+    from ...arch.mips_code_recovery import called_extent
+
+    candidates = [candidate for candidate, score in scores.items() if candidate == mapping or score >= 8]
+    if len(candidates) > 32:
+        return False  # heavily ambiguous data stays with boundary review
+    verdicts = {}
+    for candidate in candidates:
+        check()
+        verdicts[candidate] = sum(
+            bool(called_extent(image, at, hi, target, cpu='vr4300'))
+            for target in targets if lo <= (at := target-candidate) < hi-8
+        )
+    return verdicts.get(mapping, 0) >= 12 and all(
+        count < 2 for candidate, count in verdicts.items() if candidate != mapping)
+
+
 def _entry_mapping(image, lo, hi, vram, callers, taken, check):
     """Find a nearby aligned mapping when many calls name complete return-separated entries."""
     old = vram-lo
@@ -117,9 +135,11 @@ def recover(image, found, taken=(), check=lambda: None, *, changed=()):
             continue
         (mapping, score), (_, second) = ranked
         address = lo+mapping
-        if (mapping == vram-lo or score < _MIN_CALLS or score < second*6
+        if (mapping == vram-lo or score < _MIN_CALLS
                 or score < scores[vram-lo]*4
                 or not 0x80000400 <= address < address+hi-lo <= 0x80800000):
+            continue
+        if score < second*6 and not _unique_closed_mapping(image, lo, hi, targets, scores, mapping, check):
             continue
         if any(base < address+hi-lo and address < base+end-start for start,end,base in taken):
             continue
