@@ -54,6 +54,7 @@ from ..arch.mips_profile_evidence import (
     float_pool_through_at,
     keeps_frame_pointer,
     reads_through_held_address,
+    saves_before_parameter_moves,
     words_of,
 )
 
@@ -190,6 +191,23 @@ def unoptimised_hint(arch, own, code, big_endian=True) -> str:
     return (f"Compiler check (do this before rewriting source): the target copies $sp into $fp, as unoptimised code "
             f"does. Write plain C (no do-while fences or padding) and judge it with compiler_experiments under "
             f"{unoptimised}; an exact result there is applied for this function only.")
+
+
+def unscheduled_hint(arch, own, code, big_endian=True) -> str:
+    """One line for an open function's brief when its target's prologue was not scheduled and its profile schedules
+    it, or ''. The probe judges -O1 by itself, but only in a pass over C that exists: a saved C at 5112 under the
+    project's `-O2` scored 107 under `-O1`, and plain C was exact there. MIPS GCC only."""
+    flags = list(own.get('flags') or ())
+    levels = [f for f in flags if re.fullmatch(r'-O[23s]', f)]
+    if arch != 'mips' or own.get('cmd') or not levels or '-fno-schedule-insns2' in flags \
+            or not str(own.get('toolchain') or '').startswith('gcc-') \
+            or not saves_before_parameter_moves(words_of(bytes(code or b''), big_endian)):
+        return ''
+    lowered = ' '.join('-O1' if f in levels else f for f in flags)
+    return (f"Compiler check (do this before rewriting source): the prologue stores every saved register before it "
+            f"copies the parameters into them, as code built without GCC's second scheduler does. Write plain C and "
+            f"judge it with compiler_experiments under {lowered} (or the current flags with -fno-schedule-insns2); an "
+            f"exact result there is applied for this function only.")
 
 
 def neighbour_profile_hint(net, proj, cfg, fn, own) -> str:

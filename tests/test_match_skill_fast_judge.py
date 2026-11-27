@@ -233,3 +233,12 @@ def test_a_copy_of_the_scripts_finds_the_decomp_of_the_venv_running_it(tmp_path,
     monkeypatch.setattr(fast.sys, "prefix", str(tmp_path / "venv"))
     monkeypatch.setattr(fast.sys, "base_prefix", "/usr")
     assert fast.find_decomp() == str(tmp_path / "venv" / "bin" / "decomp")
+
+
+def test_a_flag_line_given_to_judge_as_a_string_is_not_split_into_characters(tmp_path, monkeypatch):
+    fast = stub_decomp(tmp_path, monkeypatch)
+    judge = fast.Judge("game", "f1", flags="-G0 -O1", extra_flags="-mfp32")
+    try:
+        assert judge.compiler["flags"] == ["-G0", "-O1", "-mfp32"]
+    finally:
+        judge.close()

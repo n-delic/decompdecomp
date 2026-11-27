@@ -49,6 +49,24 @@ def keeps_frame_pointer(words) -> bool:
     return any(word in MOVE_FP_SP for word in words[:16])
 
 
+def saves_before_parameter_moves(words) -> bool:
+    """The prologue stores every saved register first and only then copies the parameters into them (`sw $s1; sw $s0;
+    move $s3, $a3`), as code GCC never ran its second scheduler over does (-O1, -O0 or -fno-schedule-insns2). The
+    scheduler pairs each store with its copy (`sw $s3; move $s3, $a3; sw $s2; ...`). Needs three stores and two copies
+    in the first basic block: fewer say nothing. Of one KMC game's matched functions with that many, all 87 built -O2
+    interleaved them and all 13 built -O1 did not."""
+    saves, moves = [], []
+    for index, word in enumerate(words):
+        op, rs, rt, rd, func = word >> 26, (word >> 21) & 31, (word >> 16) & 31, (word >> 11) & 31, word & 63
+        if op == 0x2B and rs == 29 and (16 <= rt <= 23 or rt in (30, 31)):  # sw $s*/$fp/$ra, n($sp)
+            saves.append(index)
+        elif op == 0 and func in (0x21, 0x25) and rt == 0 and 4 <= rs <= 7 and (16 <= rd <= 23 or rd == 30):
+            moves.append(index)
+        elif op in (1, 2, 3, 4, 5, 6, 7, 0x14, 0x15, 0x16, 0x17) or (op == 0 and func in (8, 9)):
+            break
+    return len(saves) >= 3 and len(moves) >= 2 and min(moves) > max(saves)
+
+
 def reads_through_held_address(words) -> bool:
     """A symbol's address built into a register (`lui r; addiu r, r`) and two or more other offsets read or written
     through it before the next jump: GCC folds `sym + 4` into the instruction itself for a pointer that holds a
