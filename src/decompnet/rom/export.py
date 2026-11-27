@@ -715,13 +715,21 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
             cursor += len(payload)
         gzip_boot_ranges = []
         archive_analysis = False
+        runtime_programs = []
         if not blocks:
             gzip_boot_ranges = [entry for entry in split.code_ranges(configs[0]) if entry[1] <= len(original)]
             if not boot_gzip.verify_analysis(original, image, gzip_boot_ranges):
                 from ..consoles.n64 import indexed_runtime_code
                 archive_analysis = indexed_runtime_code.verify_analysis(original, image)
                 if not archive_analysis:
-                    raise ExportError("expanded analysis image has no verified compressed-block reconstruction")
+                    from ..consoles.n64 import runtime_zlib
+                    manifest = work / runtime_zlib.MANIFEST
+                    try:
+                        runtime_programs = json.loads(manifest.read_text(encoding='utf-8'))
+                    except (OSError, ValueError):
+                        runtime_programs = []
+                    if not runtime_zlib.verify_analysis(original, image, runtime_programs):
+                        raise ExportError("expanded analysis image has no verified compressed-block reconstruction")
                 gzip_boot_ranges = []
         cartridge = f"baserom.cartridge{ext}"
         (out / cartridge).write_bytes(original)
@@ -730,6 +738,8 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
             build["cartridge"]["gzip_boot_ranges"] = gzip_boot_ranges
         if archive_analysis:
             build["cartridge"]["indexed_archive"] = True
+        if runtime_programs:
+            build["cartridge"]["runtime_zlib"] = runtime_programs
     (out / "build.json").write_text(json.dumps(build, indent=1), encoding="utf-8")
     shutil.copyfile(Path(__file__).with_name("export_build.py"), out / "build.py")
     shutil.copyfile(Path(__file__).with_name("export_entry.py"), out / "export_entry.py")
@@ -757,9 +767,13 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
                             f"1. Keep both generated private inputs: `{base}` (expanded analysis image) and "
                             f"`{cartridge['image']}` (original normalized cartridge). Reimport and export your ROM "
                             "to regenerate them; the original cartridge alone is not the expanded analysis input.")
-        text += ("\nThe build first compares the expanded linked image, then reconstructs RNC method-1 blocks "
-                 "from that linked output using the original compression template. It checks the final cartridge "
-                 "against its fixed original checksum. Incompatible edits require a general compressor.\n")
+        if cartridge.get('runtime_zlib') or cartridge.get('indexed_archive') or cartridge.get('gzip_boot_ranges'):
+            text += ("\nThe build checks the linked analysis image against the original compressed programs and "
+                     "verifies the original cartridge. Byte-changing edits require recompression.\n")
+        else:
+            text += ("\nThe build first compares the expanded linked image, then reconstructs RNC method-1 blocks "
+                     "from that linked output using the original compression template. It checks the final cartridge "
+                     "against its fixed original checksum. Incompatible edits require a general compressor.\n")
         readme.write_text(text, encoding="utf-8")
 
     # everything made from the game itself stays local: build.py regenerates it from your copy

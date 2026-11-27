@@ -150,4 +150,7 @@ def find(rom_path: Path, rom: bytes, taken, found=(), *, log=print, stop=lambda:
     if moved:
         log(f"{len(moved)} places the split puts at another address than the game runs them: " + ", ".join(
             f"ROM {m['rom']:#x} at {m['split']:#x}, run at {m['runs_at']:#x}" for m in moved[:4]))
-    return {"segments": added, "decoded": len(decoded), "moved": moved, "moved_ranges": sorted(moved_ranges)}
+    from . import runtime_zlib
+    programs = runtime_zlib.find(rom, dumps, decoded, known+added)
+    return {"segments": added, "decoded": len(decoded), "moved": moved, "moved_ranges": sorted(moved_ranges),
+            "decoded_programs": programs}

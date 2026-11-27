@@ -626,6 +626,11 @@ def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_rep
         found = sorted(found + loaded["segments"])
         found = sorted(complete_gaps(rom, taken, found, tuple((s.rom_start, s.rom_end, s.vram) for s in known),
                                      runtime_entries(workdir), log=log))
+    if not packed and not found and loaded.get('decoded_programs'):
+        from . import runtime_zlib
+        if result := runtime_zlib.add(config, workdir, original, original_rom, taken,
+                                      loaded['decoded_programs'], log):
+            return result
     from .boot_mapping import extend_startup_data, extend_startup_trap, mark_boot_version, recover
     from .rsp_prefix import trim
 

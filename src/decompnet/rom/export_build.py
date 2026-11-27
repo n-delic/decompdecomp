@@ -607,6 +607,12 @@ def build() -> bool:
                 if not verify_analysis(original, out):
                     fail("Rebuilt code differs from the original compressed archive members.")
                 out = original
+            elif rows := cartridge.get("runtime_zlib"):
+                from decompnet.consoles.n64.runtime_zlib import verify_analysis
+
+                if not verify_analysis(original, out, rows):
+                    fail("Rebuilt code differs from the original runtime compressed programs.")
+                out = original
             else:
                 out = rebuild_cartridge(out, original, cartridge["blocks"])
             (ROOT / B["output"]).write_bytes(out)
