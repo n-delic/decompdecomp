@@ -72,7 +72,8 @@ RESERVE = 3  # compiles left in a search's allowance before one more profile: it
 # v4: every -O level of the function's compiler is judged, so passes finished without them run again
 # v5: the draft's record arrays are judged under -O1 too (judge_record_arrays)
 # v6: -fforce-addr for targets that read offsets off a held symbol address
-SIGNATURE = 'profile-probe-v6:'
+# v7: the draft's address-named tables are judged as record arrays under -O1 too
+SIGNATURE = 'profile-probe-v7:'
 FP_FLAGS = ('-mfp32', '-mfp64')
 # libultra's own names: osXxx, __osXxx, __rmon*, __sc*, the routines whose compiler was the library's, not the game's
 LIBRARY_NAME = re.compile(r'^_{0,2}(?:os[A-Z]|rmon|sc[A-Z])')
@@ -501,12 +502,18 @@ def run(search, agent, proj, fn, source, *, climb=True) -> bool:
 def judge_record_arrays(search, agent, proj, fn, text, facts, item, profile) -> tuple[bool, list[dict]]:
     """`text` with its byte offsets off one global written as the record array declared there, judged under `profile`:
     (one was exact, the scores). A table initialiser matched only as that array under `-O1`, from its machine draft
-    that scored the same under either level."""
-    from decomprepair import global_offset_records
+    that scored the same under either level.
+
+    Address-named parallel tables indexed by `i * STRIDE` (m2c's usual draft) are tried the same way
+    (indexed_symbol_records): a machine draft at 7690 scored 550 as its record array under `-O1`, three steps from
+    exact."""
+    from decomprepair import global_offset_records, indexed_symbol_records
 
     from . import deep_profiles
     found = []
-    for _, child in global_offset_records.variants(text, fn['name'], facts.header):
+    children = [*global_offset_records.variants(text, fn['name'], facts.header),
+                *indexed_symbol_records.variants(text, fn['name'], facts.header, facts.asm)]
+    for _, child in children:
         if search.limit - search.tested < RESERVE:
             break
         search.check()
