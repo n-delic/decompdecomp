@@ -2593,6 +2593,7 @@ class Progress:
             compared_manifest = {}
             deferred, recheck_due = set(), False
             judging_change = True  # Unknown import shapes conservatively invalidate in-flight results.
+            needs_judging = True  # Unknown plans still require the shared verification lane.
             pending = {}
             reconciled_renames = False
             database_files = {}
@@ -2750,10 +2751,22 @@ class Progress:
                             and self._baseline(pid) == baseline
                             # Stat each path again, using cached text only for the same file version.
                             and _read(folder, cache=self.file_cache) == disk)
-                # _repair only repairs this project's own folder under its lock;
-                # shared identities, import writes and compiler calls start after
-                # admission. Waiting can release every recursive project lock.
-                admit(current)
+                # _repair only repairs this project's own folder under its lock.
+                # Verification can release every recursive project lock while it waits;
+                # metadata-only no-ops can stay under the project lock instead.
+                def substantive_metadata(value):
+                    # Old manifests may explicitly store empty optional sections.
+                    return {key: item for key, item in value.items()
+                            if key not in ('saved_at', 'revision')
+                            and not (key in ('notes', 'verification') and not item)}
+                unchanged_inputs = (not needs_judging and not (input_changes - {saves.MANIFEST})
+                                    and substantive_metadata(compared_manifest) == substantive_metadata(merged_manifest))
+                if needs_judging or before is not None and not unchanged_inputs:
+                    admit(current)
+                elif not current():
+                    # A first save or a semantically unchanged save has no compiler work.
+                    # Keep the project lock and validate the snapshot without a shared lane.
+                    raise _RestartSync
             # The legacy file keeps credits in the same atomic rollback as the
             # restore. Separate stores resolve shared identities before locking
             # project state, never by opening a nested catalog transaction.

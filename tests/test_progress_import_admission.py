@@ -246,3 +246,39 @@ def test_two_projects_verify_at_once_but_one_project_takes_one_lane(project, mon
     assert worker.verification_owner is None and worker.verification_details is None
     for _ in range(progress.VERIFICATION_PROJECTS):
         assert worker.verification_slot.acquire(blocking=False)
+
+
+def test_first_metadata_only_sync_does_not_wait_for_another_projects_judge(project, monkeypatch):  # noqa: F811
+    """A fresh import with no saved C does not need a compiler admission lane."""
+    net, folder, judged = project
+    worker = net.progress
+    monkeypatch.setattr(worker, '_baseline', lambda _pid: None)
+    worker.verification_slot.acquire()
+    with ThreadPoolExecutor(1) as pool:
+        future = pool.submit(worker.sync, 'game', force=True)
+        try:
+            future.result(timeout=5)
+            assert not judged
+            assert (folder/saves.MANIFEST).is_file()
+        finally:
+            worker.verification_slot.release()
+        future.result(timeout=5)
+
+
+def test_unchanged_empty_optional_manifest_sections_do_not_queue(project):  # noqa: F811
+    net, folder, judged = project
+    path = folder/saves.MANIFEST
+    manifest = json.loads(path.read_text())
+    manifest['notes'] = []
+    manifest['verification'] = {}
+    path.write_text(json.dumps(manifest))
+    worker = net.progress
+    worker.verification_slot.acquire()
+    with ThreadPoolExecutor(1) as pool:
+        future = pool.submit(worker.sync, 'game', force=True)
+        try:
+            future.result(timeout=5)
+            assert not judged
+        finally:
+            worker.verification_slot.release()
+        future.result(timeout=5)
