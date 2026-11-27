@@ -267,7 +267,7 @@ def loader_contracts(net,slug,data=None):
 def _preview_settings(options):
     from ..rom.asset_formats import FORMATS, PALETTES
     if not isinstance(options,dict):raise NetworkError('Preview settings must be named fields.')
-    allowed={'format','offset','source','block_offset','width','height','palette_offset','palette_format','channels','rate','length','frame','palette','mip','sample','mesh','texture','record_page','record_component','assembly','animation','dialogue_scene','dialogue_speaker'}
+    allowed={'format','offset','source','block_offset','width','height','palette_offset','palette_block_offset','palette_format','channels','rate','length','frame','palette','mip','sample','mesh','texture','record_page','record_component','assembly','animation','dialogue_scene','dialogue_speaker'}
     if set(options)-allowed:raise NetworkError('Use only the listed preview controls.')
     if options.get('format','auto') not in FORMATS or options.get('palette_format','rgba5551-be') not in PALETTES:
         raise NetworkError('Choose a listed preview format and palette format.')
@@ -293,6 +293,8 @@ def _asset_read(net,slug,data,read, *, detect=False):
     from ..rom import asset_formats
     proj,state,row=_current(net,slug,data.get('region'),data.get('image_hash'))
     options=_preview_settings(data.get('options',{}))
+    if options.get('palette_block_offset') not in (None, '') and (options.get('source') != 'decoded' or options.get('format') not in ('ci4', 'ci8')):
+        raise NetworkError('Choose a decompressed indexed image before selecting a separate palette block.')
     detected=row.get('detected_asset')
     view = data.get('asset_view')
     if detect and view is not None and options.get('format', 'auto') == 'auto' and options.get('source', 'rom') == 'rom':
@@ -339,8 +341,23 @@ def _asset_read(net,slug,data,read, *, detect=False):
             block_data=image[block:block+asset_formats.MAX_BYTES]
             raw,codec=net.console(proj).asset_decode(block_data) or asset_formats.unpack(block_data)
             selected={**options,'offset':0 if auto_decode else options.get('offset',0)}
+            palette_block = options.get('palette_block_offset')
+            palette_info = None
+            if palette_block not in (None, ''):
+                if auto_decode or options.get('format') not in ('ci4', 'ci8'):
+                    raise NetworkError('Choose a decompressed indexed image before selecting a separate palette block.')
+                palette_block = asset_formats.integer(palette_block, 'Palette compressed block offset', 0, len(image)-1)
+                palette_data = image[palette_block:palette_block+asset_formats.MAX_BYTES]
+                palette, palette_codec = net.console(proj).asset_decode(palette_data) or asset_formats.unpack(palette_data)
+                relative = asset_formats.integer(options.get('palette_offset', 0), 'Palette offset', 0, len(palette)-1)
+                selected['palette_offset'] = len(raw)+relative
+                palette_info = dict(codec=palette_codec, bytes=len(palette), block_offset=palette_block)
+                raw += palette
             result=read(raw,selected)
-            result['decoded']=dict(codec=codec,bytes=len(raw),block_offset=block)
+            result['decoded']=dict(codec=codec,bytes=len(raw)-(len(palette) if palette_info else 0),block_offset=block)
+            if palette_info:
+                result['decoded']['palette'] = palette_info
+                result['settings'] = options
         else:
             result=read(image,{**options,'offset':options.get('offset',row['start'])})
     if using_detected:
