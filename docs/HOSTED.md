@@ -302,3 +302,11 @@ candidate, and supplies the strict linked verdict and instruction differences.
 The Rust scorer applies reorder, insertion and deletion penalties and returns
 the final score. Older judge workers can still return a complete verdict through
 the same verifier protocol.
+
+For MIPS trials, the verifier also applies resolved instruction relocations
+and compares the linked instruction bytes in Rust. The Python adapter reads
+ELF, resolves symbolic addresses and relocation addends, and places and
+verifies candidate-defined data. Data checks still decide whether exact
+instruction bytes qualify as a match. The adapter and verifier negotiate this
+step over their local process connection, so older verifiers or adapters can
+use the Python implementation. The hosted queue protocol stays the same.

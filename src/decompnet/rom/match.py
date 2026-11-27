@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import re
 import struct
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Callable
 
@@ -52,6 +53,8 @@ _WIDTH = {0x20: 1, 0x24: 1, 0x28: 1, 0x21: 2, 0x25: 2, 0x29: 2, 0x23: 4, 0x27: 4
           0x3A: 4, 0x35: 8, 0x3D: 8, 0x37: 8, 0x3F: 8, 0x1E: 16, 0x1F: 16, 0x36: 16, 0x3E: 16}
 
 ReadFn = Callable[[int, int], "bytes | None"]
+# Only the hosted worker's per-request protocol can install this routine; ordinary attempts stay in-process.
+instruction_linker: ContextVar[Callable[..., tuple[bytes, bool]] | None] = ContextVar("instruction_linker", default=None)
 
 
 @dataclass
@@ -595,6 +598,8 @@ class _Linker:
         relocs: list[Reloc] = []
         pairs = MipsRelocationPairs(raw)
         self.section_bases(raw, shndx, pairs)
+        link_instructions = instruction_linker.get()
+        patches = []
         for k, r in enumerate(raw):
             addr = self.address(raw, k, shndx, start, pairs=pairs)
             if addr is None:
@@ -603,15 +608,21 @@ class _Linker:
                 continue
             i = r["off"] // 4
             if i < len(words):
-                words[i] = _patch(words[i], r["type"], addr, self.target.gp)
+                if link_instructions is None:
+                    words[i] = _patch(words[i], r["type"], addr, self.target.gp)
+                else:
+                    patches.append((r["off"], r["type"], addr & 0xFFFFFFFF))
             name, residual = self.symbols.name_at(addr)
             if self.target.vram <= addr < self.target.vram + len(self.target.code):
                 name, residual = self.name, addr - self.target.vram
             relocs.append(Reloc(r["off"], r["type"], name, encode(r["type"], residual)))
         # every place is known before any datum is measured: a datum runs to the next one, whatever the code's order
         self.place_pointees()
-        linked = struct.pack(fmt[0] + f"{len(words)}I", *words)
-        instructions_exact = linked == self.target.code
+        if link_instructions is None:
+            linked = struct.pack(fmt[0] + f"{len(words)}I", *words)
+            instructions_exact = linked == self.target.code
+        else:
+            linked, instructions_exact = link_instructions(code, self.target, patches)
         for (dshndx, off), addr in sorted(self.data.items()):
             self.verify_data(dshndx, off, addr, instructions_exact=instructions_exact)
         exact = not self.problems and instructions_exact

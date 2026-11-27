@@ -20,6 +20,7 @@
 mod hosted;
 mod native;
 mod rom_judge;
+mod mips_link;
 mod verifier;
 mod window;
 

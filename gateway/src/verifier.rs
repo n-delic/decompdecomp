@@ -130,10 +130,18 @@ impl Judge {
         let exchange = async {
             self.input.write_all(format!("{request}\n").as_bytes()).await.map_err(|e| e.to_string())?;
             self.input.flush().await.map_err(|e| e.to_string())?;
-            match self.output.next_line().await {
-                Ok(Some(line)) => serde_json::from_str::<Value>(&line).map_err(|e| format!("the judge said {line:?}: {e}")),
-                Ok(None) => Err("the judge ended".into()),
-                Err(e) => Err(e.to_string()),
+            loop {
+                let line = self.output.next_line().await.map_err(|error| error.to_string())?
+                    .ok_or("the judge ended")?;
+                let reply: Value = serde_json::from_str(&line).map_err(|error| format!("the judge said {line:?}: {error}"))?;
+                let Some(plan) = reply.get("link_mips") else { return Ok(reply) };
+                if request["link_mips"].as_u64() != Some(crate::mips_link::VERSION) {
+                    return Err("unexpected MIPS link request from the judge".into());
+                }
+                // Return an error to the adapter before accepting another job, so no response stays in flight.
+                let result = crate::mips_link::link(plan).unwrap_or_else(|error| json!({"error": error}));
+                self.input.write_all(format!("{result}\n").as_bytes()).await.map_err(|error| error.to_string())?;
+                self.input.flush().await.map_err(|error| error.to_string())?;
             }
         };
         tokio::time::timeout(limit, exchange).await.map_err(|_| format!("the judge took over {} s", limit.as_secs()))?
@@ -247,6 +255,7 @@ impl Verifier {
                                  "compiler": item.get("compiler"), "source": item.get("source")});
         if let Some(trial) = item["trial"].as_object() {
             request["score_evidence"] = json!(crate::rom_judge::SCORE_VERSION);
+            request["link_mips"] = json!(crate::mips_link::VERSION);
             for (key, value) in trial {
                 request[key] = value.clone();
             }

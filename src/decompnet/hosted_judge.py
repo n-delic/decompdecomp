@@ -438,16 +438,40 @@ class Packs:
         return reply
 
 
+def _judge_with_mips_linker(packs, request, lines, out):
+    from .rom.match import instruction_linker
+
+    def link(code, target, patches):
+        plan = {"code": code.hex(), "target": target.code.hex(), "big_endian": target.big_endian,
+                "gp": target.gp & 0xFFFFFFFF, "patches": patches}
+        out.write(json.dumps({"link_mips": plan}) + "\n")
+        out.flush()
+        reply = json.loads(next(lines))
+        if "error" in reply:
+            raise RuntimeError(reply["error"])
+        return bytes.fromhex(reply["linked"]), reply["instructions_exact"]
+
+    token = instruction_linker.set(link)
+    try:
+        return packs.judge(request)
+    finally:
+        instruction_linker.reset(token)
+
+
 def serve(net, lines=sys.stdin, out=sys.stdout) -> None:
     """Answer requests from a home's network, or from Packs."""
     packs = net if isinstance(net, Packs) else None
+    lines = iter(lines)
     for line in lines:
         try:
             request = json.loads(line)
             if request.get("op") == "describe":
                 reply = packs.describe() if packs else describe(net)
             elif request.get("op") == "judge":
-                reply = packs.judge(request) if packs else judge(net, request)
+                if packs and request.get("pack_sha256") and request.get("link_mips") == 1:
+                    reply = _judge_with_mips_linker(packs, request, lines, out)
+                else:
+                    reply = packs.judge(request) if packs else judge(net, request)
             elif request.get("op") == "function" and not packs:
                 reply = function_info(net, request)
             elif request.get("op") == "passes" and not packs:
