@@ -66,13 +66,16 @@ def called_extent(image, start, end, vram, *, big_endian=True, cpu='', asm_check
     if len(fp_setup) == len(fp_restore) == 1:
         setup, restore = fp_setup[0], fp_restore[0]
         saved = [word(at) & 0xffff for at in range(start+4, setup, 4) if word(at) >> 16 == 0xafbe]
+        delay_pop = word(start+size-8) == JR_RA and word(start+size-4) == pop
+        before_pop = (word(start+size-12) == pop and word(start+size-8) == JR_RA
+                      and word(start+size-4) == 0)
+        fp_load = start+size-(12 if delay_pop else 16)
         if (len(saved) == 1 and saved[0] < amount and not saved[0] % 4
                 and all(not rabbitizer.Instruction(word(at),0,rabbitizer_category(cpu)).hasDelaySlot()
                         for at in range(start, setup, 4))
-                and restore < start+size-12 and word(start+size-8) == JR_RA
-                and word(start+size-4) == pop
-                and word(start+size-12) == 0x8fbe0000 | saved[0]):
-            fp_pair = (setup, restore, start+size-12)
+                and (delay_pop or before_pop) and restore < fp_load
+                and word(fp_load) == 0x8fbe0000 | saved[0]):
+            fp_pair = (setup, restore, fp_load)
     for at in range(start,start+size,4):
         w=word(at)
         if not rabbitizer.Instruction(w,0,rabbitizer_category(cpu)).isValid():
