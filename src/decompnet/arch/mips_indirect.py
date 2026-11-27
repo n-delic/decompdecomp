@@ -368,14 +368,30 @@ def _address_pair_guard(image, start, at, order):
     return at-32, branch, count, (((hi & 0xffff) << 16) + signed(low) + signed(load)) & 0xffffffff
 
 
-def calls(image,functions,order):
-    """Bounded agreeing-path dataflow; no inferred callback reachability."""
+def calls(image,functions,order,*,full_scan=False,check=lambda:None,progress=lambda _:None,checkpoint=None):
+    """Bounded agreeing-path dataflow; a full scan applies the budget to each function."""
     from .mips_callback_flow import trace
-    return trace(image,functions,order,MAX_WORDS,MAX_CALLS)
+    if not full_scan:
+        return trace(image,functions,order,MAX_WORDS,MAX_CALLS)
+    saved = checkpoint['load']() if checkpoint else None
+    index, results, limited = saved if saved is not None else (0, [], False)
+    for at in range(index,len(functions)):
+        check()
+        if not at % 32:
+            progress({'phase':'Checking indirect references','step':6,'steps':6,'done':at,'total':len(functions)})
+        traced, incomplete = trace(image,[functions[at]],order,MAX_WORDS,MAX_CALLS)
+        results.extend(traced)
+        limited |= incomplete
+        if checkpoint and (at + 1 == len(functions) or not (at + 1) % 32):
+            checkpoint['save'](at + 1,results,limited)
+    progress({'phase':'Checking indirect references','step':6,'steps':6,'done':len(functions),'total':len(functions)})
+    return results,limited
 
 
-def consumers(image,functions,rows,order,ranges,mappings,unresolved=None,*,check=lambda:None):
-    traced,limited=calls(image,functions,order)
+def consumers(image,functions,rows,order,ranges,mappings,unresolved=None,*,check=lambda:None,
+              full_scan=False,progress=lambda _:None,checkpoint=None):
+    traced,limited=(calls(image,functions,order,full_scan=True,check=check,progress=progress,checkpoint=checkpoint)
+                    if full_scan else calls(image,functions,order))
     linked=set()
     for row in rows:
         check()
