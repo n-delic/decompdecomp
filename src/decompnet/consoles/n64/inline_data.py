@@ -273,11 +273,51 @@ def _unentered_call_words(image, ranges):
             yield offsets[0], offsets[0]+4
 
 
+def _unentered_invalid_jump_prefixes(image, ranges):
+    """A text range can begin with data before an independently closed frame."""
+    from ...arch.mips import is_frame
+    from ...arch.mips_code_recovery import called_extent
+    from ...arch.mips_references import references
+
+    candidates = {}
+    for start, end, base in ranges:
+        if start % 4 or start+12 > min(end, len(image)) or not 0x80000000 <= base < 0x80800000:
+            continue
+        word = int.from_bytes(image[start:start+4], 'big')
+        target = ((base+4)&0xf0000000) | ((word&0x3ffffff)<<2)
+        if (word >> 26 != 2 or 0x80000000 <= target < 0x80800000
+                or sum(lo <= start < hi for lo, hi, _ in ranges) != 1
+                or sum(v <= base < v+hi-lo for lo, hi, v in ranges) != 1
+                or base.to_bytes(4, 'big') in image
+                or not is_frame(int.from_bytes(image[start+4:start+8], 'big'))
+                or not called_extent(image, start+4, end, base+4, cpu='vr4300')):
+            continue
+        candidates[base] = start
+    if not candidates:return
+    for lo, hi, base in ranges:
+        for target, _, kind in references(image, lo, min(hi, len(image)), base):
+            if kind == 'address':candidates.pop(target, None)
+        for at in range(lo, min(hi, len(image))-3, 4):
+            word = int.from_bytes(image[at:at+4], 'big')
+            op = word >> 26
+            pc = base+at-lo
+            if op in (2, 3):
+                target = ((pc+4)&0xf0000000) | ((word&0x3ffffff)<<2)
+            elif op in (1, 4, 5, 6, 7, 20, 21, 22, 23) or op == 17 and (word >> 21)&31 == 8:
+                immediate = word&0xffff
+                target = pc+4+(immediate-0x10000 if immediate&0x8000 else immediate)*4
+            else:
+                continue
+            candidates.pop(target, None)
+    for start in candidates.values():yield start, start+4
+
+
 def apply(config, image, log=print):
     """Split mapped text subsegments at verified inline data boundaries."""
     code = split.code_ranges(config)
     regions = sorted([*spans(image), *_startup_padding(image, code), *_stack_padding(image, code),
-                      *_leading_code_pointer_tables(image, code), *_unentered_call_words(image, code)])
+                      *_leading_code_pointer_tables(image, code), *_unentered_call_words(image, code),
+                      *_unentered_invalid_jump_prefixes(image, code)])
     if not regions:
         return
     ranges = {start: end for start, end, _ in code}
