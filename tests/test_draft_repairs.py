@@ -51,8 +51,10 @@ def test_nested_call_argument_boundary_and_opaque_text():
 
 
 def test_only_requested_definition_and_no_directives():
-    src = 'int other(int x) { return send(x, 7); }\nint f(int x) { return x; }'
-    assert not variants(src, 'f', 'mips')
+    other = 'int other(int x) { return send(x, 7); }\n'
+    src = other + 'int f(int x) { return x; }'
+    # (families may still propose changes to f itself, such as a parameter it never reads; the neighbour stays as written)
+    assert all(out.startswith(other) for out in variants(src, 'f', 'mips', limit=None))
     assert not variants('int f(int x) {\n#define GO send(x, 7)\nreturn GO; }', 'f', 'mips')
     assert not variants('int f(int x);', 'f', 'mips')
     # Extra statements and references to the accumulator must not be discarded.
@@ -62,7 +64,11 @@ def test_only_requested_definition_and_no_directives():
         outputs = variants(src, 'f', 'mips', labels=labels)
         assert all('side();' in out for out in outputs)
         # (a sub-expression held in a temporary writes the same expression under another name: its own tests check it)
-        assert all(f'result={expr};' in out or (expr=='result + x' and ('result = result; result += x;' in out or 'result= (x) + (result);' in out))
+        # (swapping the operands of the addition keeps both too)
+        kept = [f'result={expr};']
+        if expr == 'result + x':
+            kept += ['result=x + result;', 'result = result; result += x;', 'result= (x) + (result);']
+        assert all(any(form in out for form in kept)
                    for out in outputs if not labels.get(out, '').startswith('temporary_hoist'))
 
 
