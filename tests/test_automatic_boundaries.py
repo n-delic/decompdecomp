@@ -1264,7 +1264,7 @@ def test_closed_overlay_terminal_loaded_pointer_record_is_data(case):
     assert any(item.rom == 12 and item.size == 8 for item in data) == (case == 'record')
 
 
-@pytest.mark.parametrize('case', ['stale', 'pointer', 'interior_pointer', 'incoming', 'changed',
+@pytest.mark.parametrize('case', ['stale', 'table_source', 'pointer', 'interior_pointer', 'incoming', 'changed',
                                   'uncalled_next', 'uncalled_source', 'open_source', 'different_relocation'])
 def test_stale_code_copy_between_return_and_called_frame(case):
     from collections import defaultdict
@@ -1276,8 +1276,8 @@ def test_stale_code_copy_between_return_and_called_frame(case):
     if case == 'changed': copy[0] = 0x24850001
     if case == 'open_source': prior[-2] = 0
     if case == 'different_relocation': copy[0] = 0x24840099
-    words = prior + copy + BODY
-    image, functions, segments = fixture(words, cuts=(0, 64, 96, 128))
+    words = prior + copy + BODY + BODY
+    image, functions, segments = fixture(words, cuts=(0, 64, 96, 128, 160))
     ghost = functions[1]
     if case in ('pointer', 'interior_pointer'):
         image += (ghost.vram+(4 if case == 'interior_pointer' else 0)).to_bytes(4, 'big')
@@ -1288,11 +1288,13 @@ def test_stale_code_copy_between_return_and_called_frame(case):
     if case == 'incoming': references[ghost.vram+4].add((0, 'code'))
     calls = {functions[0].vram, functions[2].vram}
     if case == 'uncalled_next': calls.remove(functions[2].vram)
-    if case == 'uncalled_source': calls.remove(functions[0].vram)
+    if case in ('uncalled_source', 'table_source'): calls.remove(functions[0].vram)
+    if case == 'table_source':
+        image += b''.join(functions[i].vram.to_bytes(4, 'big') for i in (0, 2, 3))
     def owner(fn): return (0, '')
     found = stale_code_copies(functions, image, 'big', consoles.get('n64'), segments, owner, set(),
                               references, calls, [])
-    assert ((ghost.rom, ghost.vram) in found) == (case == 'stale')
+    assert ((ghost.rom, ghost.vram) in found) == (case in ('stale', 'table_source'))
 
 
 def test_stale_copy_requires_one_consistent_relocation():
@@ -1307,3 +1309,15 @@ def test_stale_copy_requires_one_consistent_relocation():
     new[9] += 4
     image = b''.join(word.to_bytes(4, 'big') for word in old+new)
     assert not _same_stale_instructions(image, 0, len(old)*4, len(old)*4, 'big')
+
+
+def test_code_table_names_only_contiguous_distinct_starts_outside_code():
+    from decompnet.rom.automatic_boundaries import _code_table_entries
+
+    image, functions, segments = fixture(BODY*3, cuts=(0, 32, 64, 96))
+    entries = [fn.vram for fn in functions]
+    packed = b''.join(value.to_bytes(4, 'big') for value in entries)
+    assert _code_table_entries(functions, image + packed, 'big', segments) == set(entries)
+    assert not _code_table_entries(functions, image + packed[:8], 'big', segments)
+    assert not _code_table_entries(functions, image + packed[:4]*3, 'big', segments)
+    assert not _code_table_entries(functions, image + packed, 'big', [Segment('all', 0, len(image)+12, BASE)])
