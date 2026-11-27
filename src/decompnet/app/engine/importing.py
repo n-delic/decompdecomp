@@ -89,6 +89,29 @@ def pair_old_functions(rows, functions) -> dict:
     return paired
 
 
+def _recreated_matches(net, pid, gone, same_analysis):
+    """Rejudge saved C if boundary repair recreated the same previously matched entry."""
+    if not same_analysis:
+        return []
+    store = net.project_store(pid)
+    old_matches = [old for old in gone.values()
+                   if old['status'] == 'matched' and old['matched_source'] and old['rom_offset'] is not None]
+    if not old_matches:
+        return []
+    rows = store.all('SELECT name,rom_offset,vram,size,target,status FROM functions '
+                     'WHERE project_id=? AND name IN (SELECT value FROM json_each(?))',
+                     pid, json.dumps([old['name'] for old in old_matches]))
+    by_name = {row['name']: row for row in rows}
+    result = []
+    for old in old_matches:
+        row = by_name.get(old['name'])
+        if (row is not None and row['status'] != 'matched'
+                and (row['rom_offset'], row['vram'], row['size'], row['target']) ==
+                    (old['rom_offset'], old['vram'], old['size'], old['target'])):
+            result.append((old['name'], old['matched_source'], old['matched_agent_id']))
+    return result
+
+
 class ImportMixin:
     def import_rom(self, data: bytes | Path, *, toolchain: str | None = None, flags: list[str] | None = None,
                    confirmed: bool = False, name: str = "", log=print, scope: str | None = None,
@@ -621,6 +644,11 @@ class ImportMixin:
             apply_entry_fixes(self, slug, log)
         except NetworkError as e:
             log(f"function boundaries were not fixed automatically: {e}")
+        if reimport is not None:
+            recovered = _recreated_matches(self, pid, gone, same_analysis)
+            if recovered:
+                rejudge.extend(recovered)
+                log(f'{len(recovered)} previously matched entries returned after boundary repair; their saved C will be checked again.')
         # Automatic boundary fixes invalidate earlier shared-entry evidence.
         # Reprove it against the final stored split before a helper can claim it.
         from ..boundary_review import refresh_shared_entries
