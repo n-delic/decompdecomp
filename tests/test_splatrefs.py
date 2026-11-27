@@ -256,9 +256,10 @@ def test_assembly_units_are_visible_without_counting_original_assembly_as_c(tmp_
     assert (tmp_path / entry['target_path']).is_file()
 
 
+@pytest.mark.parametrize('duplicate_elf', [False, True])
 @pytest.mark.parametrize('root_elf', [False, True])
 @pytest.mark.parametrize('source_tree', [True, False])
-def test_verified_rebuild_retains_nested_config_version(tmp_path, monkeypatch, root_elf, source_tree):
+def test_verified_rebuild_retains_nested_config_version(tmp_path, monkeypatch, root_elf, source_tree, duplicate_elf):
     cfg = config(tmp_path)
     data = b'full original cartridge'
     image = tmp_path/'baserom.jp.z64'
@@ -270,6 +271,8 @@ def test_verified_rebuild_retains_nested_config_version(tmp_path, monkeypatch, r
     if not source_tree:
         cfg['options']['src_path'] = 'not-created-yet'
     elf.write_bytes(b'linked ELF read by mocked objcopy')
+    if duplicate_elf:
+        (elf.parent / 'demo.prelim.elf').write_bytes(b'another ELF producing the same bytes')
     monkeypatch.setattr(splatrefs, 'binary_span', lambda _: len(data))
     mapping.write_text(' .text 0x80000400 0x10 build/src/demo.o\n')
     (elf.parent / 'unrelated.map').write_text('other image, not this ELF')
@@ -317,6 +320,49 @@ def test_verified_rebuild_retains_nested_config_version(tmp_path, monkeypatch, r
     assert shared['metadata']['source_path'] == 'shared/common.c'
     assert shared['base_path'] == 'build/shared/common.c.o'
     assert '1 linked binary assembly' in result['coverage_notes'][0]
+
+
+@pytest.mark.parametrize('verified', [False, True])
+def test_sdk_library_layout_requires_a_verified_complete_rebuild(tmp_path, monkeypatch, verified):
+    cfg = config(tmp_path)
+    image = tmp_path / 'baserom.z64'
+    image.write_bytes(b'original image')
+    cfg['sha1'] = hashlib.sha1(image.read_bytes()).hexdigest()
+    cfg['options']['target_path'] = 'baserom.z64'
+    cfg['segments'][0]['subsegments'][0] = [0, 'lib', 'ultra', 'boot', '.text']
+    calls = []
+
+    def rebuild(*args):
+        calls.append(args)
+        if not verified:
+            raise ForkError('overlay references need exactly one ELF whose complete binary matches the original')
+        return True
+
+    monkeypatch.setattr(splatrefs, 'verified_rebuild', rebuild)
+    if verified:
+        assert splatrefs.generate(ForkProject(tmp_path), tmp_path / 'splat.yaml', cfg, consoles.get('n64'))
+    else:
+        with pytest.raises(ForkError, match='exactly one ELF'):
+            splatrefs.generate(ForkProject(tmp_path), tmp_path / 'splat.yaml', cfg, consoles.get('n64'))
+    assert len(calls) == 1
+
+
+def test_identical_rebuilds_with_two_maps_remain_ambiguous(tmp_path, monkeypatch):
+    cfg = config(tmp_path)
+    image = tmp_path / 'baserom.z64'
+    image.write_bytes(b'original image')
+    for name in ('one', 'two'):
+        (tmp_path / f'build/{name}.elf').write_bytes(b'ELF')
+        (tmp_path / f'build/{name}.map').write_text('map')
+    bindir = tmp_path / 'tools'
+    bindir.mkdir()
+    (bindir / 'mips-ps2-decompals-objcopy').touch()
+    monkeypatch.setattr(splatrefs.toolchains, 'require', lambda _: bindir)
+    monkeypatch.setattr(splatrefs, 'binary_span', lambda _: image.stat().st_size)
+    monkeypatch.setattr(splatrefs, 'run', lambda cmd, *a, **kw: Path(cmd[-1]).write_bytes(image.read_bytes()))
+    with pytest.raises(ForkError, match='exactly one ELF'):
+        splatrefs.verified_rebuild(ForkProject(tmp_path), tmp_path / 'splat.yaml', cfg, image,
+                                   hashlib.sha1(image.read_bytes()).hexdigest(), lambda *_: None)
 
 
 @pytest.mark.parametrize("layout", ["padding", "implicit-vram"])

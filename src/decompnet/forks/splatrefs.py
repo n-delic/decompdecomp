@@ -174,6 +174,12 @@ def verified_rebuild(project, config_path: Path, config: dict, image_path: Path,
                     break
         if not matches:
             matches = _through_header_crc(root, build_dir, elves, image_path, sha1, objcopy, binary)
+        if len(matches) > 1:
+            # A preliminary and final ELF may produce the same ROM; only the final link usually has a map.
+            mapped = [elf for elf in matches if elf.with_suffix('.map').is_file()
+                      or (root / (elf.stem + '.map')).is_file()]
+            if len(mapped) == 1:
+                matches = mapped
         if len(matches) != 1:
             raise ForkError("overlay references need exactly one ELF whose complete binary matches the original "
                             "image's SHA-1")
@@ -623,13 +629,15 @@ def generate(project, config_path: Path, config: dict, console, log=print) -> bo
     except ForkError as error:
         if ("compressed or overlay code segments" not in str(error)
                 and "subsegment 'pad'" not in str(error)
+                and "subsegment 'lib'" not in str(error)
                 and "relative unit names without parent paths" not in str(error)
                 and "numeric start and vram" not in str(error)):
             raise
         try:
             return verified_rebuild(project, config_path, config, image_path, sha1.lower(), log)
         except ForkError as rebuilt:
-            if 'numeric start and vram' in str(error) or 'exactly one ELF' not in str(rebuilt):
+            if ('numeric start and vram' in str(error) or "subsegment 'lib'" in str(error)
+                    or 'exactly one ELF' not in str(rebuilt)):
                 raise
             units = plan(root, config, independent=True, prefer=verified_build_folders(root, sha1))
     configured_elf = inside(root, options.get('elf_path', 'build/project.elf'))
