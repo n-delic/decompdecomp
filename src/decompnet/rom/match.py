@@ -672,7 +672,7 @@ class _Linker:
             placements.setdefault(self.elf.get_section(dshndx).name, {})[off] = addr
         return LinkResult(FunctionObj(self.name, "mips", self.target.big_endian, code, relocs), exact, self.problems,
                           placements, instructions_exact, linked, self.data_mismatches, self.missing_data_reads,
-                          self.required_data_reads)
+                          self.required_data_reads, dict(self.library_names))
 
 
 def link(obj: bytes, name: str, target: RomTarget, symbols: SymbolTable, read: ReadFn) -> LinkResult:

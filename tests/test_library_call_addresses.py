@@ -8,7 +8,7 @@ from elftools.elf.relocation import RelocationSection
 from decompnet import toolchains
 from decompnet.compiler import compile_source
 from decompnet.project import compiler_config
-from decompnet.rom import match
+from decompnet.rom import export, match
 from decompnet.rom.symbols import Symbol, SymbolTable
 
 
@@ -71,3 +71,11 @@ def test_a_real_candidate_calling_a_builtin_links_to_the_games_routine(tmp_path)
     target = match.RomTarget('f', 0x80001000, bytes(start['st_size']), [(call - start['st_value'], match.R_MIPS_26, 0x80055B40)])
     result = match.link(compiled.obj, 'f', target, SymbolTable(), lambda *_: None)
     assert not any('not a known symbol' in p for p in result.problems), result.problems
+    assert result.inferred_library_calls == {'sqrtf': 0x80055B40}
+    exact_target = match.RomTarget('f', 0x80001000, result.linked_code, target.relocs)
+    exact = match.link(compiled.obj, 'f', exact_target, SymbolTable(), lambda *_: None)
+    assert exact.exact and exact.inferred_library_calls == {'sqrtf': 0x80055B40}
+    assert export._needs_entry_only(exact, None, True, False)
+    known = match.link(compiled.obj, 'f', exact_target,
+                       SymbolTable([Symbol('sqrtf', 0x80055B40, 8, 'func')]), lambda *_: None)
+    assert known.exact and not export._needs_entry_only(known, None, True, False)

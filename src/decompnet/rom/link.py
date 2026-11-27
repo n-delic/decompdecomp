@@ -32,6 +32,8 @@ class LinkResult:
     # Required reads that the image could not supply; speculative placement probes are excluded.
     missing_data_reads: list[tuple[int, int]] = field(default_factory=list)
     required_data_reads: list[tuple[int, int, bytes | None]] = field(default_factory=list)
+    # Calls resolved from this function's target may differ in another overlay.
+    inferred_library_calls: dict[str, int] = field(default_factory=dict)
 
 
 def _text(data: bytes) -> bool:
