@@ -554,6 +554,26 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
             # and the independently called next entry is unreachable padding.
             dropped += 1
             continue
+        if (fn.size == 12 and previous is not None and following is not None
+                and owner(fn)[0] >= 0 and owner(previous) == owner(fn) == owner(following)
+                and previous.size == 8 and previous.rom+8 == fn.rom and previous.vram+8 == fn.vram
+                and previous.lines[0].word == 0x08000000 | ((previous.vram >> 2) & 0x03ffffff)
+                and previous.lines[1].word == 0 and previous.vram in direct_calls
+                and following.rom == fn.rom+8 and following.vram == fn.vram+8
+                and following.vram in direct_calls and is_frame(following.lines[0].word)
+                and fn.lines[-1].word == following.lines[0].word
+                and not ({fn.vram, fn.vram+4} & entered_addresses)
+                and not any(m.start() % 4 == 0 for m in re.finditer(
+                    re.escape((fn.vram+4).to_bytes(4, order)), image))
+                and not any(d.rom is not None and d.rom < fn.rom+8 and fn.rom < d.rom+d.size for d in data)
+                and image[fn.rom:fn.rom+12] == b''.join(line.word.to_bytes(4, order) for line in fn.lines)):
+            import rabbitizer
+            if all(rabbitizer.Instruction(line.word).hasDelaySlot() for line in fn.lines[:2]):
+                # Two unentered transfer words after a called self-loop cannot be its fallthrough; the
+                # second transfer would also be in the first one's delay slot. The called frame overlaps
+                # only because the disassembler borrowed its first word as that second transfer's slot.
+                dropped += 1
+                continue
         if zero_alignment(fn, previous):
             if fn.vram in data_only:
                 recovered_data.append(DataSymbol(fn.name,fn.vram,fn.rom,4,'data'))
