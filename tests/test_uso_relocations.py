@@ -1341,6 +1341,26 @@ def test_uso_desktop_and_shared_queue_use_rust(tmp_path, monkeypatch, toolchain)
                "compiler": compiler, "header_sha256": hashlib.sha256(header.encode()).hexdigest()}
     from decompnet.rom.verifier_link import overlay_linker
 
+    fn = net._function("f1", "game")
+    proj = net.project_row("game", sync=False)
+    bad = compile_source(compiler_config(tmp_path, {"compiler": compiler}), header, wrong)
+    assert bad.ok, bad.log
+    batch = net._judge_random_batch(fn, proj, [built.obj, bad.obj, b""])
+    assert batch is not None
+    _, judgments = batch
+    assert judgments[-1] is None  # A declined input leaves its neighbors and their order intact.
+    token = overlay_linker.set(None)
+    try:
+        from decompnet import scoring
+
+        for obj, (candidate, diff, clean) in zip((built.obj, bad.obj), judgments[:2], strict=True):
+            oracle = _python_link(obj, fn["name"], body.code, info)
+            score = scoring._diff(net._target_obj(fn, proj), oracle.candidate, details=False)
+            assert candidate == oracle.candidate and clean == (not oracle.problems)
+            assert (diff.score, diff.bytes_match) == (0 if oracle.exact else max(1, score.score), oracle.exact)
+    finally:
+        overlay_linker.reset(token)
+
     token = overlay_linker.set(None)
     try:
         with monkeypatch.context() as python:

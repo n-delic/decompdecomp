@@ -166,6 +166,43 @@ class JudgeMixin:
                 proj.get('config') if isinstance(proj,dict) else proj['config'],
                 tuple((key,dict(fn).get(key)) for key in ('name','target','relocs','vram','meta','size','unit','rom_offset')))
 
+    def _random_batch_scope(self, fn, proj):
+        from ...rom.desktop_judge import image_identity
+
+        scope = self._diagnostic_scope(fn, proj)
+        if scope is None:
+            return None
+        try:
+            image = image_identity(proj["root"], self.cfg(proj)["rom"]["file"])
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+        return scope, image, scoring.ALIGN_BRANCH_TARGETS
+
+    def _judge_random_batch(self, fn, proj, objects):
+        from ...rom.desktop_judge import direct_judge
+        from ...rom.verifier_link import PackReader
+
+        console = self.console(proj)
+        if not console.rust_desktop_judge or fn["rom_offset"] is None:
+            return None
+        scope = self._random_batch_scope(fn, proj)
+        if scope is None:
+            return None
+        target = self._rom_target(fn)
+        overlay = console.export_overlay(target)
+        if overlay is None and type(target) is not match.RomTarget:
+            return None
+        with direct_judge() as judge:
+            if judge is None:
+                return None
+            symbols = self.symbols(proj["id"])
+            canonical = console.target_object(fn, self.cfg(proj), symbols)
+            canonical.cpu = console.cpu_variant
+            results = judge.batch(objects, target, canonical, symbols, PackReader(self, proj, fn), overlay)
+        if results is not None and scope == self._random_batch_scope(fn, proj):
+            return scope, results
+        return None
+
     def _complete_search_evaluation(self,fn,proj,obj):
         local=self.__dict__.get('_search_link_local')
         last=getattr(local,'last',None)

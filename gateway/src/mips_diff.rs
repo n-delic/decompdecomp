@@ -61,6 +61,12 @@ struct Function {
 struct Request {
     target: Function,
     candidate: Function,
+    #[serde(flatten)]
+    options: Options,
+}
+
+#[derive(Deserialize)]
+struct Options {
     align_branches: bool,
     #[serde(default)]
     details: bool,
@@ -275,16 +281,17 @@ fn align(a: &[Insn], b: &[Insn]) -> Vec<Block> {
     matching_blocks(&a, &b, ids.len())
 }
 
-fn compare(left: &[Insn], right: &[Insn], request: &Request, bytes_match: bool) -> Value {
+fn compare(
+    left: &[Insn],
+    right: &[Insn],
+    options: &Options,
+    names: (&str, &str),
+    bytes_match: bool,
+) -> Value {
     let blocks = align(left, right);
-    let flow = request.align_branches.then(|| {
-        Flow::new(
-            left,
-            right,
-            &blocks,
-            (&request.target.name, &request.candidate.name),
-        )
-    });
+    let flow = options
+        .align_branches
+        .then(|| Flow::new(left, right, &blocks, names));
     let left_meanings: Vec<_> = left.iter().map(meaning).collect();
     let right_meanings: Vec<_> = right.iter().map(meaning).collect();
     let mut balance = HashMap::new();
@@ -314,7 +321,7 @@ fn compare(left: &[Insn], right: &[Insn], request: &Request, bytes_match: bool) 
         for insn in &right[b..block.b] {
             *extra.entry(insn.text()).or_insert(0) += 1;
         }
-        if request.details {
+        if options.details {
             for k in 0..(block.a - a).max(block.b - b) {
                 let l = left[a..block.a].get(k);
                 let r = right[b..block.b].get(k);
@@ -357,7 +364,7 @@ fn compare(left: &[Insn], right: &[Insn], request: &Request, bytes_match: bool) 
                 }
             }
             penalty += cost;
-            if request.details {
+            if options.details {
                 let (lt, rt) = (l.text(), r.text());
                 let mark = match cost {
                     0 => " ",
@@ -380,7 +387,7 @@ fn compare(left: &[Insn], right: &[Insn], request: &Request, bytes_match: bool) 
         a = block.a + block.size;
         b = block.b + block.size;
     }
-    if request.details || request.summary {
+    if options.details || options.summary {
         let mut reordered = 0;
         for (text, count) in &missing {
             reordered += (*count).min(extra.get(text).copied().unwrap_or(0));
@@ -408,34 +415,88 @@ fn compare(left: &[Insn], right: &[Insn], request: &Request, bytes_match: bool) 
     json!({"operand_penalty": penalty, "missing": missing, "extra": extra, "bytes_match": bytes_match})
 }
 
+const MAX_CODE: usize = 8192 * 4;
+
+pub struct PreparedComparison {
+    function: Function,
+    code: Vec<u8>,
+    instructions: Vec<Insn>,
+}
+
+impl PreparedComparison {
+    fn new(mut function: Function) -> Result<Option<Self>, String> {
+        let mut code = bytes(&json!(function.code))?;
+        if code.len() > MAX_CODE
+            || !function.name.is_ascii()
+            || function.relocs.iter().any(|reloc| !reloc.2.is_ascii())
+        {
+            return Ok(None);
+        }
+        disasm::mask(&mut code, &function.relocs, function.big_endian);
+        let instructions = disasm::decode(&function, &code)?;
+        function.relocs.sort_unstable();
+        Ok(Some(Self {
+            function,
+            code,
+            instructions,
+        }))
+    }
+
+    pub fn from_value(value: &Value) -> Result<Option<Self>, String> {
+        Self::new(serde_json::from_value(value.clone()).map_err(|error| error.to_string())?)
+    }
+
+    fn compare(&self, candidate: &Self, options: &Options) -> Value {
+        let bytes_match =
+            self.code == candidate.code && self.function.relocs == candidate.function.relocs;
+        compare(
+            &self.instructions,
+            &candidate.instructions,
+            options,
+            (&self.function.name, &candidate.function.name),
+            bytes_match,
+        )
+    }
+
+    pub fn summary(
+        &self,
+        code: &Value,
+        relocs: &Value,
+        align_branches: bool,
+    ) -> Result<Value, String> {
+        let candidate = Function {
+            name: self.function.name.clone(),
+            big_endian: self.function.big_endian,
+            code: code
+                .as_str()
+                .ok_or("missing linked candidate code")?
+                .to_owned(),
+            relocs: serde_json::from_value(relocs.clone()).map_err(|e| e.to_string())?,
+        };
+        let Some(candidate) = Self::new(candidate)? else {
+            return Ok(Value::Null);
+        };
+        Ok(self.compare(
+            &candidate,
+            &Options {
+                align_branches,
+                details: false,
+                summary: true,
+            },
+        ))
+    }
+}
+
 pub fn evidence(value: &Value) -> Result<Value, String> {
     let request: Request =
         serde_json::from_value(value.clone()).map_err(|error| error.to_string())?;
-    let (mut target, mut candidate) = (
-        bytes(&json!(request.target.code))?,
-        bytes(&json!(request.candidate.code))?,
-    );
-    if target.len().max(candidate.len()) > 8192 * 4 {
+    let (Some(target), Some(candidate)) = (
+        PreparedComparison::new(request.target)?,
+        PreparedComparison::new(request.candidate)?,
+    ) else {
         return Ok(Value::Null);
-    }
-    disasm::mask(
-        &mut target,
-        &request.target.relocs,
-        request.target.big_endian,
-    );
-    disasm::mask(
-        &mut candidate,
-        &request.candidate.relocs,
-        request.candidate.big_endian,
-    );
-    let mut first: Vec<_> = request.target.relocs.iter().collect();
-    let mut second: Vec<_> = request.candidate.relocs.iter().collect();
-    first.sort_unstable();
-    second.sort_unstable();
-    let bytes_match = target == candidate && first == second;
-    let left = disasm::decode(&request.target, &target)?;
-    let right = disasm::decode(&request.candidate, &candidate)?;
-    Ok(compare(&left, &right, &request, bytes_match))
+    };
+    Ok(target.compare(&candidate, &request.options))
 }
 
 #[cfg(test)]

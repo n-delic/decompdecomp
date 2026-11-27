@@ -1161,29 +1161,40 @@ class Permuter:
                 log.warning('%s: %s', fn['name'], result.log.strip())
             return None
         from .. import compile_timing
+        from ..repair_feedback import current_trial
+        from ..source_lines import mismatches
         from .engine.judging import search_evaluation
-        with search_evaluation():
-            cand, verdict, problems = self.net._evaluate(fn, proj, result.obj)
-        if cand is None:
-            return None
+
+        lean = ((current_trial() or {}).get('kind') == 'random rewrite' and source != fn['best_source'])
+        ticket = getattr(self, "_ahead_current", None)
+        batch = getattr(ticket, "batch_judgment", None) if lean else None
+        # Batch summaries can only dismiss misses. Improvements and exact matches still take
+        # the ordinary path, which recompiles a promising batched object independently.
+        if (batch is not None and batch.compiled is result and not batch.diff.bytes_match
+                and batch.diff.score >= best and batch.scope == self.net._random_batch_scope(fn, proj)):
+            cand, d, clean = batch.candidate, batch.diff, batch.clean
+            compile_timing.add("batch_judge_misses_used", 1)
+        else:
+            with search_evaluation():
+                cand, verdict, problems = self.net._evaluate(fn, proj, result.obj)
+            if cand is None:
+                return None
+            clean = not problems
+            target = self.net._target_obj(fn, proj)
+            # Use this actual compiled object; never recompile with different debug flags.
+            with compile_timing.phase('score'):
+                d = scoring.score(target, cand) if lean else scoring.diff(target, cand)
+                if lean and (d.score < best or d.bytes_match or verdict is True):
+                    d = scoring.diff(target, cand)
+            if verdict is not None:
+                d = scoring.DiffResult(0 if verdict else max(1, d.score), d.max_score, d.rows, verdict)
         self._trial_outcome = 'scored'
-        self._trial_clean = not problems
+        self._trial_clean = clean
+        from decomprepair.repair_localisation import bind
+
         from .experiment_evidence import output
         self._trial_output = output(cand)
         self._trial_output_granularity = 'function'
-        from decomprepair.repair_localisation import bind
-
-        from ..repair_feedback import current_trial
-        from ..source_lines import mismatches
-        lean = ((current_trial() or {}).get('kind') == 'random rewrite' and source != fn['best_source'])
-        target = self.net._target_obj(fn, proj)
-        # Use this actual compiled object; never recompile with different debug flags.
-        with compile_timing.phase('score'):
-            d = scoring.score(target, cand) if lean else scoring.diff(target, cand)
-            if lean and (d.score < best or d.bytes_match or verdict is True):
-                d = scoring.diff(target, cand)
-        if verdict is not None:
-            d = scoring.DiffResult(0 if verdict else max(1, d.score), d.max_score, d.rows, verdict)
         if (current_trial() or {}).get('exact_only') and not d.bytes_match:
             self._trial_outcome = 'exact_only_miss'
             return None
