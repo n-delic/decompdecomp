@@ -82,7 +82,7 @@ def test_pointers_to_arrays_of_unknown_length_become_pointers_to_the_element():
 
 def test_case_labels_outside_any_switch_are_dropped_and_those_inside_stay():
     src = ("void f(int x) {\n    if (x) {\n        switch (x) {\n        case 1:\n            g();\n            break;\n"
-           "        }\n    } else {\n    default:  /* switch 1 */\n        h();\n    }\n}\n")
+           "        }\n        k();\n    } else {\n    default:  /* switch 1 */\n        h();\n    }\n}\n")
     out = m2c_types.repair(src)
     assert "default" not in out and "        case 1:\n" in out and "        h();" in out
 
@@ -134,3 +134,27 @@ def test_case_labels_stay_in_switches_that_m2c_numbers_in_a_comment():
            "    case 1:                         /* switch 1 */\n        break;\n    }\n}\n")
     out = m2c_types.repair(src)
     assert "case 0:" in out and "case 3:" in out and "case 1:" in out
+
+
+def test_a_default_in_the_else_beside_its_switch_stays_the_switchs_default():
+    draft = """void f(s32 c, s32 i) {
+    if (c != 0) {
+        switch (c) {                                /* switch 1 */
+        case 1:
+            D = 1;
+            break;
+        case 2:
+            D = 2;
+            break;
+        }
+    } else {
+    default:
+        D = 0x20;
+    }
+}
+"""
+    fixed = " ".join(m2c_types.repair(draft).split())
+    assert "D = 2; break; default: D = 0x20; break; } } else { D = 0x20; } }" in fixed
+    # a `default:` beside no switch is still only dropped
+    stray = "void f(s32 c) {\n    if (c) {\n        g();\n    } else {\n    default:\n        D = 0;\n    }\n}\n"
+    assert "default" not in m2c_types.repair(stray)
