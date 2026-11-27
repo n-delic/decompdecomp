@@ -171,6 +171,8 @@ def test_reimport_replaces_analysis_and_keeps_only_unchanged_matches(tmp_path, m
                             "FROM functions WHERE id=?", changed_id)
     assert changed["status"] == "open" and changed["matched_source"] is None
     assert changed["target"] == bytes.fromhex("24020002")
+    assert 'void func_80000004(void) {}' in net.store.one(
+        "SELECT text FROM notes WHERE function_id=? AND text LIKE '%before reimport: saved C%'", changed_id)["text"]
     assert changed["last_checked"] is None and changed["last_improved"] is None
     assert net.store.one("SELECT text FROM notes WHERE function_id=?", changed_id)["text"] == "keep this note"
     assert net.store.one("SELECT 1 FROM functions WHERE project_id=? AND name=?",
@@ -340,3 +342,90 @@ def test_reimport_keeps_agents_names_and_judges_c_whose_references_were_read_ane
     row = net.store.one("SELECT status, best_source FROM functions WHERE id=?", fid)
     assert row["status"] == "open" and row["best_source"] == "void race_update(void) { gRecords = 0; }"
     assert any("0 of 1 still match" in m for m in messages)
+
+
+@pytest.mark.parametrize('status,collision,interrupt,extended', [
+    ('matched', False, False, False), ('open', False, False, False),
+    ('matched', True, False, False), ('open', True, False, False),
+    ('matched', False, True, False), ('open', False, True, False),
+    ('matched', False, False, True), ('open', False, False, True),
+])
+def test_reimport_rejudges_same_rom_function_when_its_link_address_changes(tmp_path, monkeypatch, status, collision, interrupt, extended):
+    """A corrected overlay base must not discard C or give it to a different function at the old address."""
+    import hashlib
+
+    root = tmp_path / 'game'
+    root.mkdir()
+    image = bytes(16)
+    (root / 'rom.z64').write_bytes(image)
+    net = RomNetwork(tmp_path / 'app.db', tmp_path)
+    cfg = {'kind': 'rom', 'platform': 'n64', 'big_endian': True,
+           'rom': {'file': 'rom.z64', 'sha1': 'game', 'analysis_sha1': hashlib.sha1(image).hexdigest()},
+           'segments': [], 'compiler': {'toolchain': 'ido-7.1', 'flags': ['-O2']}}
+    source = 'int preserved(void) { return 1; }'
+    with net.store.tx() as db:
+        pid = db.execute('INSERT INTO projects(slug,name,root,arch,config) VALUES(?,?,?,?,?)',
+                         ('game', 'Game', str(root), 'mips', json.dumps(cfg))).lastrowid
+        fid = db.execute('INSERT INTO functions(project_id,name,size,n_insns,target,relocs,status,matched_source,best_source,vram,rom_offset) '
+                         'VALUES(?,?,?,?,?,?,?,?,?,?,?)', (pid, 'old_entry', 4, 1, bytes.fromhex('24020001'),
+                          '[]', status, source if status == 'matched' else None,
+                          source if status == 'open' else None, 0x80401000, 4)).lastrowid
+
+    class TestConsole(Console):
+        id = 'n64'
+        name = 'Nintendo 64'
+        arch = 'mips'
+
+        def read_game(self, file, name):
+            return Picked('n64', image, 'rom.z64', {'title': 'Game', 'size': len(image), 'game_code': 'DEMO',
+                          'region': 'Test', 'compiler_guess': 'IDO', 'sha1': 'game'}, True)
+
+        def debug_info(self, program, known):
+            return None
+
+        def default_compiler(self, info, guess):
+            return 'ido-7.1'
+
+        def default_flags(self, toolchain, gp):
+            return []
+
+        def after_import(self, net, slug, chosen, log):
+            pass
+
+    console = TestConsole()
+    monkeypatch.setattr('decompnet.app.engine.importing.consoles.identify', lambda _: console)
+    net.console = lambda _: console
+    line = split.AsmLine(4, 0x80402000, 0x24020001, 'addiu', 'v0, zero, 1')
+    extra = split.AsmLine(8, 0x80402004, 0x24030003, 'addiu', 'v1, zero, 3')
+    fn = split.RomFunction('new_entry', 0x80402000, 4, 'overlay', [line, extra] if extended else [line], root / 'f.s')
+    other_line = split.AsmLine(12, 0x80401000, 0x24020002, 'addiu', 'v0, zero, 2')
+    other = split.RomFunction('old_entry' if collision else 'other_entry', 0x80401000, 12, 'other',
+                              [other_line], root / 'other.s')
+    monkeypatch.setattr(split, 'split_rom', lambda work, *a, **kw: split.SplitResult(
+        [other, fn], [], [split.Segment('overlay', 4, 12, 0x80402000),
+                          split.Segment('other', 12, 16, 0x80401000)], {}, None, '', '', image='rom.z64'))
+    judged = []
+    def attempt(agent, name, code, slug):
+        judged.append((name, code))
+        if interrupt:
+            raise RuntimeError('judge interrupted')
+        return {'matched': False}
+
+    net.attempt = attempt
+    if interrupt:
+        with pytest.raises(RuntimeError, match='judge interrupted'):
+            net.reimport_rom('game', root / 'rom.z64', confirmed=True, log=lambda _: None)
+    else:
+        net.reimport_rom('game', root / 'rom.z64', confirmed=True, log=lambda _: None)
+    row = net.store.one('SELECT name, vram, best_source, status FROM functions WHERE id=?', fid)
+    if collision:
+        assert row is None or (row['vram'] == 0x80401000 and row['best_source'] is None)
+        assert judged == []
+        assert source in net.store.one('SELECT text FROM notes WHERE project_id=? AND text LIKE ?', pid,
+                                       '%before reimport:%')['text']
+        assert net.store.one('SELECT vram FROM functions WHERE name=?', 'old_entry')['vram'] == 0x80401000
+    else:
+        assert (row['name'], row['vram'], row['best_source'], row['status']) == ('old_entry', 0x80402000, source, 'open')
+        assert judged == [('old_entry', source)]
+        assert net.store.one('SELECT address FROM symbols WHERE project_id=? AND name=?', pid, 'old_entry')['address'] == 0x80402000
+        assert net.store.one('SELECT vram FROM functions WHERE name=?', 'other_entry')['vram'] == 0x80401000
