@@ -378,7 +378,7 @@ linting). In short:
 
 ## RetroReversing contribution workflow
 
-Always submit decompdecomp changes on a feature or fix branch through a pull request; do not commit directly to main.
+Always start every change in its own worktree, submit it on a feature or fix branch through a pull request, and merge it after required checks pass. Do not commit directly to main or report a change as complete while it exists only locally or in an unmerged PR; report any blocker explicitly.
 
 Keep the primary checkout on `main`. Start each change in its own Git worktree based on the latest
 `origin/main`, and make edits and run tests from that worktree. After the PR is merged and any local
