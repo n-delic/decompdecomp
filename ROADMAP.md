@@ -2683,6 +2683,8 @@ no drafts, and the DS latest/best attempt switch (PR #254). The rest:
   the drafter cache and remake m2c drafts when a header changes, let `redraft` pass an agent's declarations to m2c
   (`seeds.generate_from_asm`), and for DS read the unit's target object (`ForkProject.unit(...).target`) or write a
   temporary `.s` for m2c. The DS autopilot's "no drafts" guard is in progress this round.
+  MIPS project drafts can fall back to a complete, unambiguous reference-object function when the project's assembly
+  cannot be parsed; equivalent object-to-draft readers for PowerPC and ARM remain **—**.
 
 - **C++ methods as `Class::method` on GameCube, Wii and DS.** The rewrite is `Arch.method_draft`, which only x86 has
   (`arch/x86.py`), and the class reader is MIPS and x86 (`classes.py`); both need the PowerPC/ARM readers in "C++

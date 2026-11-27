@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import json
 import re
+import struct
 from pathlib import Path
 
-from .. import consoles, seeds, toolchains
+from .. import arch, consoles, seeds, toolchains
 
 MAX_ASM = 2 * 1024 * 1024
+OBJECT_DRAFT_REVISION = 1  # cached failed source drafts can now retry against the reference object
 
 
 def supported(platform: str) -> bool:
@@ -67,6 +69,55 @@ def _block(text: str, symbol: str) -> str:
     return m.group(0) if m else text
 
 
+def _object_assembly(root: Path, platform: str, unit_name: str, symbol: str) -> str | None:
+    """Recover a draft input from one unambiguous, in-project ELF reference function."""
+    from io import BytesIO
+
+    from elftools.common.exceptions import ELFError
+    from elftools.elf.elffile import ELFFile
+
+    from ..elfobj import extract_function
+
+    try:
+        cfg = json.loads((root / 'objdiff.json').read_text(encoding='utf-8'))
+        matches = [u for u in cfg.get('units') or cfg.get('objects') or []
+                   if (u.get('name') or u.get('path')) == unit_name]
+        if len(matches) != 1:
+            return None
+        value = matches[0].get('target_path')
+        if not value and isinstance(cfg.get('target_dir'), str) and isinstance(matches[0].get('path'), str):
+            value = str(Path(cfg['target_dir']) / matches[0]['path'])
+        if not isinstance(value, str) or Path(value).is_absolute():
+            return None
+        obj = (root / value).resolve()
+        if root.resolve() not in obj.parents:
+            return None
+        with obj.open('rb') as stream:
+            raw = stream.read(32 * 1024 * 1024 + 1)
+        if len(raw) > 32 * 1024 * 1024:
+            return None
+        elf = ELFFile(BytesIO(raw))
+        table = elf.get_section_by_name('.symtab')
+        if elf['e_type'] != 'ET_REL' or table is None:
+            return None
+        symbols = [s for s in table.iter_symbols() if s.name == symbol and s['st_info']['type'] == 'STT_FUNC'
+                   and isinstance(s['st_shndx'], int) and int(s['st_size']) > 0]
+        if len(symbols) != 1:
+            return None
+        section = elf.get_section(symbols[0]['st_shndx'])
+        if not section or not section['sh_flags'] & 4:
+            return None
+        function = extract_function(raw, symbol)
+        console = consoles.get(platform)
+        if (not function or len(function.code) != int(symbols[0]['st_size'])
+                or function.arch != console.arch or function.big_endian != console.big_endian):
+            return None
+        reader = arch.get(function.arch).object_draft_assembly
+        return reader(function) if reader else None
+    except (OSError, ValueError, TypeError, KeyError, IndexError, OverflowError, struct.error, ELFError):
+        return None
+
+
 def draft(root: Path, platform: str, unit_name: str, symbol: str, source_path: str | None,
           compiler_hint: str = "", timeout: float = 30, valid: bool = False) -> str | None:
     """m2c's draft of one function; `valid`: in a form that compiles (m2c's macros for what it couldn't tell, which
@@ -78,12 +129,21 @@ def draft(root: Path, platform: str, unit_name: str, symbol: str, source_path: s
     source_text = src.read_text(errors="replace", encoding="utf-8") if src and src.exists() else None
     asm = find_asm(root, unit_name, symbol, source_text)
     lang = "c++" if source_path and Path(source_path).suffix.lower() in (".cpp", ".cc", ".cxx", ".cp") else "c"
-    if asm is None:
-        return None
-    text = asm.read_text(errors="replace", encoding="utf-8")
-    if len(text) > MAX_ASM or ".fn " in text:
-        text = _block(text, symbol)
-    return seeds.run_m2c(text, symbol, f"{target}-{lang}", timeout=timeout, valid=valid)
+    error = None
+    if asm is not None:
+        text = asm.read_text(errors="replace", encoding="utf-8")
+        if len(text) > MAX_ASM or ".fn " in text:
+            text = _block(text, symbol)
+        try:
+            if result := seeds.run_m2c(text, symbol, f"{target}-{lang}", timeout=timeout, valid=valid):
+                return result
+        except seeds.DraftError as exc:
+            error = exc
+    if text := _object_assembly(root, platform, unit_name, symbol):
+        return seeds.run_m2c(text, symbol, f"{target}-{lang}", timeout=timeout, valid=valid)
+    if error:
+        raise error
+    return None
 
 
 def add_m2c_macros(header: Path) -> bool:
