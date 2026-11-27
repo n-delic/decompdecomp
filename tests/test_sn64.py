@@ -305,3 +305,67 @@ def test_native_cpp_builds_the_same_objects_as_cppn64(tmp_path):
         native, original = compile_source(cfg, header, source), compile_source(without, header, source)
         assert native.ok and original.ok, (native.log, original.log)
         assert built(native.obj) == built(original.obj)
+
+
+@pytest.mark.parametrize('tid', ['sn-n64-272-0001', 'sn-n64-272-0001-as0004', 'sn-n64-272-0006'])
+def test_original_sn64_uses_its_cpp_frontend_for_methods(tmp_path, tid):
+    if any(toolchains.installed(t) is None for t in (tid, 'wibo', 'psyq-obj-parser')):
+        pytest.skip('needs the accepted SN64 compiler and pinned tools')
+    if not (toolchains.require(tid) / 'cc1pln64.exe').is_file():
+        pytest.skip('the C++ frontend is absent; reinstall the pinned compiler pack')
+    cfg = compiler_config(tmp_path, {'compiler': {'toolchain': tid}})
+    assert cfg.cplusplus
+    c = compile_source(cfg, '', 'int probe(int a,int b){return a+b;}')
+    assert c.ok and c.language == 'c', c.log
+    assert extract_function(c.obj, 'probe').code == bytes.fromhex('03e0000800851021')
+    cpp = compile_source(cfg, '', '#ifndef __cplusplus\n#error expected C++\n#endif\n'
+                         'class Counter { public: int value; int next(); }; '
+                         'int Counter::next(){return ++value;}')
+    assert cpp.ok and cpp.language == 'c++', cpp.log
+    code = bytes.fromhex('8c8200002442000103e00008ac820000')
+    assert extract_function(cpp.obj, 'next__7Counter').code == code
+    from decompnet.rom.match import RomTarget, link
+    from decompnet.rom.symbols import SymbolTable
+    verdict = link(cpp.obj, 'next__7Counter', RomTarget('next__7Counter', 0x80001000, code, []),
+                   SymbolTable([]), lambda *_: None)
+    assert verdict.exact, verdict.problems
+
+
+def test_sn64_cpp_preprocessor_defines_the_cpp_language(tmp_path, monkeypatch):
+    tools = {name: tmp_path / name for name in ('cc1pln64.exe', 'cpp', 'assembler', 'converter', 'runner')}
+    for path in tools.values():
+        path.touch()
+    source = tmp_path / 'unit.cpp'
+    source.write_text('class Counter {};')
+    output = tmp_path / 'unit.o'
+    calls = []
+    def run(argv, **kwargs):
+        calls.append(argv)
+        path = Path(argv[argv.index('-o') + 1])
+        path.write_bytes(b'\x7fELF\x01\x02' if argv[0] == str(tools['converter']) else b'.text\n')
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(subprocess, 'run', run)
+    from decompnet.consoles.n64 import sn64
+    native_checks = []
+    monkeypatch.setattr(sn64, 'native_cpp', lambda cpp, native: native_checks.append(native))
+    sn_compile(tools['cc1pln64.exe'], tools['cpp'], tools['assembler'], tools['converter'], tools['runner'],
+               source, output, tmp_path, [], native=tmp_path / 'native-cpp')
+    assert native_checks == [None]  # the native preprocessor was validated only on C
+    assert '-D__cplusplus=1' in calls[0] and '-D_LANGUAGE_C_PLUS_PLUS' in calls[0]
+    assert '-D_LANGUAGE_C' not in calls[0]
+
+
+def test_sn64_driver_selects_frontend_from_source_extension(tmp_path, monkeypatch):
+    import sys
+
+    from decompnet.consoles.n64 import sn64
+
+    selected = []
+    monkeypatch.setattr(sn64, 'compile_source', lambda cc, *args: selected.append(cc))
+    for suffix in ('c', 'cpp'):
+        monkeypatch.setattr(sys, 'argv', ['sn64.py', '--cc', '/tools/cc1n64.exe', '--cxx', '/tools/cc1pln64.exe',
+                                       '--cpp', '/tools/cppn64.exe', '--assembler', '/tools/asn64.exe',
+                                       '--converter', '/tools/converter', '--runner', '/tools/wibo',
+                                       str(tmp_path / f'unit.{suffix}'), str(tmp_path / 'unit.o'), str(tmp_path)])
+        sn64.main()
+    assert selected == [Path('/tools/cc1n64.exe'), Path('/tools/cc1pln64.exe')]
