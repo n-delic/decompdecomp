@@ -5,8 +5,18 @@ import pytest
 
 from decompnet import consoles
 from decompnet.app.engine import RomNetwork
-from decompnet.forks.assembly_evidence import dispatches
+from decompnet.forks.assembly_evidence import dispatches, padding_only
 from tests.mips_elf_fixture import linked_object
+
+
+def test_lone_nop_is_deferred_as_possible_padding(tmp_path):
+    obj = tmp_path / 'target.o'
+    obj.write_bytes(linked_object('entry', 0x80001000, bytes.fromhex('00000000')))
+    assert padding_only(obj)
+    obj.write_bytes(linked_object('entry', 0x80001000, bytes.fromhex('03e0000800000000')))
+    assert not padding_only(obj)
+    obj.write_bytes(b'not an object')
+    assert not padding_only(obj)
 
 
 @pytest.mark.parametrize('body, expected', [
@@ -126,3 +136,8 @@ def test_reference_rejects_relocations(tmp_path):
     subprocess.run([str(assembler), '-EB', '-32', '-mips3', '-o', str(obj), str(source)],
                    capture_output=True, check=True)
     assert dispatches(consoles.get('n64'), tmp_path, obj) == {}
+    source.write_text('.text\n.set noreorder\n.globl entry\n.ent entry\nentry:\n'
+                      'nop\n.end entry\n.reloc entry, R_MIPS_32, external\n')
+    subprocess.run([str(assembler), '-EB', '-32', '-mips3', '-o', str(obj), str(source)],
+                   capture_output=True, check=True)
+    assert not padding_only(obj)
