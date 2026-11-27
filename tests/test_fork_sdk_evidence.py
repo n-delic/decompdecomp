@@ -151,3 +151,48 @@ def test_sdk_proof_rejects_a_changed_unit_reference(tmp_path):
     config.write_text(json.dumps({'units': [{'name': 'unit', 'target_path': obj.name},
                                             {'name': 'unit', 'target_path': other.name}]}))
     assert not reverify(console, tmp_path, 'unit', 'sample', 12, proof)
+
+
+def test_autopilot_prepares_game_units_but_not_verified_sdk_units(tmp_path, monkeypatch):
+    from decompnet.app.engine import RomNetwork
+    from decompnet.forks.project import ForkProject
+
+    root = tmp_path / 'project'
+    root.mkdir()
+    sdk = _object(root)
+    refs = root / '.decomp-wtf/objdiff-references'
+    (refs / 'objects').mkdir(parents=True)
+    (refs / 'asm').mkdir()
+    (refs / 'objects/sdk.o').write_bytes(sdk.read_bytes())
+    assembler = next(toolchains.path('binutils-mips').glob('*-as'))
+    game = root / 'game.s'
+    game.write_text('.text\n.set noreorder\n.globl gamefn\n.ent gamefn\ngamefn:\n'
+                    ' mfc0 $v1,$12\n jr $ra\n nop\n.end gamefn\n')
+    subprocess.run([str(assembler), '-EB', '-32', '-mips3', '-o', str(refs/'objects/game.o'), str(game)],
+                   capture_output=True, check=True)
+    (refs/'asm/sdk.s').write_text('glabel sample\n')
+    (refs/'asm/game.s').write_text('glabel gamefn\n')
+    (root/'objdiff.json').write_text(json.dumps({'units': [
+        {'name': 'sdk', 'target_path': '.decomp-wtf/objdiff-references/objects/sdk.o'},
+        {'name': 'game', 'target_path': '.decomp-wtf/objdiff-references/objects/game.o'},
+    ]}))
+    net = RomNetwork(tmp_path/'app.db', tmp_path)
+    net.forks._register('p', 'P', 'fork', root, {'kind': 'fork', 'origin': 'local',
+                         'platform': 'n64', 'ready': True}, 'x')
+    report = {'measures': {'total_functions': 2, 'matched_functions': 0, 'total_code': '24', 'matched_code': '0'},
+              'units': [{'name': 'sdk', 'functions': [{'name': 'sample', 'size': '12'}]},
+                        {'name': 'game', 'functions': [{'name': 'gamefn', 'size': '12'}]}]}
+    monkeypatch.setattr(ForkProject, 'report', lambda self: report)
+    monkeypatch.setattr(net.forks, 'start_indexing', lambda slug: None)
+    def build(self, unit, log=lambda *_: None):
+        unit.base.write_bytes(b'candidate')
+        return True, ''
+    monkeypatch.setattr(ForkProject, 'build_unit', build)
+    monkeypatch.setattr('decompnet.app.forkengine.toolchains.installed', lambda name: {'id': name})
+    ids = net.forks.autopilot_prepare('p', all_units=True, progress=lambda *args: None)
+    rows = {row['name']: row for row in net.store.all('SELECT * FROM functions')}
+    assert rows['sample']['status'] == 'asm'
+    assert rows['gamefn']['status'] == 'open' and ids == [rows['gamefn']['id']]
+    units = json.loads((root/'objdiff.json').read_text())['units']
+    assert 'source_path' not in (units[0].get('metadata') or {})
+    assert units[1]['metadata']['source_path'].endswith('game.c')

@@ -157,7 +157,8 @@ class AutopilotMixin:
             state['candidate_units'] = 0
             def candidate_progress(message, completed=0):
                 if message:
-                    state['candidate_current'] = 'Compiling the next candidate'
+                    state['candidate_current'] = ('Compiling the next candidate' if message.startswith('Preparing C candidate:')
+                                                  else message)
                 state['candidate_units'] += completed
             try:
                 ids = self.forks.autopilot_prepare(state['_fork'], all_units=True, stop=state['stop'],

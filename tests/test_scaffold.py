@@ -283,7 +283,12 @@ def test_autopilot_prepares_every_batch_and_stop_keeps_completed_units(tmp_path,
         return True, ''
     monkeypatch.setattr(fp, 'build_unit', build)
     monkeypatch.setattr('decompnet.app.forkengine.toolchains.installed', lambda tool: {'id': tool})
-    store = SimpleNamespace(all=lambda *args: [{'id': 17}])
+    def all_rows(query, *args):
+        if 'SELECT DISTINCT unit' in query:
+            return [{'unit': u['name']} for u in fp.objdiff_config()['units']
+                    if not (u.get('metadata') or {}).get('source_path')]
+        return [{'id': 17}]
+    store = SimpleNamespace(all=all_rows)
     synced = []
     fake = SimpleNamespace(get=lambda slug: ({'id': 1}, fp, {'origin': 'local', 'platform': 'n64', 'ready': True}),
                            _tree=lambda proj: SimpleNamespace(exclusive=nullcontext), _build_locks={1: nullcontext()},
@@ -293,11 +298,11 @@ def test_autopilot_prepares_every_batch_and_stop_keeps_completed_units(tmp_path,
         if count:
             stop.set()
     assert ForkEngine.autopilot_prepare(fake, 'demo', all_units=True, stop=stop, progress=progress) == [17]
-    assert len(synced) == 1
+    assert len(synced) == 2
     assert sum(bool(u.get('metadata', {}).get('autopilot_scaffold')) for u in fp.objdiff_config()['units']) == 32
     stop.clear()
     assert ForkEngine.autopilot_prepare(fake, 'demo', all_units=True, stop=stop, progress=lambda *args: None) == [17]
-    assert len(synced) == 2
+    assert len(synced) == 4
     assert sum(bool(u.get('metadata', {}).get('autopilot_scaffold')) for u in fp.objdiff_config()['units']) == 35
 
 

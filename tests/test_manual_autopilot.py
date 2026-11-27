@@ -235,7 +235,7 @@ def test_imported_autopilot_returns_before_candidate_preparation_and_can_stop(tm
     try:
         assert entered.wait(2)
         assert state['phase'] == 'preparing'
-        assert state['candidate_current'] == 'Compiling the next candidate'
+        assert state['candidate_current'] == 'Preparing candidate'
         net.stop_autopilot('game')
         assert state['stop'].is_set()
     finally:

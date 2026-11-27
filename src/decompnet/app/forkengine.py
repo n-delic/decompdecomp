@@ -3783,10 +3783,23 @@ class ForkEngine:
                 raise NetworkError("autopilot needs m2c, the draft decompiler: install it in Setup")
             from ..forks.scaffold import prepare
 
+            # Refresh exact SDK identities before deciding which source-less units need C.
+            if all_units and console.sdk_assembly_sizes and not (stop is not None and stop.is_set()):
+                if progress is not None:
+                    progress('Checking reference objects')
+                if not (stop is not None and stop.is_set()):
+                    self.sync(slug)
+            eligible = None
             while stop is None or not stop.is_set():
+                if all_units:
+                    eligible = {r['unit'] for r in self.net.project_store(slug).all(
+                        "SELECT DISTINCT unit FROM functions WHERE project_id=? AND status='nosource' "
+                        "AND COALESCE(json_extract(meta,'$.set_aside'),0)=0 "
+                        "AND json_extract(meta,'$.asm_code') IS NULL AND json_extract(meta,'$.asm_twin') IS NULL",
+                        proj['id']) if r['unit']}
                 with self._tree(proj).exclusive(), self._build_locks[proj["id"]]:
                     if all_units:
-                        made = prepare(fp, log=progress or (lambda *_: None), stop=stop)
+                        made = prepare(fp, log=progress or (lambda *_: None), stop=stop, units=eligible)
                     else:
                         made = prepare(fp)
                 if made:
@@ -3797,7 +3810,7 @@ class ForkEngine:
                     break
             rows = self.net.project_store(slug).all("SELECT id FROM functions WHERE project_id=? AND status='open' ORDER BY n_insns, id",
                                       proj["id"])
-            if not rows and not (stop is not None and stop.is_set()):
+            if not rows and eligible != set() and not (stop is not None and stop.is_set()):
                 raise NetworkError("No writable C candidates are available. This imported project's build needs C scaffolding before Autopilot can try drafts.")
             return [r["id"] for r in rows]
         # m2c reads the assembly a project keeps for its undecompiled functions. A ds-decomp project has none: its
