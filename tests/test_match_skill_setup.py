@@ -871,3 +871,48 @@ def test_a_mistyped_command_is_not_taken_as_a_project(world, word):
     with pytest.raises(SystemExit, match="not a command"):
         setup.main([word, "--home", str(home), "--repo", str(primary), "--no-sync"])
     assert not list(setup.TMP.iterdir()) and not app.creates
+
+
+def test_a_function_the_app_renamed_after_matching_is_not_a_lost_claim(world, capsys, tmp_path):
+    """The app renames a matched function; looking up the old name read as a lost claim."""
+    setup, app, home, primary = world
+
+    class Renaming:
+        def __init__(self, records):
+            self.records, self.asked = records, []
+
+        def function(self, slug, name):
+            self.asked.append(name)
+            return self.records.get(name, {"HTTP": 400})
+
+    root = tmp_path / "dd-renamed"
+    root.mkdir()
+    info = {"slug": "demo", "function": "func_80010000", "address": "0x80010000", "function_id": 5,
+            "matched_here": ["func_80010000"]}
+    setup.write_connection(root, info)
+    asking = Renaming({"0x80010000": {"id": 5, "name": "fixedSqrt", "status": "matched"}})
+    assert setup.renew_once(root, dict(info), asking, None, time.time()) == "matched"
+    saved = json.loads((root / "connection.json").read_text())
+    assert saved["function"] == "fixedSqrt" and "fixedSqrt" in saved["matched_here"]
+    assert setup.claimlost.read(root)["ours"] and not setup.claimlost.warning(root)
+
+    # another function at the same address (an overlay) is not taken for this one
+    setup.write_connection(root, info)
+    shared = Renaming({"0x80010000": {"id": 9, "name": "overlayThing", "status": "open"},
+                       "func_80010000": {"id": 5, "name": "func_80010000", "status": "open"}})
+    assert setup.look_up(root, shared, dict(info))[1] == "func_80010000"
+    assert json.loads((root / "connection.json").read_text())["function"] == "func_80010000"
+
+
+def test_the_address_is_recorded_for_the_claimed_function(monkeypatch):
+    setup = load("setup")
+
+    class App:
+        def __init__(self, home):
+            pass
+
+        def function(self, slug, name):
+            return {"id": 5, "name": name, "vram": 0x80010000}
+
+    monkeypatch.setattr(setup.judge, "App", App)
+    assert setup.identity("home", "demo", "func_80010000") == {"address": "0x80010000", "function_id": 5}

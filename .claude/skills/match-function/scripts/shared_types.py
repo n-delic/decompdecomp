@@ -18,8 +18,9 @@ doesn't define. Without `--apply` that is all (a proposal); `--apply` appends it
 The app itself then refuses the edit if any already-matched function stops matching with the new header (its regression
 compiles run before the header changes), and says which; keep the declaration in your candidate then.
 
-Read through, and a write sent over, the MCP connection of a `setup.py SLUG` session (the only one for SLUG, or
-`--holder`): a write, so `--apply` is the only thing here that changes the project. Never writes without it.
+Read through, and a write sent over, the MCP connection of a `setup.py SLUG` session (the
+only one for SLUG; with several sessions open pass `--holder NAME`, your own session's):
+a write, so `--apply` is the only thing here that changes the project. Never writes without it.
 """
 import argparse
 import re
@@ -316,7 +317,8 @@ def main(argv=None, gateway=None):
             p.add_argument("--full", action="store_true", help="print the whole header")
         p.add_argument("--function", default="", help="the function whose header it is (needed when each source file has its own)")
         p.add_argument("--file", default="", help="a project of a public decomp: the header file's path in the project")
-        p.add_argument("--holder", default="")
+        p.add_argument("--holder", default="",
+                       help="your setup.py session's holder name; needed when several sessions of SLUG are open")
     a = ap.parse_args(argv)
     if gateway is None:
         gateway, _ = setup.session_gateway(a.slug, a.holder)

@@ -10,7 +10,8 @@ the evidence and how strong it is).
     callers.py SLUG FUNC [--limit 8] [--holder H]
 
 Read-only: it changes nothing and needs no claim, but it does use the MCP connection a `setup.py SLUG` session made (the
-only one for SLUG, or `--holder`). ROM projects only (a project's callees are not stored yet). The verdict is a lead:
+only one for SLUG; with several sessions open pass `--holder NAME`, your own session's).
+ROM projects only (a project's callees are not stored yet). The verdict is a lead:
 write the result type it names, judge, and trust the judge.
 """
 import argparse
@@ -49,7 +50,8 @@ def main(argv=None, gateway=None):
     ap.add_argument("slug")
     ap.add_argument("function")
     ap.add_argument("--limit", type=int, default=8, help=f"callers to list (up to {MAX_LIMIT})")
-    ap.add_argument("--holder", default="")
+    ap.add_argument("--holder", default="",
+                    help="your setup.py session's holder name; needed when several sessions of SLUG are open")
     a = ap.parse_args(argv)
     if gateway is None:
         gateway, _ = setup.session_gateway(a.slug, a.holder)
