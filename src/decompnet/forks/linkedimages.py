@@ -52,16 +52,21 @@ def export(root: Path, populations: list[dict], *, object_writer) -> list[dict]:
             target = object_writer(name, fn['address'], image[start:end])
             body = fn.get('body')
             guards = fn.get('source_checksums') or {}
+            tools = fn.get('toolchain_checksums') or {}
             if body is not None:
                 if not guards or body != image[start:end]:
                     raise ForkError(f'{identity}/{name}: source-backed linked body does not match the image')
                 for path, digest in guards.items():
                     if hashlib.sha256(_inside(root, path).read_bytes()).hexdigest() != digest:
                         raise ForkError(f'{identity}/{name}: source changed after compilation')
+                from .toolchain_evidence import snapshot
+                if any(snapshot(tid) != digest or not digest for tid, digest in tools.items()):
+                    raise ForkError(f'{identity}/{name}: compiler changed after compilation')
             entry = {'name': f'images/{identity}/{name}',
                      'target_path': str((work / identity / f'{name}.target.o').relative_to(root)),
                      'metadata': {'progress_population': pop['label'], 'linked_image': True,
                                   'source_checksums': guards,
+                                  'toolchain_checksums': tools,
                                   'original_source': fn.get('source')}}
             if body is not None:
                 entry['base_path'] = str((work / identity / f'{name}.base.o').relative_to(root))
@@ -80,9 +85,8 @@ def export(root: Path, populations: list[dict], *, object_writer) -> list[dict]:
 
 def stale(root: Path, unit: dict, cache: dict) -> bool:
     """Do not award a match to a stale source-backed image snapshot."""
-    guards = (unit.get('metadata') or {}).get('source_checksums')
-    if not guards:
-        return False
+    metadata = unit.get('metadata') or {}
+    guards = metadata.get('source_checksums') or {}
     for path, expected in guards.items():
         if path not in cache:
             try:
@@ -90,6 +94,13 @@ def stale(root: Path, unit: dict, cache: dict) -> bool:
             except OSError:
                 cache[path] = None
         if cache[path] != expected:
+            return True
+    from .toolchain_evidence import snapshot
+    for name, expected in (metadata.get('toolchain_checksums') or {}).items():
+        key = ('toolchain', name)
+        if key not in cache:
+            cache[key] = snapshot(name)
+        if not expected or cache[key] != expected:
             return True
     return False
 

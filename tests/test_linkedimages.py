@@ -115,3 +115,51 @@ def test_individual_diff_invalidates_stale_candidate(tmp_path, monkeypatch):
     (tmp_path/'source.c').write_text('changed')
     project.diff(project.unit(entries[0]['name']), 'f')
     assert seen[-1] is None
+
+
+def test_linked_image_invalidates_when_compiler_or_dependency_changes(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from decompnet.forks import toolchain_evidence
+
+    packs = tmp_path/'packs'
+    for name in ('compiler', 'headers'):
+        (packs/name).mkdir(parents=True)
+        (packs/name/'tool').write_bytes(name.encode())
+    def spec(name):
+        return SimpleNamespace(id=name, cc=[], flags=[], cmd=[], prelude='', intrinsics='', driver='',
+                               source_extension='c', cplusplus=False, runtime_from='', wine=False,
+                               via_vm=False, via_wsl=False, requires=['headers'] if name == 'compiler' else [],
+                               optional=['optional'] if name == 'compiler' else [])
+    monkeypatch.setattr(toolchain_evidence.toolchains, 'get', spec)
+    monkeypatch.setattr(toolchain_evidence.toolchains, 'path', lambda name: packs/name)
+    monkeypatch.setattr(toolchain_evidence.toolchains, 'root', lambda: packs)
+    monkeypatch.setattr(toolchain_evidence.toolchains, 'installed', lambda name: {} if (packs/name).is_dir() else None)
+    snapshot = toolchain_evidence.snapshot('compiler')
+    assert snapshot
+    pop = population(tmp_path)
+    pop['functions'][0]['toolchain_checksums'] = {'compiler': snapshot}
+    entries = linkedimages.export(tmp_path, [pop], object_writer=linked_object)
+    assert not linkedimages.stale(tmp_path, entries[0], {})
+    (packs/'headers'/'tool').write_bytes(b'changed')
+    assert linkedimages.stale(tmp_path, entries[0], {})
+    with pytest.raises(ForkError, match='compiler changed'):
+        linkedimages.export(tmp_path, [pop], object_writer=linked_object)
+    (packs/'headers'/'tool').write_bytes(b'headers')
+    assert not linkedimages.stale(tmp_path, entries[0], {})
+    (packs/'optional').mkdir()
+    (packs/'optional'/'tool').write_bytes(b'now installed')
+    assert linkedimages.stale(tmp_path, entries[0], {})
+    (packs/'optional'/'tool').unlink()
+    (packs/'optional').rmdir()
+    (packs/'compiler'/'link').symlink_to(packs/'headers'/'tool')
+    assert toolchain_evidence.snapshot('compiler') is None
+    assert linkedimages.stale(tmp_path, entries[0], {})
+
+
+def test_toolchain_only_guard_does_not_accept_a_missing_compiler(tmp_path, monkeypatch):
+    from decompnet.forks import toolchain_evidence
+
+    monkeypatch.setattr(toolchain_evidence, 'snapshot', lambda _: None)
+    unit = {'metadata': {'toolchain_checksums': {'compiler': 'previously-verified'}}}
+    assert linkedimages.stale(tmp_path, unit, {})
