@@ -280,6 +280,24 @@ def search(net, proj, fn, source: str, settings, first: Measure, budget: int):
     return source, current, compiles
 
 
+ZERO_ARMS = 3   # compiles the later-arm comparisons may spend after the literal search
+
+
+def zero_arms(net, proj, fn, source: str, settings, current: Measure):
+    """(source, measure, compiles): the donor's later `else if (v == K)` arms comparing with zero instead, kept only
+    when the compiler gives the target exactly. The two differ in instruction count (a reload and `beqz` against a
+    loaded constant and `beq`), so no search over aligned immediates sees it (a twin matched this way was 1200 off
+    with its donor's profile and renamed symbols)."""
+    from decomprepair import else_chain_compare_zero
+    compiles = 0
+    for _, child in else_chain_compare_zero.variants(source, fn['name'])[:ZERO_ARMS]:
+        compiles += 1
+        result = measure(net, proj, fn, child, settings)
+        if result is not None and result.exact:
+            return child, result, compiles
+    return source, current, compiles
+
+
 def trial(net, agent, proj, fn, source: str, settings=None, *, first: Measure | None = None,
           budget: int = SEARCH_COMPILES) -> tuple[str, str, int]:
     """(match | miss | skip, why, compiles) for `source` on the open function `fn`, built with `settings` (a
@@ -311,6 +329,9 @@ def trial(net, agent, proj, fn, source: str, settings=None, *, first: Measure | 
             return 'miss', ('did not build' + label)[:160], compiles
         source, result, searched = search(net, proj, fn, source, settings, first, budget)
         compiles += searched
+        if not result.exact:
+            source, result, zeroed = zero_arms(net, proj, fn, source, settings, result)
+            compiles += zeroed
         if not result.exact:
             # A closer C than the plain transfer, under the function's own profile, is kept as its best attempt so
             # an agent, a draft or the permuter starts from it; one with a donor's profile would mislead them.

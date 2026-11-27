@@ -237,3 +237,18 @@ def test_float_literals_built_with_lui_are_proposed_including_a_change_of_sign()
     assert lp.proposals('y = -2.5f;', [(0xC0200000, 0x3DCCCCCD)]) == [(4, 9, '0.1f')]
     assert lp.proposals('y = x -2.5f;', [(0x40200000, 0xBF800000)]) == [(7, 11, ' -1.0f')]
     assert lp.proposals('s = "2.0f"; /* 2.0f */ d = D_2f + 2.0;', [(0x40000000, 0x40400000)]) == []
+
+
+def test_a_later_arm_compared_with_zero_is_tried_when_the_literal_search_ends_inexact(monkeypatch):
+    source = 'void f(int a) { if (v == 4) { a = 1; } else if (v == 1) { a = 2; } }'
+
+    def measure(net, proj, fn, text, settings=None):
+        exact = 'else if (v == 0)' in text
+        return lp.Measure(exact, 0 if exact else 100, b'', set(), 0 if exact else 1 << 20)
+
+    monkeypatch.setattr(lp, 'measure', measure)
+    first = measure(None, None, None, source)
+    child, result, compiles = lp.zero_arms(None, {}, {'name': 'f'}, source, None, first)
+    assert result.exact and compiles == 1 and 'else if (v == 0)' in child
+    unchanged = 'void f(int a) { a = 1; }'
+    assert lp.zero_arms(None, {}, {'name': 'f'}, unchanged, None, first) == (unchanged, first, 0)
