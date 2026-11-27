@@ -189,3 +189,16 @@ def test_same_address_banks_get_distinct_segment_names(tmp_path, monkeypatch):
             if isinstance(row, dict) and row.get('type') == 'code']
     assert len(rows) == 2 and len({row['name'] for row in rows}) == 2
     assert all(row['subsegments'][0][2] == row['name'] for row in rows)
+
+
+def test_tiny_observed_fragments_join_the_corroborated_runtime_bank():
+    image, _ = fixture()
+    old = (0, 0x5000, 0x80040000)
+    observed = [(0, 4, 0x80100000), (4, 8, 0x80100004), (8, 0x4000, 0x80100008)]
+    mapped, changed = inferred_overlays.runtime_mappings(image, [old], observed)
+    assert mapped == [(0, 0x4000, 0x80100000), (0x4000, 0x5000, 0x80044000)]
+    assert changed == {0}
+    # Conflicting observations cannot supply a mapping for the small fragment.
+    observed.append((0, 4, 0x80200000))
+    mapped, _ = inferred_overlays.runtime_mappings(image, [old], observed)
+    assert mapped[0] == (0, 4, 0x80040000)

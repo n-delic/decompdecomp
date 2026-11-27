@@ -175,8 +175,33 @@ def runtime_mappings(image, found, ranges, taken=()):
             else:
                 parts.append((start,end,old))
         if corrected:
-            result.extend(parts)
-            changed.update(corrected)
+            # Overlapping RAM observations can cut a corrected bank into tiny
+            # pieces. Carry its independently corroborated mapping into a
+            # neighbouring fragment only when RAM observed that same mapping.
+            verified = set(corrected)
+            while True:
+                extended = False
+                for index, (start, end, address) in enumerate(parts):
+                    if start in verified or end-start >= 128:
+                        continue
+                    candidates = {base+start-first for first,last,base in evidence if first <= start < end <= last}
+                    neighbours = [parts[j] for j in (index-1, index+1) if 0 <= j < len(parts)
+                                  and parts[j][0] in verified]
+                    matches = {start+other[2]-other[0] for other in neighbours} & candidates
+                    if len(candidates) == 1 and len(matches) == 1:
+                        parts[index] = (start, end, matches.pop())
+                        verified.add(start)
+                        extended = True
+                if not extended:
+                    break
+            merged = []
+            for start, end, address in parts:
+                if merged and merged[-1][1] == start and merged[-1][2]-merged[-1][0] == address-start:
+                    merged[-1] = (merged[-1][0], end, merged[-1][2])
+                else:
+                    merged.append((start, end, address))
+            result.extend(merged)
+            changed.update(start for start,end,_ in merged if any(start <= item < end for item in verified))
         else:
             result.append((lo,hi,vram))
     return result, changed
