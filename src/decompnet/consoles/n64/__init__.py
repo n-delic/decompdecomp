@@ -12,6 +12,7 @@
 - indexed_runtime_code.py: executable archive members mapped at their declared runtime addresses.
 - level_overlay_table.py: shared-slot level banks and adjacent helpers verified from loader instructions.
 - inferred_overlays.py: overlapping code-bank mappings supported by independently called local entries.
+- reloc_fragments.py: text and linked addresses from consecutive relocation-section fragments.
 - inline_data.py: verified constants and alignment bytes embedded among code.
 - boot_gzip.py, boot_raw_deflate.py, boot_brs.py, boot_refpack.py, boot_rnc2.py: compressed programs placed by the boot loader.
 - boot_mapping.py: returning TLB boot stubs separated from code with a strongly supported later load mapping.

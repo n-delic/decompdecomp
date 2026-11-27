@@ -306,6 +306,7 @@ class ImportMixin:
                     description=f"{info['game_code']} · {info['region']} · {len(res.functions)} functions",
                     arch=console.arch,big_endian=picked.big_endian,root=workdir,config=cfg,
                     existing=reimport["id"] if reimport is not None else None) as (db,pid):
+                same_analysis = False
                 if reimport is None:
                     old_functions, gone, old_names, old_types = {}, {}, [], {}
                 else:
@@ -318,11 +319,43 @@ class ImportMixin:
                                and old_counts[r['vram']] == new_counts[r['vram']] == 1}
                     by_unit = {(r['unit'], r['vram']): r for r in rows}
                     by_name = {r["name"]: r for r in rows}
+                    # An improved overlay mapping can move a function's VRAM while its original image bytes
+                    # stay put. Reserve such matches by unique ROM offset before an unrelated function at the old
+                    # virtual address can take their identity. Only identical analysis images and entry bytes
+                    # are safe; changed extents are judged again. A name used by other code cannot be retained.
                     old_functions = {}
-                    for fn in res.functions:
-                        old = by_unit.get((fn.segment, fn.vram)) or by_name.get(fn.name) or by_vram.get(fn.vram)
-                        if old is not None and old["id"] not in {o["id"] for o in old_functions.values()}:
+                    used_ids = set()
+                    blocked_ids = set()
+                    old_image = json.loads(reimport['config']).get('rom', {}).get('analysis_sha1')
+                    same_analysis = bool(old_image and old_image == analysis_sha1)
+                    if same_analysis:
+                        old_offsets = Counter(r['rom_offset'] for r in rows if r['rom_offset'] is not None)
+                        new_offsets = Counter(fn.rom for fn in res.functions)
+                        by_offset = {r['rom_offset']: r for r in rows if r['rom_offset'] is not None
+                                     and old_offsets[r['rom_offset']] == new_offsets[r['rom_offset']] == 1}
+                        order = 'big' if picked.big_endian else 'little'
+                        for fn in res.functions:
+                            old = by_offset.get(fn.rom)
+                            if (old is None or old['vram'] == fn.vram or not old['target'] or not fn.lines
+                                    or old['target'][:4] != fn.lines[0].word.to_bytes(4, order)):
+                                continue
+                            if old['name'] in symbols.by_name and old['name'] != fn.name:
+                                # The old name now belongs to different code. Keep its saved C in notes rather
+                                # than silently assigning it to that code or creating a duplicate function name.
+                                blocked_ids.add(old['id'])
+                                continue
                             old_functions[fn.name] = old
+                            used_ids.add(old['id'])
+                            if old['name'] != fn.name:
+                                symbols.add(Symbol(old['name'], fn.vram, fn.size, 'func'), alias=True, reindex=False)
+                    for fn in res.functions:
+                        if fn.name in old_functions:
+                            continue
+                        old = by_unit.get((fn.segment, fn.vram)) or by_name.get(fn.name) or by_vram.get(fn.vram)
+                        if (old is not None and old['id'] not in used_ids | blocked_ids
+                                and (not same_analysis or old['rom_offset'] is None or old['rom_offset'] == fn.rom)):
+                            old_functions[fn.name] = old
+                            used_ids.add(old['id'])
                     paired = {o["id"] for o in old_functions.values()}
                     gone = {r["name"]: r for r in rows if r["id"] not in paired}
                     # the names agents gave (functions and data), every one: matched C calls them by those names
@@ -349,6 +382,9 @@ class ImportMixin:
                         lost.append(name)
                         db.execute("INSERT INTO notes(project_id,function_id,text,created_at) VALUES(?,NULL,?,?)",
                                    (pid, f"[{name} before reimport: it matched with this C]\n{old['matched_source']}", now))
+                    elif old['best_source']:
+                        db.execute("INSERT INTO notes(project_id,function_id,text,created_at) VALUES(?,NULL,?,?)",
+                                   (pid, f"[{name} before reimport: best saved attempt]\n{old['best_source']}", now))
                     db.execute("DELETE FROM functions WHERE id=?", (old["id"],))
                 if lost:
                     log(f"{len(lost)} matched function(s) aren't in the new split at their address: "
@@ -366,7 +402,7 @@ class ImportMixin:
                     old = old_functions.get(fn.name)
                     target_meta = console.function_target_meta(fn)
                     previous_meta = json.loads(old['meta'] or '{}') if old is not None else {}
-                    same_target = (old is not None
+                    same_target = (old is not None and old['vram'] == fn.vram
                                    and all(previous_meta.get(key) == value for key, value in target_meta.items()) and old["target"] == target.code
                                    and json.loads(old["relocs"] or "[]") == target.to_json())
                     asm = console.function_asm(fn)
@@ -454,21 +490,31 @@ class ImportMixin:
                             db.execute("DELETE FROM claims WHERE function_id=?", (old["id"],))
                         preserved += old["status"] == "matched" and bool(old["matched_source"])
                     else:
-                        if (old is not None and old["status"] == "matched" and old["matched_source"]
-                                and old["target"] == target.code):
-                            # Same bytes, other relocations (a newer reader annotates more references): the C
-                            # may still match, so it's judged again after the import instead of being dropped.
-                            rejudge.append((old["name"], old["matched_source"], old["matched_agent_id"]))
+                        source = agent_id = None
+                        if (old is not None and (old['target'] == target.code
+                                or same_analysis and old['rom_offset'] == fn.rom)):
+                            # Judge saved C against corrected addresses, extents or references instead of
+                            # retaining a stale verdict. Save it before judging so interruption cannot lose it.
+                            source = old['matched_source'] if old['status'] == 'matched' else (
+                                old['best_source'] if same_analysis or old['vram'] != fn.vram else None)
+                            if source:
+                                agent_id = old['matched_agent_id'] if old['status'] == 'matched' else old['best_agent_id']
+                                rejudge.append((old['name'], source, agent_id))
+                        if not source and (saved := old['matched_source'] or old['best_source']):
+                            # A different image or entry can no longer be judged as this function, but the
+                            # user's source is still useful; never erase it when replacing the target.
+                            db.execute('INSERT INTO notes(project_id,function_id,text,created_at) VALUES(?,?,?,?)',
+                                       (pid, old['id'], f"[{old['name']} before reimport: saved C]\n{saved}", now))
                         for table in ("claims", "attempts", "twin_misses"):
                             db.execute(f"DELETE FROM {table} WHERE function_id=?", (old["id"],))
                         db.execute(
                             "UPDATE functions SET size=?,n_insns=?,target=?,relocs=?,asm=?,seed=NULL,unit=?,vram=?,"
-                            "rom_offset=?,meta=?,status=?,best_score=NULL,best_source=NULL,best_agent_id=NULL,"
+                            "rom_offset=?,meta=?,status=?,best_score=?,best_source=?,best_agent_id=?,"
                             "matched_source=NULL,matched_agent_id=NULL,matched_at=NULL,attempts=0,"
                             "last_checked=NULL,last_improved=NULL,abandons=0,"
                             "fingerprint=NULL,boost=0,readable=0,permuted=0,seed_key=NULL WHERE id=?",
                             (fn.size, n_insns, target.code, relocs, asm, unit, fn.vram, fn.rom, meta, status,
-                             old["id"]))
+                             max(1, n_insns)*100 if source else None, source, agent_id, old["id"]))
                 previews = {r[1]: r[4] for r in data_rows}
                 named = set()
                 for addr, name, size, kind in old_names:
@@ -568,12 +614,10 @@ class ImportMixin:
         return {"slug": slug, "functions": counts["functions"], "matched": counts["matched"] or 0}
 
     def _judge_kept_matches(self, slug: str, kept: list, log) -> None:
-        """Judge again the matched C of functions whose bytes a reimport left alone but whose relocations it read
-        anew (a newer reader annotates references an older one left as numbers). A reimport used to drop that C:
-        234 matches of a racing game went at once. Each one that still matches keeps its helper's credit."""
+        """Judge saved C again after an address, extent or reference changes; keep it if interrupted or rejected."""
         if not kept:
             return
-        log(f"judging {len(kept)} matched function(s) again: same code, references read anew")
+        log(f"judging {len(kept)} saved function(s) again: addresses, extents or references changed")
         check_cancel = getattr(log, "check_cancel", lambda: None)
         pid = self._project(slug)["id"]
         matched = 0

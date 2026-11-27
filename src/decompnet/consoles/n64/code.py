@@ -22,6 +22,7 @@ Majora's Mask's). Such code is unpacked and appended to a working copy of the RO
 from __future__ import annotations
 
 import collections
+import json
 import re
 import struct
 import zlib
@@ -683,6 +684,34 @@ def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_rep
         scoped = safe
     if runtime and scoped:
         log(f'Corrected {len(runtime)} inferred code ranges using RAM-observed bytes and their internal calls.')
+    # A run of relocation-section files can be mistaken for one continuous
+    # linked image: each trailer shifts the next file's ROM-to-VRAM mapping.
+    # Use exact trailer extents and relocation-backed calls, preserving any
+    # ranges whose mapping cannot yet be proven.
+    if not packed and taken:
+        from . import reloc_fragments
+        records = reloc_fragments.discover(rom, taken, getattr(log, 'check_cancel', lambda: None))
+        if records:
+            corrected = reloc_fragments.replace(found, records)
+            overlaps = {start for start, end, base in corrected for other, stop, address in corrected
+                        if start != other and base < address+stop-other and address < base+end-start}
+            corrected_scopes = inferred_overlays.safe_scopes(
+                corrected, overlaps | {start for start, _, _ in corrected if start in scoped}, taken)
+            if corrected_scopes is not None:
+                unknown = sum(base is None and text > 0 and any(lo < start+text and start < hi for lo, hi, _ in found)
+                              for start, _, text, base in records)
+                found, scoped = corrected, corrected_scopes
+                mapped = sum(base is not None for _, _, _, base in records)
+                log(f'Recovered {len(records)} relocation-backed fragments, including {mapped} independently linked addresses.')
+                if unknown:
+                    message = (f'{unknown} relocation-backed fragments retain inferred code addresses without '
+                               'enough independent calls to verify their linked bases; coverage needs review.')
+                    log(message)
+                    coverage = workdir/'analysis-coverage.json'
+                    notes = json.loads(coverage.read_text(encoding='utf-8')) if coverage.is_file() else []
+                    coverage.write_text(json.dumps(list(dict.fromkeys([*notes, message]))), encoding='utf-8')
+            else:
+                log('Kept the original code mappings: relocation-backed fragments conflict with resident code.')
     insert_segments(config, cfg, found, len(rom))
     if scoped:
         cfg = yaml.safe_load(config.read_text(encoding='utf-8'))
