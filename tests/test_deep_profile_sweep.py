@@ -43,3 +43,24 @@ def test_probes_stop_at_the_first_exact_match(monkeypatch):
     search = SimpleNamespace(net=_net(usage), phase='x', log=logs.append, check=lambda: None, limit=10, tested=0)
     assert sweep.run(search, None, {}, FN, 'int f(){}') is True
     assert seen == ['b'] and search.phase == 'x'
+
+
+def test_a_bounded_run_leaves_its_reserve_for_the_targeted_repairs(monkeypatch):
+    """A handoff's 6 compiles went wholly to other compilers, so a saved best of 15 never reached its one-step repair."""
+    _patch(monkeypatch, {})
+    seen = []
+    def probe(s, a, p, f, src, profile):
+        seen.append(profile['toolchain'])
+        s.tested += 1
+    monkeypatch.setattr(sweep.deep_profiles, 'probe', probe)
+    usage = [{'toolchain': t, 'flags': [], 'matched': 1} for t in 'abcdefg']
+    search = SimpleNamespace(net=_net(usage), phase='x', log=lambda text: None, check=lambda: None, limit=6, tested=0,
+                             local_reserve=3)
+    sweep.run(search, None, {}, FN, 'int f(){}')
+    assert len(seen) == 3
+
+
+def test_a_bounded_search_reserves_half_its_allowance_and_a_full_one_none():
+    from decompnet.app import deep_permuter
+    assert deep_permuter.Search(SimpleNamespace(), 1, 6, lambda text: None).local_reserve == 3
+    assert deep_permuter.Search(SimpleNamespace(), 5, 750, lambda text: None).local_reserve == 0

@@ -53,6 +53,11 @@ def profiles(net, proj, fn):
     return [p for p in chosen if _key(p) != _key(own) and _ready(p['toolchain'])][:MAX_PROFILES]
 
 
+def spare(search):
+    """Compiles the sweep may still spend: a bounded run's reserve (Search.local_reserve) is left for the targeted repairs."""
+    return search.limit - search.tested - getattr(search, 'local_reserve', 0)
+
+
 def run(search, agent, proj, fn, source):
     """True when one of them matched the saved C exactly (applied, or an error says what it waits for). For a
     near-match the sweep is compiler detection too (profile_detection): every installed profile of the console, the
@@ -75,7 +80,7 @@ def run(search, agent, proj, fn, source):
         """True on an exact pair; the scores go to `scores`."""
         for profile in profiles:
             search.check()
-            if search.limit - search.tested <= 0:
+            if spare(search) <= 0:
                 if detecting:
                     search.log(f'Compiler detection stopped after {len(scores)} profile(s): the compile allowance '
                                'is spent. A later pass tries the rest.')
@@ -88,17 +93,17 @@ def run(search, agent, proj, fn, source):
     try:
         if sweep(chosen):
             return True
-        if detecting and search.limit - search.tested > 0:
+        if detecting and spare(search) > 0:
             # (the saved C scored worse under another `-G` alone, but its small externs may need declaring as arrays too)
             own = compiler_for(search.net.cfg(proj), fn['vram'], fn)
             for profile, child in profile_detection.small_data_pairs(search.net, proj, fn, own):
                 search.check()
-                if search.limit - search.tested <= 0:
+                if spare(search) <= 0:
                     break
                 search.log(f"Trying {profile_detection.settings(profile)} with the small externs declared as arrays.")
                 if deep_profiles.probe(search, agent, proj, fn, child, profile) == 0:
                     return True
-        if (detecting and search.limit - search.tested > 0
+        if (detecting and spare(search) > 0
                 and (lead := profile_detection.refine_lead(search.net, proj, fn, scores, reasons)) is not None):
             # (the toolchain the evidence or the scores point to, with its other flag sets: SN's own default flags
             # weren't the game's)

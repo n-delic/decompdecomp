@@ -55,6 +55,7 @@ RANDOM_TRIAL_WINDOW = 64
 DRAFT_RESTART_TRIALS = 24  # candidates a stalled function's draft chain may judge in one search
 RANDOM_SECONDS_WINDOW = 30
 LOCAL_PAUSES = {'phase_budget', 'burst_budget'}
+BOUNDED_RUN = 40  # an allowance below this many compiles is a handoff's: Search.local_reserve
 # A function that comes back to the deep search again and again with no improvement (deep_sweep records its
 # `stalled_passes`) gets a wider pair search: each such pass adds STALL_STEP of the base width, at most STALL_MAX
 # passes' worth (x3). Pair search found the most matches per compile-second on a 1,200-match PS1 project (18 matches
@@ -155,6 +156,10 @@ class Search(Permuter):
         self.deadline = self.started_at+self.seconds
         self.limit = self.random_trial_limit = max_variants
         self.base_seconds, self.base_limit = self.seconds, max_variants
+        # A bounded run (the handoff after an agent releases a function: 6 or 12 compiles) keeps half its allowance for
+        # the targeted repairs: the compiler preflight and the profile sweep used to spend all of it before they began
+        # (a saved best of 15 got 6 compiles, every one on other compilers, and its one-step repair was never tried).
+        self.local_reserve = max_variants // 2 if max_variants < BOUNDED_RUN else 0
         self.extensions = 0
         self.pair_scale = 1.0  # x the pair search's width (escalate)
         # A caller that caps the run (release repairs, maintenance tasks) owns its budget and gets no more.
@@ -428,7 +433,7 @@ class Search(Permuter):
         self.phase = 'compiler preflight'
         try:
             self.report()
-            result = run(self.net, proj, fn, self.log, self.check, max_profiles=self.limit-self.tested)
+            result = run(self.net, proj, fn, self.log, self.check, max_profiles=self.limit-self.tested-self.local_reserve)
         finally:
             self.phase = previous
         self.tested += result['tested']
