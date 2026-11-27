@@ -328,13 +328,15 @@ def current_name(source, name, vram):
 
 
 def generator(judge, name):
-    from decompnet.app import draft_repairs
+    from decompnet.app import draft_repairs, repair_asm
     vram = (getattr(judge, "request", None) or {}).get("function", {}).get("vram")
 
     def generate(source):
         source = current_name(source, name, vram)
         labels = {}
-        texts = draft_repairs.variants(source, name, judge.arch, judge.asm, judge.compiler["flags"], labels,
+        # as the app gives it to the families: callees and data under the names this source spells
+        asm = repair_asm.apply(judge.asm, getattr(judge, "asm_names", {}), source)
+        texts = draft_repairs.variants(source, name, judge.arch, asm, judge.compiler["flags"], labels,
                                        limit=None, header=judge.header, tables=getattr(judge, "tables", ()),
                                        callees=getattr(judge, "callees", ""),
                                        entry_scope=getattr(judge, "entry_scope", None),
@@ -348,7 +350,7 @@ def generator(judge, name):
         seen = {text for _, text in found}
         try:
             gated = diff_gated_repairs.proposals(
-                source, name, judge.header, judge.arch, judge.compiler.get("toolchain", ""), rows, judge.asm,
+                source, name, judge.header, judge.arch, judge.compiler.get("toolchain", ""), rows, asm,
                 jump_tables=getattr(judge, "jump_tables", ()),  # score 1 with no rows: the table's data (linked_switch_labels)
                 flags=tuple(judge.compiler["flags"]),
                 big_endian=bool(getattr(judge, "big_endian", True)))

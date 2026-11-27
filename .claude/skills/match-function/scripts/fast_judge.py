@@ -69,6 +69,7 @@ class Judge:
                         DECOMP_WINDOW="0", DECOMP_TRAY="0")
         self.proc = None
         self.header, self.arch, self.asm = "", "mips", ""
+        self.asm_names = {}  # the assembly's renamed symbols (repair_asm.apply)
         self.big_endian = True
         self.tables, self.callees, self.entry_scope = [], "", None
         self.words = {}
@@ -80,6 +81,7 @@ class Judge:
             flags = flags if flags is not None else info["compiler"]["flags"]
             flags = flags.split() if isinstance(flags, str) else flags
             self.header, self.arch, self.asm = info.get("header") or "", info.get("arch") or "mips", info.get("asm") or ""
+            self.asm_names = info.get("asm_names") or {}
             self.big_endian = bool(info.get("big_endian", True))
             self.tables = [(low, list(targets)) for low, targets in info.get("tables") or []]
             self.callees, self.entry_scope = info.get("callees") or "", info.get("entry_scope") or None

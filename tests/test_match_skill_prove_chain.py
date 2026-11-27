@@ -275,3 +275,21 @@ def test_merges_and_lookahead_children_count_against_the_cap():
                           max_judged=cap, log=lines.append)
         assert len(judged) <= 1 + cap
         assert any(f"cap of {cap} judged variants" in line and "lookahead" in line for line in lines), lines
+
+
+def test_the_generator_gives_the_families_the_assembly_under_the_sources_names(monkeypatch):
+    """The app's families pair the C's calls with the target's `jal`s (#4304): a renamed callee must read the same."""
+    from types import SimpleNamespace
+
+    from decompnet.app import diff_gated_repairs, draft_repairs
+    seen = []
+    monkeypatch.setattr(draft_repairs, "variants", lambda source, name, arch, asm, *a, **k: seen.append(asm) or [])
+    monkeypatch.setattr(diff_gated_repairs, "proposals",
+                        lambda source, name, header, arch, toolchain, rows, asm, **k: seen.append(asm) or [])
+    judge = SimpleNamespace(arch="mips", asm="jal func_8005BB50\n", asm_names={"func_8005BB50": "sprintf"},
+                            compiler={"flags": []}, header="", request={})
+    prove_chain.generator(judge, "f")("void f(char *b) { sprintf(b); }")
+    assert seen == ["jal sprintf\n", "jal sprintf\n"]
+    seen.clear()
+    prove_chain.generator(judge, "f")("void f(char *b) { func_8005BB50(b); }")
+    assert seen == ["jal func_8005BB50\n", "jal func_8005BB50\n"]
