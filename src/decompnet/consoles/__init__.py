@@ -526,6 +526,11 @@ class Console:
         """Exact self-contained handwritten SDK bodies only; no heuristic C exclusion."""
         return None
 
+    def sdk_relocated_assembly_identity(self, code: bytes, relocations: list[tuple[int, int, int]],
+                                        machine: str) -> dict | None:
+        """A console's verified SDK shape with its reference object's validated relocations, if supported."""
+        return None
+
     sdk_entry_stub: bool = False  # the cartridge's entry stub is SDK boot code (sdk_assembly_identity tells it by shape)
 
     sdk_linked_sizes: tuple[int, ...] = ()

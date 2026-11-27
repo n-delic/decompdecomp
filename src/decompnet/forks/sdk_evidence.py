@@ -1,4 +1,4 @@
-"""Exact self-contained SDK bodies in imported ELF reference objects."""
+"""Verified SDK identities in imported ELF reference objects."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from .reference_cache import Cache, ChangedDuringRead, read
 
 
 def identities(console, root: Path, target: Path | None) -> dict[str, dict]:
-    """Identify complete symbol bodies with no relocations; names alone never prove an SDK identity."""
+    """Identify complete SDK bodies; console-specific relocated shapes require their own proof."""
     if target is None or not console.sdk_assembly_sizes:
         return {}
     root = root.resolve()
@@ -44,10 +44,14 @@ def _identities(console, root: Path, target: Path, raw: bytes, digest: str) -> d
             table = elf.get_section_by_name('.symtab')
             if table is None:
                 return {}
-            relocs: dict[int, list[int]] = {}
+            relocs: dict[int, list[tuple[int, int, int, bool]]] = {}
             for section in elf.iter_sections():
                 if isinstance(section, RelocationSection):
-                    relocs.setdefault(section['sh_info'], []).extend(r['r_offset'] for r in section.iter_relocations())
+                    relocs.setdefault(section['sh_info'], []).extend(
+                        (int(r['r_offset']), int(r['r_info_type']), int(r['r_info_sym']),
+                         section.is_RELA() or section['sh_link'] != elf.get_section_index('.symtab')
+                         or int(r['r_info_sym']) >= table.num_symbols())
+                        for r in section.iter_relocations())
             found = {}
             duplicates = set()
             for sym in table.iter_symbols():
@@ -61,10 +65,17 @@ def _identities(console, root: Path, target: Path, raw: bytes, digest: str) -> d
                 offset = int(sym['st_value']) - section_base
                 if offset < 0 or offset + size > section['sh_size']:
                     continue
-                if any(offset <= int(r) - section_base < offset + size for r in relocs.get(index, [])):
-                    continue
                 code = section.data()[offset:offset + size]
-                identity = console.sdk_assembly_identity(code)
+                inside = [(at - section_base - offset, kind, symbol, invalid)
+                          for at, kind, symbol, invalid in relocs.get(index, [])
+                          if offset <= at - section_base < offset + size]
+                if inside:
+                    if elf['e_type'] != 'ET_REL' or any(invalid for _, _, _, invalid in inside):
+                        continue
+                    identity = console.sdk_relocated_assembly_identity(
+                        code, [(at, kind, symbol) for at, kind, symbol, _ in inside], elf['e_machine'])
+                else:
+                    identity = console.sdk_assembly_identity(code)
                 if not identity or identity.get('from_c'):
                     continue
                 if name in found:
@@ -73,7 +84,8 @@ def _identities(console, root: Path, target: Path, raw: bytes, digest: str) -> d
                                'verification_method': 'fork-sdk-digest', 'symbol': name,
                                'object_path': target.relative_to(root).as_posix(),
                                'object_sha256': digest,
-                               'evidence': 'Complete reference-object bytes match a self-contained SDK routine; no relocations.'}
+                               'evidence': (identity.get('evidence') if inside else
+                                            'Complete reference-object bytes match a self-contained SDK routine; no relocations.')}
             return {name: value for name, value in found.items() if name not in duplicates}
     except (OSError, ValueError, TypeError, KeyError, IndexError, ELFError):
         return {}

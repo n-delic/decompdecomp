@@ -63,6 +63,49 @@ def test_sdk_reference_rejects_relocations_and_non_elf(tmp_path):
     assert identities(consoles.get('n64'), tmp_path, obj) == {}
 
 
+@pytest.mark.parametrize('change', ['valid', 'missing', 'wrong_symbol', 'extra', 'wrong_instruction', 'wrong_arch'])
+def test_relocated_entry_requires_its_complete_sdk_shape_and_paired_addresses(tmp_path, change):
+    from decompnet.consoles.n64.sdk_assembly import _ENTRY_SHAPE
+
+    if toolchains.installed('binutils-mips') is None:
+        pytest.skip('needs pinned MIPS binutils')
+    assembler = next(toolchains.path('binutils-mips').glob('*-as'))
+    words = list(_ENTRY_SHAPE)
+    if change == 'wrong_instruction':
+        words[4] ^= 1
+    pairs = [(0, 'R_MIPS_HI16', 'bss'), (4, 'R_MIPS_LO16', 'bss'),
+             (8, 'R_MIPS_HI16', 'size'), (12, 'R_MIPS_LO16', 'size'),
+             (40, 'R_MIPS_HI16', 'start'), (44, 'R_MIPS_LO16', 'start'),
+             (48, 'R_MIPS_HI16', 'stack'), (56, 'R_MIPS_LO16', 'stack')]
+    if change == 'missing':
+        pairs.pop()
+    elif change == 'wrong_symbol':
+        pairs[-1] = (56, 'R_MIPS_LO16', 'start')
+    elif change == 'extra':
+        pairs.append((16, 'R_MIPS_32', 'start'))
+    source = tmp_path / 'entry.s'
+    source.write_text('.text\n.set noreorder\n.globl entry\n.ent entry\nentry:\n'
+                      + ''.join(f'.word 0x{word:08x}\n' for word in words) + '.end entry\n'
+                      + ''.join(f'.reloc entry+{at}, {kind}, {symbol}\n' for at, kind, symbol in pairs))
+    obj = tmp_path / 'entry.o'
+    subprocess.run([str(assembler), '-EB', '-32', '-mips3', '-o', str(obj), str(source)],
+                   capture_output=True, check=True)
+    if change == 'wrong_arch':
+        raw = bytearray(obj.read_bytes())
+        raw[18:20] = (20).to_bytes(2, 'big')  # EM_PPC
+        obj.write_bytes(raw)
+    found = identities(consoles.get('n64'), tmp_path, obj)
+    if change == 'valid':
+        assert found['entry']['kind'] == 'sdk'
+        assert found['entry']['name'] == 'entrypoint'
+        (tmp_path / 'objdiff.json').write_text(json.dumps({'units': [{'name': 'unit', 'target_path': obj.name}]}))
+        assert reverify(consoles.get('n64'), tmp_path, 'unit', 'entry', len(words) * 4, found['entry'])
+        obj.write_bytes(obj.read_bytes() + b'changed reference')
+        assert not reverify(consoles.get('n64'), tmp_path, 'unit', 'entry', len(words) * 4, found['entry'])
+    else:
+        assert found == {}
+
+
 def test_sdk_reference_never_reads_a_target_outside_project(tmp_path):
     root = tmp_path / 'project'
     root.mkdir()
@@ -214,6 +257,54 @@ def test_autopilot_prepares_game_units_but_not_verified_sdk_units(tmp_path, monk
     units = json.loads((root/'objdiff.json').read_text())['units']
     assert 'source_path' not in (units[0].get('metadata') or {})
     assert units[1]['metadata']['source_path'].endswith('game.c')
+
+
+def test_autopilot_defers_unresolved_functions_in_mixed_sdk_unit(tmp_path, monkeypatch):
+    from decompnet.app.engine import RomNetwork
+    from decompnet.forks.project import ForkProject
+
+    if toolchains.installed('binutils-mips') is None:
+        pytest.skip('needs pinned MIPS binutils')
+    root = tmp_path / 'project'
+    refs = root / '.decomp-wtf/objdiff-references'
+    (refs / 'objects').mkdir(parents=True)
+    (refs / 'asm').mkdir()
+    assembler = next(toolchains.path('binutils-mips').glob('*-as'))
+    for name, text in [('mixed', 'mfc0 $v0,$12'), ('game', 'addiu $v0,$a0,1')]:
+        source = root / f'{name}.s'
+        source.write_text('.text\n.set noreorder\n.globl first\n.ent first\nfirst:\n '
+                          + text + '\n jr $ra\n nop\n.end first\n'
+                          + ('.globl unknown\n.ent unknown\nunknown:\n addiu $v0,$a0,2\n jr $ra\n nop\n.end unknown\n'
+                             if name == 'mixed' else ''))
+        subprocess.run([str(assembler), '-EB', '-32', '-mips3', '-o', str(refs/f'objects/{name}.o'), str(source)],
+                       capture_output=True, check=True)
+        (refs/f'asm/{name}.s').write_text('glabel first\n')
+    (root/'objdiff.json').write_text(json.dumps({'units': [
+        {'name': name, 'target_path': f'.decomp-wtf/objdiff-references/objects/{name}.o'}
+        for name in ('mixed', 'game')]}))
+    net = RomNetwork(tmp_path/'app.db', tmp_path)
+    net.forks._register('p', 'P', 'fork', root, {'kind': 'fork', 'origin': 'local',
+                         'platform': 'n64', 'ready': True}, 'x')
+    report = {'measures': {'total_functions': 3, 'matched_functions': 0, 'total_code': '36', 'matched_code': '0'},
+              'units': [{'name': 'mixed', 'functions': [{'name': 'first', 'size': '12'},
+                                                        {'name': 'unknown', 'size': '12'}]},
+                        {'name': 'game', 'functions': [{'name': 'gamefn', 'size': '12'}]}]}
+    # Use a distinct symbol in the game report so the SDK entry is unambiguous.
+    monkeypatch.setattr(ForkProject, 'report', lambda self: report)
+    monkeypatch.setattr(net.forks, 'start_indexing', lambda slug: None)
+    def build(self, unit, log=lambda *_: None):
+        unit.base.write_bytes(b'candidate')
+        return True, ''
+    monkeypatch.setattr(ForkProject, 'build_unit', build)
+    monkeypatch.setattr('decompnet.app.forkengine.toolchains.installed', lambda name: {'id': name})
+    messages = []
+    net.forks.autopilot_prepare('p', all_units=True, progress=lambda *args: messages.append(args))
+    units = json.loads((root/'objdiff.json').read_text())['units']
+    assert 'source_path' not in (units[0].get('metadata') or {})
+    assert units[1]['metadata']['source_path'].endswith('game.c')
+    rows = {row['name']: row for row in net.store.all('SELECT * FROM functions')}
+    assert rows['first']['status'] == 'asm' and rows['unknown']['status'] == 'nosource'
+    assert any('verified SDK assembly' in str(message) for message in messages)
 
 
 def test_reference_proof_cache_uses_object_content(tmp_path, monkeypatch):
