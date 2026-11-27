@@ -132,3 +132,13 @@ def test_pointer_loader_follows_registered_shared_overlays(monkeypatch, tmp_path
     assert len({segment['name'] for segment in segments}) == 3
     stores[-1]['value'] = constant(overlay + 16)
     assert boot_gzip.find(rom, boot) == ((output, text, data),)
+
+
+def test_boot_mapping_coalesces_adjacent_fragments_only():
+    from decompnet.consoles.n64.boot_gzip import _coalesce_boot_ranges
+
+    rows = [(0x1000,0x1010,0x80000400),(0x1010,0x1030,0x80000410),
+            (0x1034,0x1040,0x80000434),(0x1040,0x1050,0x80001440)]
+    assert _coalesce_boot_ranges(rows) == [(0x1000,0x1030,0x80000400),
+                                           (0x1034,0x1040,0x80000434),
+                                           (0x1040,0x1050,0x80001440)]

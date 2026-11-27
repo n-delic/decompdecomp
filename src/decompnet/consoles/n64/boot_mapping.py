@@ -122,6 +122,46 @@ def extend_startup_trap(config: Path, rom: bytes, log=print) -> bool:
     return True
 
 
+def extend_startup_descriptor(config: Path, rom: bytes, log=print) -> bool:
+    """Keep a printable word after a terminal trap with the boot assembly."""
+    cfg = yaml.safe_load(config.read_text(encoding='utf-8'))
+    by_name = {row.get('name'): row for row in cfg['segments'] if isinstance(row, dict)}
+    entry, main = by_name.get('entry'), by_name.get('main')
+    if not entry or not main or main.get('follows_vram') != 'entry':
+        return False
+    lo, at, vram = entry['start'], main['start'], main['vram']
+    if (not 0x1000 <= lo < at-12 < at+8 < min(0x2000,len(rom))
+            or entry.get('subsegments') != [[lo,'hasm']] or main.get('subsegments') != [[at,'c','main']]
+            or entry['vram']-lo != vram-at or not all(32 <= byte < 127 for byte in rom[at:at+4])):
+        return False
+    call, delay, trap = struct.unpack_from('>3I', rom, at-12)
+    target = ((vram-12) & 0xf0000000) | ((call & 0x3ffffff) << 2)
+    if (call >> 26 != 3 or delay or trap & 0xfc00003f != 0xd or target != vram+4
+            or not is_frame(struct.unpack_from('>I',rom,at+4)[0])
+            or vram.to_bytes(4,'big') in rom):
+        return False
+    callers = set(jal_targets((word for word, in struct.iter_unpack('>I',rom[lo:at])),entry['vram']))
+    if vram in callers or vram+4 not in callers:
+        return False
+    # Do not hide an independently entered word, including a branch into it.
+    for pos in range(lo, min(len(rom), 0x10000)-3, 4):
+        word = struct.unpack_from('>I',rom,pos)[0]
+        opcode, pc = word >> 26, entry['vram'] + pos-lo
+        if opcode in (2,3):
+            destination = ((pc+4) & 0xf0000000) | ((word & 0x3ffffff) << 2)
+        elif opcode in (1,4,5,6,7,20,21,22,23) or opcode == 17 and (word >> 21) & 31 == 8:
+            delta = word & 0xffff
+            destination = pc+4+(delta-0x10000 if delta & 0x8000 else delta)*4
+        else:
+            continue
+        if destination == vram:
+            return False
+    main.update(start=at+4,vram=vram+4,subsegments=[[at+4,'c','main']])
+    config.write_text(yaml.safe_dump(cfg,sort_keys=False,default_flow_style=None),encoding='utf-8')
+    log('Kept the descriptor after the startup trap in boot assembly.')
+    return True
+
+
 def extend_startup_data(config: Path, rom: bytes, log=print) -> bool:
     """Keep the terminator of a boot data string on the data side of the split."""
     from ...arch.mips_code_recovery import called_extent

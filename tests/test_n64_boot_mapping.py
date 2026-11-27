@@ -190,3 +190,23 @@ def test_startup_trap_before_rsp_boot_is_kept_with_entry(tmp_path, verified_audi
     assert extend_startup_trap(path, image, log=lambda _: None) == verified_audio
     entry, main, *_ = segments_from_config(path)
     assert entry.rom_end == main.rom_start == (boot if verified_audio else at)
+
+
+@pytest.mark.parametrize('invalid', ['none', 'called_word', 'branched_word', 'wrong_target', 'not_text', 'no_trap'])
+def test_printable_word_after_boot_trap_precedes_called_frame(tmp_path, invalid):
+    from decompnet.consoles.n64.boot_mapping import extend_startup_descriptor
+
+    path, rom, _, _ = layout(tmp_path)
+    rom = bytearray(rom)
+    call = lambda address: 0x0c000000 | (address >> 2) & 0x3ffffff
+    target = 0x80000480 if invalid == 'wrong_target' else 0x80000484
+    struct.pack_into('>3I', rom, 0x1074, call(target), 0, 0 if invalid == 'no_trap' else 0x0001008d)
+    rom[0x1080:0x1084] = b'\x00xxx' if invalid == 'not_text' else b'next'
+    struct.pack_into('>I', rom, 0x1084, 0x27bdffe8)
+    if invalid == 'called_word':
+        struct.pack_into('>I',rom,0x1000,call(0x80000480))
+    if invalid == 'branched_word':
+        struct.pack_into('>I',rom,0x1000,0x1000001f)
+    assert extend_startup_descriptor(path,rom,log=lambda _:None) == (invalid == 'none')
+    entry, main, *_ = segments_from_config(path)
+    assert entry.rom_end == main.rom_start == (0x1084 if invalid == 'none' else 0x1080)
