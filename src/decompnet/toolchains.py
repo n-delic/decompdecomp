@@ -871,6 +871,13 @@ def _install(tid: str, *, accept_license: bool, force: bool, log, linux: bool | 
             (folder / INCLUDES).write_text("".join(f"{line}\n" for line in lines), encoding="utf-8")
         if tc.build == "psyq-obj-parser":
             _build_psyq_parser(dest, linux, log)
+        if tc.build == "sgi-inst-frontend":
+            from .consoles.n64 import sgi_frontend
+
+            try:
+                sgi_frontend.extract(dest)
+            except (OSError, ValueError, subprocess.SubprocessError) as error:
+                raise ToolchainError(f"Could not extract the MIPSpro frontend: {error}") from None
         if tc.build == "torch":
             _build_torch(dest, log)
         if tc.build == "n64recomp":

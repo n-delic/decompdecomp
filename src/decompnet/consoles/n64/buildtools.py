@@ -110,6 +110,19 @@ def _provide_sn64(project) -> None:
                 link.symlink_to(item)
 
 
+def _provide_mipspro_frontend(project) -> None:
+    """Reuse the installed frontend when a project's own setup knows this compiler layout."""
+    if not (project.root / 'tools' / 'fetch-mipspro721.sh').is_file():
+        return
+    if toolchains.installed('mipspro-7.2.1-cxx') is None:
+        return
+    source = toolchains.require('mipspro-7.2.1-cxx') / 'usr/lib/DCC/edgcpfe'
+    target = project.root / 'tools/ido-static-recomp/build/mipspro721/usr/lib/DCC/edgcpfe'
+    if source.is_file() and not target.exists() and not target.is_symlink():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.symlink_to(source)
+
+
 def _provide_compiler_dirs(project) -> None:
     """A project that expects a compiler folder it doesn't ship for this computer (tools/gcc_2.7.2/macos,
     tools/ido/7.1) gets a link to the installed one, in its own tree: the folder is never in git."""
@@ -164,6 +177,7 @@ def _provide_compiler_dirs(project) -> None:
             mine.write_text(f'#!/bin/sh\nexec "{host}" "$@"\n', encoding="utf-8")
             mine.chmod(0o755)
     _provide_sn64(project)
+    _provide_mipspro_frontend(project)
     _provide_built_ido(project, texts)
     for rel, tid in wanted:
         target = project.root / rel

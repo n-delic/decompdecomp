@@ -2360,6 +2360,26 @@ url = "https://raw.githubusercontent.com/LLONSIT/qemu-irix-helpers/n/qemu/ido6.0
 sha256 = "c56d4be020bdaf76310ceec455ebc0d443fb7a46c740491f74898b04f6a60356"
 platforms = ["linux-x86_64"]
 
+["mipspro-7.2.1-cxx"]
+name = "MIPSpro 7.2.1 C++ frontend"
+kind = "tool"
+license = "proprietary"
+source = "SGI Varsity Update August 1998, c++_fe"
+description = "The EDG C++ frontend from MIPSpro 7.2.1. Projects combine it with an IRIX runtime and their own compiler backend."
+build = "sgi-inst-frontend"
+[["mipspro-7.2.1-cxx".parts]]
+url = "https://discmaster.textfiles.com/file/9077/SGI%20Varsity%20Update%201998%20August.iso/dist/c%2B%2B_fe.idb"
+sha256 = "e5aa2611352f8db296281a59e9d8b219904e44f27cb129f1a1adcfd34313e4e1"
+file = "mipspro-721-c++_fe.idb"
+copy = "c++_fe.idb"
+platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
+[["mipspro-7.2.1-cxx".parts]]
+url = "https://discmaster.textfiles.com/file/9077/SGI%20Varsity%20Update%201998%20August.iso/dist/c%2B%2B_fe.sw"
+sha256 = "6c6dfae3c42a270266b67d4e69c478c754ba10985e017ba09fa53200a6ff7423"
+file = "mipspro-721-c++_fe.sw"
+copy = "c++_fe.sw"
+platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
+
 ["mipspro-7.4.4"]
 case_sensitive = true
 linux_vm = true

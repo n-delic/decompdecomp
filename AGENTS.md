@@ -385,10 +385,10 @@ Keep the primary checkout on `main`. Start each change in its own Git worktree b
 work you still need is safely saved, remove the task worktree. In Codex, archive managed worktrees to
 preserve a recoverable snapshot. Leave other tasks' worktrees alone.
 
-The user has asked that completed PRs be merged to main right after creation, once any required checks pass,
-until they revoke this preference. The user updates their running app themselves: merging a PR does not authorize
-pulling into its checkout, stopping, updating or restarting it. Leave the running app alone unless the user
-explicitly requests deployment.
+The user has asked that completed PRs be merged to main once required checks pass, and that the primary
+checkout's `main` be fast-forwarded to the merged `origin/main`, until they revoke this preference. Do not
+restart or quit the running app. If a check, conflict or permission prevents the merge or update, report
+the blocker instead of leaving an unmerged branch unnoticed.
 
 The user works on more than one computer, and the folders differ between them: never take a checkout or data home
 from a path written down here or remembered from another session. Find the running app on this machine instead:
