@@ -23,6 +23,23 @@ def test_one_asset_error_for_every_caller():
     assert AssetError is AppAssetError
 
 
+def test_constructed_packed_texture_reaches_console_preview():
+    import struct
+
+    from decompnet.consoles import get
+
+    pixels = bytes([0x01])*120
+    chunks = [pixels[i:i+31] for i in range(0, len(pixels), 31)]
+    packed = b''.join(bytes([0x80|len(chunk)])+chunk for chunk in chunks)
+    packed = struct.pack('>I', len(packed)+4)+packed
+    image = packed + bytes.fromhex('f80107c1') + bytes(28)
+    asset = dict(layout='constructed-resource-texture', offset=0, size=len(packed),
+                 width=16, height=15, palette_offset=len(packed), reason='Tested loader and drawing code.')
+    result = get('n64').asset_preview(image, asset, {})
+    assert result['media'] == 'image'
+    assert (result['details']['width'], result['details']['height']) == (16, 15)
+
+
 def test_the_n64_console_gives_the_library_its_mips_reader(monkeypatch):
     """Audio banks find their sample tables from loader calls, which only the app can read."""
     from decompassets import n64
