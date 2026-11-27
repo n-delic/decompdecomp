@@ -89,10 +89,15 @@ def prepare(project, log=print, *, limit: int = 32, units: set[str] | None = Non
             source.write_text(HEADER, encoding='utf-8')
             made.append(source)
             entry['metadata'] = {**entry.get('metadata', {}), 'source_path': source.relative_to(project.root).as_posix(),
-                                 'autopilot_scaffold': True, 'draft_assembly': assembly.relative_to(project.root).as_posix()}
+                                 'autopilot_scaffold': True,
+                                 'draft_assembly': assembly.resolve().relative_to(project.root.resolve()).as_posix()}
             entry['base_path'] = 'build/' + source.relative_to(project.root).as_posix() + '.o'
             unit = project._units_of({'units': [entry]})[0]
             log(f'Preparing C candidate: {source.relative_to(project.root)}')
+            # Some generic object rules do not make parent directories themselves.
+            if project.root.resolve() not in unit.base.resolve().parents:
+                raise ForkError('The candidate object path leaves this checkout; no files were changed')
+            unit.base.parent.mkdir(parents=True, exist_ok=True)
             ok, output = project.build_unit(unit)
             if not ok or not unit.base.is_file():
                 raise ForkError(f"This project's build cannot compile the generated C candidate {unit.source}:\n{output[-2000:]}")
@@ -105,6 +110,8 @@ def prepare(project, log=print, *, limit: int = 32, units: set[str] | None = Non
         (project.root / 'objdiff.json').write_bytes(original)
         for source in made:
             source.unlink(missing_ok=True)
-            (project.root / ('build/' + source.relative_to(project.root).as_posix() + '.o')).unlink(missing_ok=True)
+            obj = project.root / ('build/' + source.relative_to(project.root).as_posix() + '.o')
+            if project.root.resolve() in obj.resolve().parents:
+                obj.unlink(missing_ok=True)
         raise
     return sources

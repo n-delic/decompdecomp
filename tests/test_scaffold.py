@@ -23,7 +23,7 @@ def test_scaffold_probes_real_object_rule_and_preserves_reference(tmp_path, monk
     fp = project(tmp_path)
     def build(unit):
         assert unit.source == 'src/decompdecomp/demo.c'
-        unit.base.parent.mkdir(parents=True)
+        assert unit.base.parent.is_dir()
         unit.base.write_bytes(b'compiled empty candidate')
         return True, 'ok'
     monkeypatch.setattr(fp, 'build_unit', build)
@@ -116,7 +116,7 @@ def test_rebuilt_targets_use_original_assembly_for_candidates_and_drafts(tmp_pat
     (tmp_path / 'objdiff.json').write_text(json.dumps(cfg))
     fp = ForkProject(tmp_path)
     def build(unit):
-        unit.base.parent.mkdir(parents=True)
+        assert unit.base.parent.is_dir()
         unit.base.write_bytes(b'empty compiled candidate')
         return True, 'ok'
     monkeypatch.setattr(fp, 'build_unit', build)
@@ -205,3 +205,36 @@ def test_scaffold_only_probes_requested_units(tmp_path, monkeypatch):
     fp = project(tmp_path)
     monkeypatch.setattr(fp, 'build_unit', lambda unit: pytest.fail('unrelated unit was probed'))
     assert prepare(fp, units={'other'}) == []
+
+
+def test_scaffold_accepts_a_symlinked_checkout_path(tmp_path, monkeypatch):
+    root = tmp_path / 'checkout'
+    root.mkdir()
+    project(root)
+    link = tmp_path / 'link'
+    link.symlink_to(root, target_is_directory=True)
+    fp = ForkProject(link)
+    def build(unit):
+        unit.base.write_bytes(b'candidate')
+        return True, ''
+    monkeypatch.setattr(fp, 'build_unit', build)
+    assert prepare(fp) == ['src/decompdecomp/demo.c']
+    metadata = json.loads((root / 'objdiff.json').read_text())['units'][0]['metadata']
+    assert metadata['draft_assembly'] == '.decomp-wtf/objdiff-references/asm/demo.s'
+
+
+def test_scaffold_refuses_object_directory_symlink_outside_checkout(tmp_path, monkeypatch):
+    root = tmp_path / 'checkout'
+    root.mkdir()
+    fp = project(root)
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    (outside / 'src/decompdecomp').mkdir(parents=True)
+    existing = outside / 'src/decompdecomp/demo.c.o'
+    existing.write_bytes(b'outside data')
+    (root / 'build').symlink_to(outside, target_is_directory=True)
+    monkeypatch.setattr(fp, 'build_unit', lambda unit: pytest.fail('must not build outside the project'))
+    with pytest.raises(ForkError, match='object path leaves'):
+        prepare(fp)
+    assert existing.read_bytes() == b'outside data'
+    assert not (root / 'src/decompdecomp/demo.c').exists()
