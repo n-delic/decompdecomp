@@ -254,3 +254,18 @@ def test_store_to_a_number_becomes_a_word_store():
     out = cer.literal_store("void f(void) {\n    0 = (void *) 0;\n    x = 1;\n}", 2)
     assert "    *(s32 *)0 = (s32)((void *) 0);" in out and "x = 1;" in out
     assert cer.literal_store("void f(void) {\n    x = 1;\n}", 2) is None
+
+
+def test_an_irregular_switch_is_retried_without_switches_even_when_m2c_numbers_it(monkeypatch):
+    class Done:
+        returncode, stderr = 0, ''
+
+        def __init__(self, argv):
+            self.stdout = ('void f(s32 a) {\n    goto done;\ndone:\n    return;\n}\n' if '--no-switches' in argv else
+                           'void f(s32 a) {\n    switch (a) {                    /* switch 1; irregular */\n    }\n}\n')
+
+    monkeypatch.setattr(seeds, '_execute_m2c', lambda argv, timeout: Done(argv))
+    monkeypatch.setattr(seeds, 'available', lambda: True)
+    monkeypatch.setattr(seeds.toolchains, 'venv_bin', lambda *a: '/bin/true')
+    out = seeds.run_m2c('glabel f\nnop\n', 'f', 'mips-ido-c', valid=True, strict=True)
+    assert 'switch' not in out and 'goto done;' in out
