@@ -378,6 +378,9 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
                     and not any(d.rom is not None and d.rom < after and before < d.rom+d.size for d in data))
         return False
 
+    # A disassembler can start code in the tail of a double constant. Keep the
+    # proof tied to actual typed loads and to the single mapped segment.
+    loaded_words = loaded_constant_words(functions)
     recovered_data=[]
     predecessors={(fn.rom+fn.size,fn.vram+fn.size):fn for fn in result if fn.size>=8}
     kept=[];dropped=markers=recovered_shared=recovered_fallthrough=recovered_continuations=shared_delay_entries=return_wrappers=backward_loops=cache_prefixes=0;ordered=sorted(result,key=lambda f:(owner(f),f.rom))
@@ -516,6 +519,14 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
                                           for address in explicit | transfer_targets)
                 and not any(d.rom is not None and d.rom < fn.rom+fn.size and fn.rom < d.rom+d.size for d in data)
                 and terminated_mapped_addresses(fn, image, order, segments, segments[owner(fn)[0]])):
+            recovered_data.append(DataSymbol(fn.name, fn.vram, fn.rom, fn.size, 'data'))
+            continue
+        if (terminal_loaded_record(fn, previous, image, order, segments, functions, references,
+                                   lines_by_rom, explicit | pointers | transfer_targets, data)):
+            recovered_data.append(DataSymbol(fn.name, fn.vram, fn.rom, fn.size, 'data'))
+            continue
+        if (leading_loaded_constants(fn, following, image, order, segments, loaded_words,
+                                     explicit | pointers | transfer_targets, data)):
             recovered_data.append(DataSymbol(fn.name, fn.vram, fn.rom, fn.size, 'data'))
             continue
         if (leading_constant_padding(fn, following, image, order, segments, direct_calls, entered-{fn.vram})
@@ -1395,6 +1406,92 @@ def string_address_references(fn, references, lines, bodies):
             return False
         uses.difference_update((start,start+4))
     return True
+
+def terminal_loaded_record(fn, previous, image, order, segments, functions, references, lines, entered, data):
+    """A loaded pointer and an adjacent address passed in a stack record, after a closed overlay."""
+    if (fn.size != 8 or previous is None or previous.size < 8
+            or previous.lines[-2].word != JR_RA or previous.rom + previous.size + 4 != fn.rom
+            or previous.vram + previous.size + 4 != fn.vram
+            or image[fn.rom - 4:fn.rom] != bytes(4)
+            or image[fn.rom:fn.rom + 8] != b''.join(line.word.to_bytes(4, order) for line in fn.lines)
+            or not 0x80000000 <= fn.lines[0].word < 0x80800000 or fn.lines[0].word % 4
+            or not 0 < fn.lines[1].word <= 0x10000
+            or any(fn.vram <= addr < fn.vram + 8 for addr in entered)
+            or any(d.rom is not None and d.rom < fn.rom + 8 and fn.rom < d.rom + d.size for d in data)
+            or not address_word_references(fn, references, lines)
+            or not any(lines[offset].word >> 26 == 35 for offset, _ in references.get(fn.vram, ())
+                       if offset in lines)):
+        return False
+    owners = [s for s in segments if s.rom_start <= previous.rom and s.rom_end == fn.rom + 8
+              and s.vram - s.rom_start == fn.vram - fn.rom and s.contains(fn.vram, 8)]
+    if len(owners) != 1:
+        return False
+    if any(not match.start() % 4 for address in (fn.vram, fn.vram + 4)
+           for match in re.finditer(re.escape(address.to_bytes(4, order)), image)):
+        return False
+    address = fn.vram + 4
+    for body in functions:
+        for first, second, third in zip(body.lines, body.lines[1:], body.lines[2:]):
+            a, b, c = first.word, second.word, third.word
+            reg = (a >> 16) & 31
+            if (reg and a >> 26 == 15 and a & 0xffff == ((address + 0x8000) >> 16) & 0xffff
+                    and b == (0x24000000 | reg << 21 | reg << 16 | address & 0xffff)
+                    and c >> 26 == 43 and (c >> 16) & 31 == reg and (c >> 21) & 31 in (29, 30)):
+                return True
+    return False
+
+
+def loaded_constant_words(functions):
+    """Find words read by direct floating-point loads from a tracked LUI base."""
+    words, doubles = set(), set()
+    for fn in functions:
+        high = {}
+        for line in fn.lines:
+            word = line.word
+            op, rs, rt = word >> 26, (word >> 21) & 31, (word >> 16) & 31
+            if op in (49, 53) and rs in high:
+                offset = (word & 0xffff) - (0x10000 if word & 0x8000 else 0)
+                address = (high[rs] + offset) & 0xffffffff
+                if not address % 4:
+                    words.add(address)
+                    if op == 53 and not address % 8:
+                        doubles.add(address)
+                        words.add(address + 4)
+            if op == 15 and rt:
+                high[rt] = (word & 0xffff) << 16
+            elif op == 0:
+                high.pop((word >> 11) & 31, None)
+            elif op in (2, 3):
+                high.clear()
+            elif op in (16, 17) and rs < 8:
+                high.pop(rt, None)
+            elif op in (8, 9, 10, 11, 12, 13, 14, 32, 33, 34, 35, 36, 37, 38):
+                high.pop(rt, None)
+            elif op not in (1, 4, 5, 6, 7, 16, 17, 20, 21, 22, 23, 40, 41, 42, 43, 46, 49, 53, 57, 61):
+                high.clear()
+    return words, doubles
+
+
+def leading_loaded_constants(fn, following, image, order, segments, loaded, entered, data):
+    """A segment begins inside a double and float, both read as floating data."""
+    if (fn.size != 8 or fn.rom < 4 or following is None or following.rom != fn.rom + 12
+            or following.vram != fn.vram + 12 or not is_frame(following.lines[0].word)
+            or image[fn.rom + 8:fn.rom + 12] != bytes(4)
+            or image[fn.rom:fn.rom + 8] != b''.join(line.word.to_bytes(4, order) for line in fn.lines)
+            or fn.vram - 4 not in loaded[1] or fn.vram + 4 not in loaded[0]
+            or any(fn.vram <= addr < fn.vram + 8 for addr in entered)
+            or any(d.rom is not None and d.rom < fn.rom + 8 and fn.rom < d.rom + d.size for d in data)):
+        return False
+    if not any(s.rom_start == fn.rom and s.vram == fn.vram and following.rom + following.size <= s.rom_end
+               for s in segments):
+        return False
+    if any(sum(s.contains(addr, 4) for s in segments) != 1 for addr in (fn.vram, fn.vram + 4)):
+        return False
+    if any(not match.start() % 4 for address in (fn.vram, fn.vram + 4)
+           for match in re.finditer(re.escape(address.to_bytes(4, order)), image)):
+        return False
+    return True
+
 
 def leading_constant_padding(fn, following, image, order, segments, calls, entered):
     """A harmless instruction-shaped word and zero alignment after a floating constant."""
