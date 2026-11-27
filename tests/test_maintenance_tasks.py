@@ -147,3 +147,35 @@ def test_mirroring_keeps_the_apps_events_and_tells_the_window():
     assert seen == [{"phase": "Trying the other release's code"}]
     fields = maintenance_tasks.job_fields(job)
     assert "stop" not in fields and "cross_report" not in fields and fields["matched"] == 3
+
+
+def test_cross_game_restarts_a_worker_that_stops_mid_pass(monkeypatch):
+    """A worker dying mid-pass restarts the search instead of ending it; repeated deaths fall back to the app."""
+    import threading
+    from types import SimpleNamespace
+
+    from decompnet.app import maintenance_tasks as mt
+    from decompnet.network import NetworkError
+
+    calls = []
+
+    class Worker:
+        def run_task(self, kind, payload, *, stop, on_status=None):
+            calls.append(kind)
+            if len(calls) < 3:
+                raise NetworkError("The background worker stopped during a pass. It runs again with the next one.")
+            return {"matched": 2, "improved": 0, "tried": 5}
+
+    job = SimpleNamespace(stop=threading.Event())
+    assert mt._cross_game_in_worker(Worker(), "g", job, lambda *_: None)["matched"] == 2
+    assert len(calls) == 3
+
+    class Dead:
+        def run_task(self, *a, **k):
+            raise NetworkError("stopped")
+
+    try:
+        mt._cross_game_in_worker(Dead(), "g", job, lambda *_: None)
+        raise AssertionError("expected Unavailable")
+    except mt.Unavailable:
+        pass

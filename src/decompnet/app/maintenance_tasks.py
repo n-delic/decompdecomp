@@ -101,8 +101,7 @@ def cross_game(net, slug, job, log_):
     log_('Checking eligible donor candidates. Stop at any time; verified results are saved.')
     if worker is not None:
         try:
-            result = worker.run_task("cross_game", {"slug": slug}, stop=job.stop,
-                                     on_status=lambda fields: apply_fields(job, fields))
+            result = _cross_game_in_worker(worker, slug, job, log_)
             if discovery := result.pop('discovery', None):
                 pid, snapshot = discovery
                 snapshot['hints'] = {int(fid): hints for fid, hints in snapshot['hints'].items()}
@@ -117,6 +116,28 @@ def cross_game(net, slug, job, log_):
     log_(f"Search complete. {result['matched']} verified matches · "
          f"{result['improved']} partial improvements · {result['tried']} checks.")
     return result
+
+
+WORKER_RESTARTS = 3
+
+
+def _cross_game_in_worker(worker, slug, job, log_):
+    """The worker's donor search, restarted when its process dies mid-pass.
+
+    A crashed or recycled worker used to end the user's search with "The background worker stopped during a pass";
+    verified results and rejected candidates are saved, so a restart carries on where it stopped. After repeated
+    deaths the search runs in the app instead (Unavailable), so it never just stops."""
+    for attempt in range(WORKER_RESTARTS + 1):
+        try:
+            return worker.run_task("cross_game", {"slug": slug}, stop=job.stop,
+                                   on_status=lambda fields: apply_fields(job, fields))
+        except NetworkError as error:
+            if job.stop.is_set():
+                return {"matched": 0, "improved": 0, "tried": 0}
+            log.warning("cross-game search: worker failed (%s), attempt %d", error, attempt + 1)
+            if attempt < WORKER_RESTARTS:
+                log_("The background worker stopped; restarting the search where it left off.")
+    raise Unavailable("the worker kept stopping")
 
 
 def _search_cross_game(net, slug, job):
