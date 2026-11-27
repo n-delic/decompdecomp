@@ -10,6 +10,43 @@ from elftools.elf.elffile import ELFFile
 from elftools.elf.relocation import RelocationSection
 
 
+def padding_only(target: Path) -> bool:
+    """A lone MIPS nop has no return and may be padding misreported as a function.
+
+    This only defers candidate preparation; it does not assign an SDK or
+    assembly identity. Relocations, multiple functions and other code stay open
+    to ordinary preparation.
+    """
+    try:
+        elf = ELFFile(BytesIO(target.read_bytes()))
+        if elf['e_machine'] != 'EM_MIPS':
+            return False
+        table = elf.get_section_by_name('.symtab')
+        if table is None:
+            return False
+        funcs = [s for s in table.iter_symbols() if s.name and s['st_info']['type'] == 'STT_FUNC']
+        if len(funcs) != 1:
+            return False
+        sym = funcs[0]
+        index = sym['st_shndx']
+        if not isinstance(index, int) or int(sym['st_size']) != 4:
+            return False
+        section = elf.get_section(index)
+        if not section or not section['sh_flags'] & 4:
+            return False
+        base = 0 if elf['e_type'] == 'ET_REL' else int(section['sh_addr'])
+        offset = int(sym['st_value']) - base
+        if offset < 0 or offset + 4 > section['sh_size']:
+            return False
+        for rel in elf.iter_sections():
+            if isinstance(rel, RelocationSection) and rel['sh_info'] == index:
+                if any(offset <= int(r['r_offset']) - base < offset + 4 for r in rel.iter_relocations()):
+                    return False
+        return section.data()[offset:offset + 4] == b'\0' * 4
+    except (OSError, ValueError, TypeError, KeyError, IndexError, ELFError):
+        return False
+
+
 def dispatches(console, root: Path, target: Path | None) -> dict[str, dict]:
     """Classify complete, relocation-free dispatch entries using the console's ABI rules.
 

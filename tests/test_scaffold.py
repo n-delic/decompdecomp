@@ -61,6 +61,19 @@ def test_scaffold_defers_annotated_assembly_but_prepares_other_units(tmp_path, m
     assert any('review them first' in message for message in messages)
 
 
+def test_scaffold_defers_single_mips_nop(tmp_path, monkeypatch):
+    from tests.mips_elf_fixture import linked_object
+
+    fp = project(tmp_path)
+    obj = tmp_path / '.decomp-wtf/objdiff-references/objects/demo.o'
+    obj.write_bytes(linked_object('demo', 0x80001000, bytes.fromhex('00000000')))
+    monkeypatch.setattr(fp, 'build_unit', lambda unit: pytest.fail('padding must not be compiled'))
+    messages = []
+    assert prepare(fp, log=messages.append) == []
+    assert any('review its boundary' in message for message in messages)
+    assert not (tmp_path / 'src/decompdecomp/demo.c').exists()
+
+
 @pytest.mark.parametrize('failure', ['failed', 'missing_object'])
 def test_failed_probe_rolls_back_sources_and_config(tmp_path, monkeypatch, failure):
     fp = project(tmp_path)
