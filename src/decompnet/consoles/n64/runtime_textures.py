@@ -3,7 +3,7 @@ import hashlib
 import tempfile
 from pathlib import Path
 
-from . import emulator
+from . import emulator, loaded_code
 
 VIS = (1200, 2400, 4000, 5000)
 
@@ -34,9 +34,17 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
         progress(dict(phase='Observing runtime textures', done=0, total=1))
         with tempfile.TemporaryDirectory(prefix='decomp-runtime-textures-') as folder:
             dumps = {vi: Path(folder)/f'{vi}.ram' for vi in VIS}
-            run, _ = emulator.run_for_observation(rom, VIS[-1], dumps=dumps, timeout=120, log=log)
+            run, expansion = emulator.run_for_observation(rom, VIS[-1], dumps=dumps, timeout=120, log=log)
             snapshots = (path.read_bytes() for path in dumps.values() if path.is_file())
             assets = runtime_textures.regions(image, snapshots)
+            if not assets and not run.timed_out:
+                log('No textures were visible at rest; observing the title and menus with scripted input.')
+                for path in dumps.values():
+                    path.unlink(missing_ok=True)
+                run = emulator.run(rom, VIS[-1], inputs=loaded_code.inputs(VIS[-1]), dumps=dumps,
+                                   timeout=120, expansion_pak=expansion)
+                snapshots = (path.read_bytes() for path in dumps.values() if path.is_file())
+                assets = runtime_textures.regions(image, snapshots)
         if run.timed_out:
             log('Runtime observation timed out; any completed snapshots are still included.')
         log(f'Found {len(assets)} textures backed by runtime commands and unique cartridge bytes.')

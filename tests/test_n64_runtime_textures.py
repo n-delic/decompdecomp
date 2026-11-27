@@ -88,3 +88,21 @@ def test_observation_retries_timeout_only_before_any_video(tmp_path, monkeypatch
     monkeypatch.setattr(emulator, 'run', run)
     result, expanded = emulator.run_for_observation(tmp_path / 'game', 100, log=lambda _: None)
     assert expanded and result.vis == 100 and calls == [False, True]
+
+
+def test_observation_tries_menu_input_if_no_texture_is_visible(tmp_path, monkeypatch):
+    rom = tmp_path / 'game.z64'
+    rom.write_bytes(bytes.fromhex('80371240') + b'original')
+    monkeypatch.setattr(runtime_textures.emulator, 'installed', lambda: tmp_path)
+    calls = []
+
+    def run(path, vis, *, dumps, **kwargs):
+        calls.append(kwargs)
+        for dump in dumps.values():
+            dump.write_bytes(b'menus' if kwargs.get('inputs') else b'title')
+        return runtime_textures.emulator.Run(vis=vis)
+
+    monkeypatch.setattr(runtime_textures.emulator, 'run', run)
+    monkeypatch.setattr(detector, 'regions', lambda image, snapshots: [b'asset'] if b'menus' in snapshots else [])
+    assert runtime_textures.observe(b'image', rom, sha1(rom.read_bytes()).hexdigest()) == [b'asset']
+    assert len(calls) == 2 and calls[1]['inputs'] and not calls[1]['expansion_pak']
