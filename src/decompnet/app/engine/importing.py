@@ -10,8 +10,10 @@ import json
 import re
 import shutil
 import tempfile
+import threading
 import time
 from collections import Counter
+from contextlib import contextmanager
 from pathlib import Path
 
 from ... import consoles, scoring, seeds, toolchains
@@ -30,6 +32,33 @@ DEBUG_TYPES_NOTE = """
 """
 DEBUG_TYPES_FILE = "debug_types.h"
 HEADER_CHECK = "int decomp_header_check;"  # a source that needs nothing but the header to compile
+
+
+@contextmanager
+def _reimport_claim(net, slug, name, agent):
+    """Release only the temporary claim made for this saved-source check."""
+    fn = net._function(name, slug)
+    store = net.project_store(fn['project_id'])
+    with store.lock:
+        lock = net._attempt_locks.setdefault((agent.id, fn['id']), threading.RLock())
+    with lock:
+        claimed = None
+        with store.tx() as db:
+            current = db.execute('SELECT * FROM functions WHERE id=?', (fn['id'],)).fetchone()
+            held = db.execute('SELECT 1 FROM claims WHERE function_id=? OR agent_id=?',
+                              (fn['id'], agent.id)).fetchone()
+            if current is not None and current['status'] == 'open' and not held:
+                claimed = time.time()
+                net._open_claim(db, current, agent, claimed, net._project(slug))
+        try:
+            yield
+        finally:
+            if claimed is not None:
+                with store.tx() as db:
+                    deleted = db.execute('DELETE FROM claims WHERE function_id=? AND agent_id=? AND claimed_at=?',
+                                         (fn['id'], agent.id, claimed)).rowcount
+                    if deleted:
+                        net._event(db, fn['project_id'], agent.id, 'release', fn['name'])
 
 
 def pair_old_functions(rows, functions) -> dict:
@@ -624,9 +653,10 @@ class ImportMixin:
         for name, source, agent_id in kept:
             check_cancel()
             row = self.store.one("SELECT name FROM agents WHERE id=?", agent_id) if agent_id else None
-            agent = self.attribution_agent(row["name"]) if row else self.local_agent("you")[0]
+            agent = self.attribution_agent(row["name"] if row else "you")
             try:
-                matched += bool(self.attempt(agent, name, source, slug)["matched"])
+                with _reimport_claim(self, slug, name, agent):
+                    matched += bool(self.attempt(agent, name, source, slug)["matched"])
             except NetworkError as error:
                 log(f"{name}: {error}")
             if self.project_store(pid).one("SELECT status FROM functions WHERE project_id=? AND name=?",

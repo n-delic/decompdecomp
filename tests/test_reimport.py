@@ -11,6 +11,45 @@ from decompnet.network import NetworkError
 from decompnet.rom import Picked, split
 
 
+def test_reimport_rejudge_releases_only_its_own_claims(tmp_path):
+    net = RomNetwork(tmp_path/'app.db', tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute('INSERT INTO projects(slug,name,root,arch,config) VALUES(?,?,?,?,?)',
+                         ('game', 'Game', str(tmp_path), 'mips', '{}')).lastrowid
+        for index, name in enumerate(('first', 'second', 'user_claim')):
+            db.execute('INSERT INTO functions(project_id,name,size,n_insns,target,relocs,status,vram) '
+                       'VALUES(?,?,?,?,?,?,?,?)', (pid, name, 4, 1, b'\0'*4, '[]', 'open', 0x80000000+4*index))
+    agent = net.attribution_agent('saved-author')
+    store = net.project_store(pid)
+    seen = []
+    def attempt(who, name, source, slug):
+        fn = net._function(name, slug)
+        assert store.one('SELECT agent_id FROM claims WHERE function_id=?', fn['id'])['agent_id'] == who.id
+        seen.append(name)
+        return {'matched': False}
+    net.attempt = attempt
+    net._judge_kept_matches('game', [('first', 'int x;', agent.id), ('second', 'int y;', agent.id)], lambda _: None)
+    assert seen == ['first', 'second']
+    assert store.one('SELECT COUNT(*) AS n FROM claims')['n'] == 0
+    net.local_agent = lambda name: pytest.fail('rechecking saved C must not issue new runner credentials')
+    net._judge_kept_matches('game', [('first', 'int x;', None)], lambda _: None)
+
+    existing = net._function('user_claim', 'game')
+    with store.tx() as db:
+        db.execute('INSERT INTO claims VALUES(?,?,?,?)', (existing['id'], agent.id, 1.0, 9999999999.0))
+    net._judge_kept_matches('game', [('user_claim', 'int z;', agent.id)], lambda _: None)
+    assert store.one('SELECT claimed_at FROM claims WHERE function_id=?', existing['id'])['claimed_at'] == 1.0
+
+    with store.tx() as db:
+        db.execute('DELETE FROM claims WHERE function_id=?', (existing['id'],))
+    def interrupted(*args):
+        raise RuntimeError('interrupted')
+    net.attempt = interrupted
+    with pytest.raises(RuntimeError, match='interrupted'):
+        net._judge_kept_matches('game', [('first', 'int x;', agent.id)], lambda _: None)
+    assert store.one('SELECT COUNT(*) AS n FROM claims')['n'] == 0
+
+
 @pytest.mark.parametrize("legacy_reset",[False,True])
 def test_reimport_replaces_analysis_and_keeps_only_unchanged_matches(tmp_path, monkeypatch, legacy_reset):
     root = tmp_path / "game"
