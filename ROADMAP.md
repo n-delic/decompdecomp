@@ -166,6 +166,10 @@
   replay reviewed donor and runtime-only mappings without requiring rediscovery, and carry the same verified
   identities through rooms: a room layout alone cannot safely recreate an entry missing from a guest's image map.
 
+- N64 reimport stages non-overlapping existing entries omitted by the new split when the analysis image and each
+  body still match. It retains them only when a temporary split reproduces both the new and existing bodies.
+  Planned: equivalent staged reimport adapters for the other ROM consoles and review for competing boundaries.
+
 - Done: N64 imports scan all unowned intervals in corroborated loader banks,
   following newly recovered calls and materialized callback addresses to completion.
   Quiet balanced frames need adjacency or independently corroborated callees and

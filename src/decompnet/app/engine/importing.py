@@ -213,6 +213,12 @@ class ImportMixin:
             rom = (workdir / res.image).read_bytes()
 
         analysis_sha1 = hashlib.sha1(rom).hexdigest()
+        retained_reimport_snapshot = None
+        if reimport is not None and json.loads(reimport['config']).get('rom', {}).get('analysis_sha1') == analysis_sha1:
+            old_rows = self.project_store(reimport['id']).all(
+                'SELECT name,rom_offset,vram,size,target,unit FROM functions WHERE project_id=? ORDER BY id', reimport['id'])
+            if console.preserve_reimport_entries(self, reimport, res, rom, old_rows, log):
+                retained_reimport_snapshot = [tuple(row) for row in old_rows]
         if reimport is not None and console.recompiler is not None:
             recompile_review.keep_reviewed_on_reimport(self, reimport, res, rom, analysis_sha1, log)
 
@@ -343,6 +349,11 @@ class ImportMixin:
                 if reimport is None:
                     old_functions, gone, old_names, old_types = {}, {}, [], {}
                 else:
+                    if retained_reimport_snapshot is not None:
+                        current = db.execute('SELECT name,rom_offset,vram,size,target,unit FROM functions '
+                                             'WHERE project_id=? ORDER BY id', (pid,)).fetchall()
+                        if [tuple(row) for row in current] != retained_reimport_snapshot:
+                            raise NetworkError('The project entries changed during reimport. Retry with the current project.')
                     rows = db.execute("SELECT * FROM functions WHERE project_id=?", (pid,)).fetchall()
                     # A bank and address identify renamed functions. A bare address is safe only when
                     # unique on both sides; mutually exclusive overlays share their RAM slots.

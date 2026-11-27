@@ -334,6 +334,10 @@ class Console:
         (N64: consoles/n64/code.py). None when the console has no such search yet (ROADMAP.md)."""
         return None
 
+    def preserve_reimport_entries(self, net, project, result, image, rows, log=print):
+        """Optionally stage old entries that a new split missed; other consoles need an adapter."""
+        return 0
+
     def import_table_ranges(self, image, segments):
         """Additional load mappings for jump-table evidence during ROM import."""
         return ()

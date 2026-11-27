@@ -8,6 +8,7 @@
 - uso.py / uso_match.py: bounded USO text and relocations, matching and cartridge reconstruction.
 - loader_code.py: full-bank closed-body recovery with CPU call, callback and adjacency evidence.
 - runtime_scoped.py: called code corroborated in RAM despite an overlapping overlay address.
+- reimport_preserve.py: stage existing byte-verified entries omitted by a replacement split.
 - loader_mapping.py: bank mappings corroborated by constant arguments to independent loader helpers.
 - indexed_overlays.py: shared RAM slots and DMA bounds recovered from loader arrays and cache calls.
 - indexed_runtime_code.py: executable archive members mapped at their declared runtime addresses.
@@ -497,6 +498,11 @@ class Nintendo64(Console):
 
         return missed_functions(config, image, log, known, prepare_split=prepare_split, checkpoint=checkpoint,
                                 expected_config=expected_config)
+
+    def preserve_reimport_entries(self, net, project, result, image, rows, log=print):
+        from .reimport_preserve import preserve
+
+        return preserve(net, project, result, image, rows, log)
 
     def import_pointer_is_data(self, image, offset):
         from .packed_pointers import is_data
