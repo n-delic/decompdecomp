@@ -297,6 +297,18 @@ def test_a_raw_child_ending_at_the_parent_boundary_needs_no_extra_marker():
     assert [(s[0], s[1]) for s in cfg['segments'][0]['subsegments']] == [(0x1000, 'c'), (0x1020, 'c')]
 
 
+def test_recovered_cut_keeps_startless_bss_in_virtual_address_order():
+    from decompnet.consoles.n64.code import _cut_inside
+
+    bss = {'type': 'bss', 'vram': 0x80001100}
+    cfg = {'segments': [{'name': 'bank', 'type': 'code', 'start': 0x1000, 'vram': 0x80001000,
+                         'subsegments': [[0x1000, 'c', 'bank'], [0x1080, 'data', 'data'], bss]}, [0x1100]]}
+    assert _cut_inside(cfg, [(0x1020, 0x1030, 0x80001020)])
+    subs = cfg['segments'][0]['subsegments']
+    assert [s[0] for s in subs[:-1]] == [0x1000, 0x1020, 0x1030, 0x1080]
+    assert subs[-1] == bss
+
+
 def test_search_anchors_existing_entries_if_a_new_cut_would_hide_them(tmp_path, monkeypatch):
     from decompnet.consoles.n64 import code, emulator, runtime_staging
 
