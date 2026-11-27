@@ -475,6 +475,20 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
             else:
                 dropped+=1
             continue
+        if (fn.size == 4 and not fn.lines[0].word and owner(fn)[0] >= 0
+                and segments[owner(fn)[0]].rom_start == fn.rom
+                and following is not None and owner(fn) == owner(following)
+                and following.rom == fn.rom+4 and following.vram == fn.vram+4
+                and following.vram % 16 == 0 and following.vram in direct_calls
+                and not referenced(fn)
+                and image[fn.rom:fn.rom+4] == bytes(4)
+                and leaf_extent(image, following.rom, following.rom+following.size, following.vram,
+                                big_endian=console.big_endian, cpu=console.cpu_variant,
+                                asm_check=console.asm_reason) == following.size):
+            # An unreferenced NOP before a called, aligned leaf can be a
+            # mapping's leading alignment, rather than a function of its own.
+            dropped += 1
+            continue
         if (filler_extent(fn.size,fn.lines[0].word) and following is not None
                 and owner(fn)==owner(following) and following.rom==fn.rom+4 and following.vram==fn.vram+4):
             returned = (previous is not None and owner(previous)==owner(fn)

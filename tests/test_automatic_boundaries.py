@@ -26,6 +26,21 @@ def fixture(words=BODY,cuts=(0,12,32),order='big'):
     return image,functions,[Segment('code',0,len(image),BASE)]
 
 
+@pytest.mark.parametrize('referenced', [False, True])
+def test_unreferenced_nop_before_called_aligned_bank_entry_is_padding(referenced):
+    base = BASE + 12
+    target = base + 4
+    words = [0, 0x3c01803d, 0x03e00008, 0xac24a9c0,
+             0x0c000000 | ((target >> 2) & 0x3ffffff), 0, 0x03e00008, 0]
+    image, functions, _ = fixture(words, cuts=(0, 4, 16, 32))
+    functions = [replace(fn, vram=fn.vram+12,
+                         lines=[replace(line, vram=line.vram+12) for line in fn.lines]) for fn in functions]
+    if referenced:
+        image += base.to_bytes(4, 'big')
+    result = repair(functions, [], image, consoles.get('n64'), [Segment('code', 0, 32, base)])
+    assert [fn.rom for fn in result] == ([0, 4, 16] if referenced else [4, 16])
+
+
 @pytest.mark.parametrize('case',['scheduled','different argument','different callee','incoming pointer'])
 def test_exception_cleanup_delay_slot_can_precede_two_alignment_words(case):
     entry = BASE+32
