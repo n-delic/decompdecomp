@@ -18,7 +18,8 @@ seeing no change and handing over the same dead ends. The ones that matched were
    spelling (loop form, temporaries, casts) before writing your own.
 4. **Search the evidence by symptom:** `search_learnings("register swap")` (or "store too early", "frame size",
    "hoisted constant") returns the recorded fixes and the repair families that make them; `prove_chain` runs those
-   families greedily on your revision.
+   families greedily on your revision. It judges at most `max_judged` variants a call (default 400, at most 2000);
+   when it says children were left unjudged, name families to narrow it or raise `max_judged`.
 5. **Expect a combination.** A late match is usually two or three edits that are each neutral or worse alone. Keep
    them, then send them together (`compile_variants(combine=true)`, `score_permutations`).
 6. **Faithful programs only.** No stores to wrong addresses, dead blocks or unused `long long` locals to move a
