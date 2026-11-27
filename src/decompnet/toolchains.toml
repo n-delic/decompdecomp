@@ -1990,6 +1990,7 @@ license = "GPL-2.0-or-later"
 source = "PCSX-Redux 8a86b7e and its pinned header dependencies"
 description = "Converts SN Systems objects to ELF; built locally with a C++20 compiler and zlib headers."
 build = "psyq-obj-parser"
+build_revision = "cxx-init-sections-1"
 
 [[psyq-obj-parser.parts]]
 url = "https://codeload.github.com/grumpycoders/pcsx-redux/tar.gz/8a86b7ec1d246eb5ae9b213cac27aa2f7854a176"

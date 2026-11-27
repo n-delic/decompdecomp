@@ -1,4 +1,5 @@
 """The original SN pipeline feeds ELF objects to the ordinary MIPS judge."""
+import shutil
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -120,6 +121,9 @@ def test_sn64_uses_gcc_flag_search_and_permuter_weights():
 
 def test_pinned_converter_build_uses_bounded_source_only_command(tmp_path, monkeypatch):
     calls = []
+    source = tmp_path / 'source/pcsx/src/supportpsx/psyq-obj.cc'
+    source.parent.mkdir(parents=True)
+    source.write_text('        {".data", ELFIO::SHF_ALLOC | ELFIO::SHF_WRITE},')
     def build(argv, **kwargs):
         calls.append((argv, kwargs))
         (tmp_path / 'psyq-obj-parser').touch()
@@ -130,6 +134,52 @@ def test_pinned_converter_build_uses_bounded_source_only_command(tmp_path, monke
     assert options['timeout'] == 300 and options['cwd'] == tmp_path
     assert '-std=c++20' in argv and '-lz' in argv
     assert all('source/pcsx/' in arg for arg in argv if arg.endswith('.cc'))
+    assert '{".ctors", ELFIO::SHF_ALLOC | ELFIO::SHF_WRITE}' in source.read_text()
+    assert '{".dtors", ELFIO::SHF_ALLOC | ELFIO::SHF_WRITE}' in source.read_text()
+
+
+def test_converter_recipe_update_marks_old_install_for_reinstall():
+    from dataclasses import replace
+
+    converter = toolchains.get('psyq-obj-parser')
+    old = replace(converter, build_revision='')
+    manifest = {'fingerprint': toolchains.fingerprint(old)}
+    assert toolchains.changed(converter.id, manifest)
+
+
+def test_converter_build_rejects_unexpected_source(tmp_path):
+    source = tmp_path / 'source/pcsx/src/supportpsx/psyq-obj.cc'
+    source.parent.mkdir(parents=True)
+    source.write_text('unexpected source')
+    with pytest.raises(toolchains.ToolchainError, match='section table changed'):
+        toolchains._build_psyq_parser(tmp_path, False, lambda *_: None)
+
+
+def test_converter_preserves_cpp_constructor_and_destructor_tables(tmp_path):
+    from elftools.elf.elffile import ELFFile
+
+    source = toolchains.path('psyq-obj-parser') / 'source'
+    compiler = toolchains.path('sn-n64-272-0006')
+    runner = toolchains.path('wibo') / 'wibo'
+    if not source.is_dir() or not (compiler / 'cc1pln64.exe').is_file() or not runner.is_file():
+        pytest.skip('needs the pinned converter source and accepted SN64 C++ compiler')
+    shutil.copytree(source, tmp_path / 'source')
+    toolchains._build_psyq_parser(tmp_path, False, lambda *_: None)
+    src, obj = tmp_path / 'global.cpp', tmp_path / 'global.o'
+    src.write_text('class Count { public: int n; Count(); ~Count(); }; '
+                   'Count::Count() { n=1; } Count::~Count() { n=0; } Count global;')
+    sn_compile(compiler / 'cc1pln64.exe', compiler / 'cppn64.exe', compiler / 'asn64.exe',
+               tmp_path / 'psyq-obj-parser', runner, src, obj, tmp_path,
+               ['-G0', '-mips3', '-O2', '-mgas', '-meb', '-mhard-float'])
+    with obj.open('rb') as file:
+        elf = ELFFile(file)
+        for name in ('.ctors', '.dtors'):
+            section = elf.get_section_by_name(name)
+            relocation = elf.get_section_by_name('.rel' + name)
+            assert section is not None and section['sh_type'] == 'SHT_PROGBITS'
+            assert section['sh_flags'] & 3 == 3 and len(section.data()) == 4
+            assert relocation is not None and relocation.num_relocations() == 1
+            assert next(relocation.iter_relocations())['r_info_type'] == 2  # R_MIPS_32
 
 
 def test_n64_export_preserves_out_of_isa_pref_word():
