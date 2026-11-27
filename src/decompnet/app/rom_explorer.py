@@ -21,7 +21,7 @@ from . import rom_scan
 
 PREFIX = 'rom-explorer:'
 CONTRACT_PREFIX='rom-explorer-contracts:'
-ANALYSIS_REVISION=32
+ANALYSIS_REVISION=33
 KINDS=('', 'unknown', 'code', 'data', 'strings', 'pointer table', 'compressed', 'image', '3d model', 'palette', 'audio', 'animation', 'collision', 'object placements', 'world grid', 'music sequence', 'demo', 'font', 'container', 'repeated bytes')
 
 
@@ -104,24 +104,25 @@ def listing(net, slug):
     if not report:return dict(available=False,regions=[])
     # Keep large reference arrays and previews out of the table response.
     flow=report.get('loader_flow',{'chains':[]})
+    from ..rom.asset_flow import chain_ids
     users={}
     for row in report['regions']:
         direct={ref['function'] for ref in row['references']}
         traced=set()
-        for identity in row.get('loader_chains',[]):
+        for identity in chain_ids(report,row):
             chain=flow['chains'][int(identity)]
             traced.add(chain['function'])
             traced.update(step['callee'] for step in chain['steps'] if step.get('callee_known'))
         traced.update(ref['function'] for ref in (row.get('detected_asset') or {}).get('loader_refs',[]))
         users[row['id']]=(direct,traced-direct)
-    regions = [{k:v for k,v in r.items() if k not in ('references','pointers')} |
+    regions = [{k:v for k,v in r.items() if k not in ('references','pointers','loader_chains','loader_chain_set')} |
                {'annotation':state['annotations'].get(r['id'],{}),'used_by':len(users[r['id']][0] | users[r['id']][1]),
                 'direct_users':len(users[r['id']][0]),'traced_users':len(users[r['id']][1]),
                 'function_refs':sorted(users[r['id']][0] | users[r['id']][1]),
                 'direct_function_refs':sorted(users[r['id']][0]),'traced_function_refs':sorted(users[r['id']][1])}
                for r in report['regions']]
     from ..rom.asset_inspection import groups
-    return {k:v for k,v in report.items() if k!='regions'} | dict(available=True,stale=report['revision']!=_revision(net,proj),regions=regions,asset_groups=groups({**report,'regions':regions}))
+    return {k:v for k,v in report.items() if k not in ('regions','loader_chain_sets')} | dict(available=True,stale=report['revision']!=_revision(net,proj),regions=regions,asset_groups=groups({**report,'regions':regions}))
 
 
 def run(net, slug, log):
@@ -208,9 +209,10 @@ def detail(net, slug, region_id, image_hash):
     lines = [f'{lo+i:08X}  '+sample[i:i+16].hex(' ').ljust(47)+'  '+''.join(chr(v) if 32<=v<127 else '.' for v in sample[i:i+16]) for i in range(0,len(sample),16)]
     # A chain is only imported function -> table region -> sampled pointer word.
     # Do not invent loader/decompressor semantics from a suggestive function name.
+    from ..rom import asset_flow
     from ..rom.asset_inspection import groups, usage
     flow={**state['report'].get('loader_flow',{}),
-          'chains':[state['report']['loader_flow']['chains'][int(i)] for i in row.get('loader_chains',[])]}
+          'chains':[state['report']['loader_flow']['chains'][int(i)] for i in asset_flow.chain_ids(state['report'],row)]}
     asset_groups=[group for group in groups(state['report']) if region_id in group['region_ids']]
     return dict(row,annotation=state['annotations'].get(region_id,{}),preview='\n'.join(lines),
                 strings=[m.group()[:-1].decode('ascii')[:160] for m in re.finditer(rb'[\x20-\x7e]{8,}\x00',text_sample)][:20],
