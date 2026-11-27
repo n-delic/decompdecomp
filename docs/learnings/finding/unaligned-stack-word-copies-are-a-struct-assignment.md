@@ -2,7 +2,7 @@
 title: unaligned stack word copies are a struct assignment
 kind: finding
 compiler: sn-n64-281 -G0 -mips3 -O2
-evidence: exact-match
+evidence: observation
 date: 2026-11-27
 ---
 
