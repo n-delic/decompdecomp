@@ -45,9 +45,12 @@ def _reimport_claim(net, slug, name, agent):
         claimed = None
         with store.tx() as db:
             current = db.execute('SELECT * FROM functions WHERE id=?', (fn['id'],)).fetchone()
-            held = db.execute('SELECT 1 FROM claims WHERE function_id=? OR agent_id=?',
-                              (fn['id'], agent.id)).fetchone()
-            if current is not None and current['status'] == 'open' and not held:
+            # Saved authors can hold another function in the editor. This scoped claim
+            # retains attribution without taking or releasing that other claim.
+            held = db.execute('SELECT 1 FROM claims WHERE function_id=?', (fn['id'],)).fetchone()
+            if held:
+                raise NetworkError(f'{name} is already claimed; its saved C is kept for a later check.')
+            if current is not None and current['status'] == 'open':
                 claimed = time.time()
                 net._open_claim(db, current, agent, claimed, net._project(slug))
         try:

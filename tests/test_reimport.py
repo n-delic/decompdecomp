@@ -70,7 +70,12 @@ def test_reimport_rejudge_releases_only_its_own_claims(tmp_path):
     existing = net._function('user_claim', 'game')
     with store.tx() as db:
         db.execute('INSERT INTO claims VALUES(?,?,?,?)', (existing['id'], agent.id, 1.0, 9999999999.0))
+    net._judge_kept_matches('game', [('first', 'int x;', agent.id)], lambda _: None)
+    assert seen[-1] == 'first'
+    assert store.one('SELECT COUNT(*) AS n FROM claims')['n'] == 1
+    before = list(seen)
     net._judge_kept_matches('game', [('user_claim', 'int z;', agent.id)], lambda _: None)
+    assert seen == before
     assert store.one('SELECT claimed_at FROM claims WHERE function_id=?', existing['id'])['claimed_at'] == 1.0
 
     with store.tx() as db:
