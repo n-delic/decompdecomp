@@ -71,10 +71,10 @@ _SPLAT_LABEL = re.compile(
 
 
 def remove_shadowed_bss(root: Path, functions) -> None:
-    """Splat may reuse loaded code addresses as BSS labels. Keep the space and the actual text definition."""
+    """Splat may reuse loaded code addresses as data labels. Keep the bytes and the actual text definition."""
     bss = {}
     labels = set()
-    for path in (root / 'asm' / 'data').rglob('*.bss.s'):
+    for path in (root / 'asm' / 'data').rglob('*.s'):
         text = path.read_text(encoding='utf-8')
         bss[path] = text
         labels.update(name for directive, name in _SPLAT_LABEL.findall(text) if directive not in ('nonmatching', 'enddlabel'))

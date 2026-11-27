@@ -657,3 +657,17 @@ def test_unresolved_scoped_automatic_names_keep_their_address():
     assert _auto_addresses([text], {'D_80028D68_code_80027AF0'}) == {
         'func_80123400_code_80120000': 0x80123400,
     }
+
+
+def test_export_removes_shadowed_data_labels_but_keeps_original_bytes(tmp_path):
+    from decompnet.rom.export import remove_shadowed_bss
+
+    data = tmp_path/'asm'/'data'
+    text = tmp_path/'asm'/'nonmatchings'
+    data.mkdir(parents=True)
+    text.mkdir()
+    (text/'unit.s').write_text('glabel entry\n    nop\n')
+    source = data/'layout.data.s'
+    source.write_text('nonmatching entry\nalabel entry\n    .word 7\ndlabel other\n    .word 9\n')
+    remove_shadowed_bss(tmp_path, [{'name': 'entry'}])
+    assert source.read_text() == '    .word 7\ndlabel other\n    .word 9\n'
