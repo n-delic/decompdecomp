@@ -20,6 +20,7 @@ LIMIT = 24
 _BUILTIN = {'void', 'char', 'short', 'int', 'long', 'float', 'double', 'signed', 'unsigned'}
 _QUALIFIERS = {'const', 'volatile', 'register'}
 _JAL = re.compile(r'\bjal\s+([A-Za-z_]\w*)')
+_EMPTY = re.compile(r'[\s;]*(?:return\s*;[\s;]*)?')
 
 
 def _type(text, header, named):
@@ -57,6 +58,8 @@ def prototype(source, name, header):
     if returns is None or not parameters or '...' in parameters:
         return None
     types = ['void']
+    if parameters == 'void' and _EMPTY.fullmatch(text[head.end():text.rfind('}')]):
+        return None  # an empty body is no evidence of the parameters
     if parameters != 'void':
         types = []
         for parameter in parameters.split(','):
