@@ -736,12 +736,18 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
 
         original = (work / original_name).read_bytes()
         blocks, cursor = [], len(original)
-        for offset, payload in unpack_code(original):
+        compressed = unpack_code(original)
+        verified_blocks = any(original[offset:offset + 4] != b"RNC\x01" for offset, _ in compressed)
+        for offset, payload in compressed:
             cursor += -cursor % 0x10 + 0x2000
-            if original[offset:offset + 4] != b"RNC\x01" or image[cursor:cursor + len(payload)] != payload:
+            if image[cursor:cursor + len(payload)] != payload:
                 raise ExportError("compressed analysis export needs a verified reconstruction for every block")
             blocks.append({"rom": offset, "analysis": cursor, "size": len(payload)})
             cursor += len(payload)
+        if verified_blocks:
+            from ..consoles.n64.code import verify_unpacked_analysis
+            if not verify_unpacked_analysis(original, image):
+                raise ExportError("compressed analysis differs from its original cartridge and decoded blocks")
         gzip_boot_ranges = []
         archive_analysis = False
         runtime_programs = []
@@ -763,6 +769,8 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
         cartridge = f"baserom.cartridge{ext}"
         (out / cartridge).write_bytes(original)
         build["cartridge"] = {"image": cartridge, "sha1": hashlib.sha1(original).hexdigest(), "blocks": blocks}
+        if verified_blocks:
+            build["cartridge"]["verified_blocks"] = True
         if gzip_boot_ranges:
             build["cartridge"]["gzip_boot_ranges"] = gzip_boot_ranges
         if archive_analysis:
