@@ -78,6 +78,46 @@ def graphics_spans(image):
                 and sum(0x01000400 <= target < 0x01000800 for target in targets) >= 3):
             yield start, end
 
+    # Some bootstrapped graphics programs fill the 4 KiB task image with
+    # vector code and continue with an IMEM overlay. Its final branch and
+    # vector delay slot, zero alignment and a separately framed CPU routine
+    # establish where the processor changes without guessing a code boundary.
+    entry = bytes.fromhex('4a00002cc81f201bc81e201c')
+    for match in re.finditer(re.escape(RSPBOOT), image):
+        start = match.start()
+        code = start+0xd0
+        end = code+0x1000
+        if start % 16 or end+0x100 >= len(image) or image[code:code+len(entry)] != entry:
+            continue
+        words = struct.unpack_from('>1024I', image, code)
+        targets = {word & 0x3ffffff for word in words if word >> 26 in (2, 3)}
+        if (sum(map(_vector, words)) < _MIN_VECTORS
+                or sum(0x400 <= target < 0x800 for target in targets) < 3
+                or words[-1] >> 26 != 2 or not 0x400 <= words[-1] & 0x3ffffff < 0x800):
+            continue
+        for at in range(end+0x100, min(end+0x800, len(image)-40), 4):
+            frame = int.from_bytes(image[at:at+4], 'big')
+            if not is_frame(frame):
+                continue
+            following = struct.unpack_from('>8I', image, at+4)
+            if not any(word & 0xffff0000 == 0xafbf0000 for word in following):
+                continue
+            if not called_extent(image, at, min(at+0x400, len(image)), 0x80000000):
+                continue
+            for padding in range(2, 9):
+                jump_at = at-4*(padding+2)
+                jump, delay = struct.unpack_from('>2I', image, jump_at)
+                if (jump_at < end or jump >> 26 != 2 or not 0x400 <= jump & 0x3ffffff < 0x800
+                        or not _vector(delay) or any(image[jump_at+8:at])):
+                    continue
+                tail = struct.unpack_from(f'>{(jump_at-end)//4}I', image, end)
+                if sum(map(_vector, tail)) >= _MIN_VECTORS:
+                    yield start, at
+                    break
+            else:
+                continue
+            break
+
     signature = bytes.fromhex('342100010900041a') + RSPBOOT[4:]
     for match in re.finditer(re.escape(signature), image):
         start = match.start()
