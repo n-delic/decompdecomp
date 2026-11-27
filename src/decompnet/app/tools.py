@@ -934,11 +934,18 @@ def _named(net: RomNetwork, agent: Agent, slug: str, args: dict, tool="") -> dic
             resolved = net.resolve_function(agent, slug, function)
         except NetworkError:
             address_like = re.fullmatch(r'(?:0[xX][0-9a-fA-F]+|(?:D_|func_)[0-9a-fA-F]{8,16})(?:\+(?:0x[0-9a-fA-F]+|[0-9]+))?',str(function))
-            symbol = net.project_store(slug).one('SELECT 1 FROM symbols s JOIN projects p ON p.id=s.project_id WHERE p.slug=? AND s.name=?',slug,function)
-            if tool not in {"get_function", "get_assembly"} or not (address_like or symbol):
-                raise
-            from .address_lookup import read_function
-            resolved = read_function(net,agent,slug,function)
+            if tool == "report_repair":
+                # the app names a function once it matches: the report arrives under the name the agent worked on
+                from .function_names import former
+                resolved = former(net, slug, function)
+                if resolved is None:
+                    raise
+            else:
+                symbol = net.project_store(slug).one('SELECT 1 FROM symbols s JOIN projects p ON p.id=s.project_id WHERE p.slug=? AND s.name=?',slug,function)
+                if tool not in {"get_function", "get_assembly"} or not (address_like or symbol):
+                    raise
+                from .address_lookup import read_function
+                resolved = read_function(net,agent,slug,function)
         args = {**args, "function": resolved}
     return args
 
