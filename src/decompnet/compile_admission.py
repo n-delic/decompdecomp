@@ -16,7 +16,10 @@ class Admission:
 
     @property
     def limit(self):
-        return max([self.default, *self.requests.values()])
+        return max([self.default, *(count + reserve for count, reserve in self.requests.values())])
+
+    def _background_limit(self):
+        return max([self.default, *(count for count, _ in self.requests.values())])
 
     def group(self, limit):
         return Group(self, limit)
@@ -34,13 +37,13 @@ class Admission:
 
     def _ready(self):
         ready = []
-        for pending in (self.foreground, self.background):
+        for pending, limit in ((self.foreground, self.limit), (self.background, self._background_limit())):
             for _ in range(len(pending)):
                 ticket, group = pending[0]
                 if ticket.cancelled():
                     pending.popleft()
                     continue
-                if self.active >= self.limit:
+                if self.active >= limit:
                     break
                 pending.popleft()
                 if group is not None and group.active >= group.limit:
@@ -75,10 +78,10 @@ class Admission:
             grant.set_result(None)
 
     @contextmanager
-    def capacity(self, count):
+    def capacity(self, count, *, foreground_reserve=0):
         token = object()
         with self.condition:
-            self.requests[token] = count
+            self.requests[token] = count, foreground_reserve
             ready = self._ready()
         for grant in ready:
             grant.set_result(None)

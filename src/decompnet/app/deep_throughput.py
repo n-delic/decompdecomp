@@ -97,8 +97,10 @@ class Metrics:
         rate_seconds=min(5,elapsed)
         gate = getattr(self,'gate',None)
         slots = self.remote_slots or (gate.limit if gate else 0)
+        group = getattr(self, 'shared_group', None)
+        active = group.active if group is not None else values.get('executing', 0)
         return {'active_proposal_workers':values['proposal_workers'],
-                'active_compiles':values.get('executing',0),
+                'active_compiles':active,
                 'shared_active_compiles':getattr(compiler._SLOTS,'active',0),
                 'shared_compile_slots':getattr(compiler._SLOTS,'limit',0) if not self.remote_slots else 0,
                 **{'compiler_waiting_'+name:values.get('waiting_'+name,0) for name in ('search','background','shared')},
@@ -160,10 +162,12 @@ def sweep(function):
         if not opts['maximum_throughput'] and not opts['compile_slots']:count = compiler.concurrency_limit()
         pool = Pool(count, maximum=opts['maximum_throughput'])
         pool.shared_slots = compiler._SLOTS.group(count)
+        pool.metrics.shared_group = pool.shared_slots
         previous = getattr(log, 'compile_pool', None)
         log.compile_pool = pool
         try:
-            with (compiler._SLOTS.capacity(pool.count), compile_timing.collect(pool.metrics),
+            # One foreground compile can start immediately even if all sweep permits are in use.
+            with (compiler._SLOTS.capacity(pool.count, foreground_reserve=1), compile_timing.collect(pool.metrics),
                   compiler.shared_slots(pool.shared_slots)):
                 return function(self,slug,minutes,variants,log,*args,**kwargs)
         finally:

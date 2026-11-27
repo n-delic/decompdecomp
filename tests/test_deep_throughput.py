@@ -350,3 +350,22 @@ def test_a_full_sweep_does_not_block_other_admission_and_cancelled_requests_are_
     sweep.finish(waiting)
     gate.release()
     assert gate.active == sweep.active == 0
+
+
+def test_sweep_capacity_reserves_one_slot_for_foreground_only():
+    gate = Admission(2)
+    sweep = gate.group(2)
+    with gate.capacity(2, foreground_reserve=1):
+        first, second = sweep.request(), sweep.request()
+        assert first.done() and second.done()
+        background = gate.request(background=True)
+        assert not background.done()
+        foreground = gate.request()
+        assert foreground.done() and gate.active == 3
+        gate.release()
+        assert not background.done()
+        sweep.finish(first)
+        assert background.done()
+        gate.release()
+        sweep.finish(second)
+    assert gate.limit == 2 and gate.active == 0
