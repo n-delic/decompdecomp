@@ -1082,3 +1082,32 @@ def test_uncalled_argument_shuffle_keeps_called_tail_entry():
     result = repair(functions, [], image, consoles.get('n64'), segments)
     assert result[0].size == 20
     assert result[0].entry_aliases == {BASE+8: functions[1].name}
+
+
+@pytest.mark.parametrize('case', ['valid', 'wrong_return', 'changed_ra', 'external_interior', 'data'])
+def test_shared_assembly_return_wrapper_preserves_entries(case):
+    from decompnet.rom.automatic_boundaries import shared_return_wrapper
+
+    words = [0x03e0c825, 0x3c1f8000, 0x27ff101c, 0xc4840000,
+             0x46042002, 0x03e00008, 0, 0x03200008, 0x46000004]
+    if case == 'wrong_return':
+        words[2] += 4
+    if case == 'changed_ra':
+        words[3] = 0x27ff0004
+    image, functions, segments = fixture(words, cuts=(0, 12, 28, 36))
+    entered = {BASE+16} if case == 'external_interior' else set()
+    data = [DataSymbol('data', BASE+16, 16, 4, 'data')] if case == 'data' else []
+    assert shared_return_wrapper(*functions, image, consoles.get('n64'), 'big', segments, entered, data) == (case == 'valid')
+
+
+def test_shared_assembly_return_wrapper_joins_all_three_parts():
+    words = [0x03e0c825, 0x3c1f8000, 0x27ff101c, 0xc4840000,
+             0x46042002, 0x03e00008, 0, 0x03200008, 0x46000004,
+             0x0c000000 | (BASE >> 2 & 0x3ffffff), 0,
+             0x0c000000 | ((BASE+12) >> 2 & 0x3ffffff), 0, 0x03e00008, 0]
+    image, functions, segments = fixture(words, cuts=(0, 12, 28, 36, 60))
+    data = []
+    result = repair(functions, data, image, consoles.get('n64'), segments)
+    assert result[0].size == 36
+    assert result[0].entry_aliases == {BASE+12: functions[1].name, BASE+28: functions[2].name}
+    assert {d.vram for d in data} >= {BASE+12, BASE+28}

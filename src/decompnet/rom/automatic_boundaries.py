@@ -380,7 +380,7 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
 
     recovered_data=[]
     predecessors={(fn.rom+fn.size,fn.vram+fn.size):fn for fn in result if fn.size>=8}
-    kept=[];dropped=markers=recovered_shared=recovered_fallthrough=recovered_continuations=shared_delay_entries=0;ordered=sorted(result,key=lambda f:(owner(f),f.rom))
+    kept=[];dropped=markers=recovered_shared=recovered_fallthrough=recovered_continuations=shared_delay_entries=return_wrappers=0;ordered=sorted(result,key=lambda f:(owner(f),f.rom))
     for i,fn in enumerate(ordered):
         previous=kept[-1] if kept else None;following=ordered[i+1] if i+1<len(ordered) else None
         successor = following if fn.size == 4 else original_entries.get((fn.rom+4, fn.vram+4))
@@ -438,6 +438,24 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
             data.append(DataSymbol(fn.name, fn.vram, fn.rom, 4, 'data'))
             markers += 1
             continue
+        # A hand-written wrapper temporarily replaces $ra to reuse a separately
+        # callable leaf, then returns through the saved register. Preserve both
+        # entries and its local continuation when the whole shape is proven.
+        wrapper = kept[-2] if len(kept) >= 2 else None
+        if (wrapper is not None and owner(wrapper)[0] >= 0 and owner(wrapper) == owner(previous) == owner(fn)
+                and wrapper.vram in direct_calls and previous.vram in direct_calls
+                and fn.size == 8 and fn.lines[0].word == 0x03200008):
+            external = explicit | pointers | {address for address, sources in references.items()
+                if any(not wrapper.rom <= src < fn.rom+fn.size for src, _ in sources)}
+            if shared_return_wrapper(wrapper, previous, fn, image, console, order, segments, external, data):
+                kept[-2] = replace(wrapper, lines=wrapper.lines+previous.lines+fn.lines,
+                    labels=wrapper.labels | previous.labels | fn.labels,
+                    entry_aliases={**wrapper.entry_aliases, previous.vram:previous.name, fn.vram:fn.name})
+                kept.pop()
+                data.extend((DataSymbol(previous.name,previous.vram,previous.rom,0,'func'),
+                             DataSymbol(fn.name,fn.vram,fn.rom,0,'func')))
+                return_wrappers += 1
+                continue
         same_owner = previous is not None and owner(previous) == owner(fn)
         possible_fallthrough = (same_owner and 8 <= previous.size <= 128 and fn.lines
                                 and previous.rom+previous.size == fn.rom
@@ -565,12 +583,51 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
         log(f'Recovered {recovered_shared} closed leaves with independently entered assembly tails.')
     if recovered_fallthrough:
         log(f'Recovered {recovered_fallthrough} straight initializers with preserved framed entries.')
+    if return_wrappers:
+        log(f'Recovered {return_wrappers} shared assembly return wrappers with their entry symbols.')
     if recovered_continuations:
         log(f'Joined {recovered_continuations} unentered framed continuations.')
     if shared_delay_entries:
         log(f'Preserved {shared_delay_entries} called NOP entries shared with a return delay slot.')
-    return kept if dropped or markers or recovered_data or recovered_shared or recovered_fallthrough or recovered_continuations or shared_delay_entries else result if changed else functions
+    return kept if dropped or markers or recovered_data or recovered_shared or recovered_fallthrough or recovered_continuations or shared_delay_entries or return_wrappers else result if changed else functions
 
+
+
+def shared_return_wrapper(head, body, continuation, image, console, order, segments, entered, data):
+    """Prove a saved-$ra wrapper, shared leaf and local return continuation."""
+    import rabbitizer
+
+    from ..arch.mips import _mips_uses, rabbitizer_category
+
+    if (head.piece or body.piece or continuation.piece or head.size != 12 or body.size < 8
+            or continuation.size != 8 or head.rom+head.size != body.rom
+            or body.rom+body.size != continuation.rom or head.vram+head.size != body.vram
+            or body.vram+body.size != continuation.vram
+            or head.entry_aliases or body.entry_aliases or continuation.entry_aliases
+            or sum(segment.contains(head.vram,head.size+body.size+continuation.size) for segment in segments) != 1):
+        return False
+    end = continuation.rom+continuation.size
+    if (end > len(image) or any(d.rom is not None and d.rom < end and head.rom < d.rom+d.size for d in data)
+            or any(head.vram < address < continuation.vram+continuation.size and address != body.vram
+                   for address in entered)
+            or image[head.rom:end] != b''.join(line.word.to_bytes(4,order)
+                                                for fn in (head,body,continuation) for line in fn.lines)):
+        return False
+    first, high, low = (line.word for line in head.lines)
+    if first != 0x03e0c825 or high >> 16 != 0x3c1f or low >> 16 != 0x27ff:
+        return False
+    lo = low & 0xffff
+    target = (((high & 0xffff) << 16)+(lo-0x10000 if lo & 0x8000 else lo)) & 0xffffffff
+    if target != continuation.vram or body.lines[-2].word != JR_RA or continuation.lines[0].word != 0x03200008:
+        return False
+    for line in body.lines[:-2] + [body.lines[-1], continuation.lines[-1]]:
+        instruction = rabbitizer.Instruction(line.word,line.vram,rabbitizer_category(console.cpu_variant))
+        uses = _mips_uses(line.word,console.cpu_variant)
+        if (not instruction.isValid() or instruction.hasDelaySlot() or uses is None
+                or {25,31} & (uses[0] | uses[1])
+                or instruction.getOpcodeName() in ('eret','break','syscall','teq','tne','tge','tgeu','tlt','tltu')):
+            return False
+    return bool(console.asm_reason(image[head.rom:end]))
 
 
 def shared_called_leaf(head, tail, image, console, order, segments, entered, data):
