@@ -39,6 +39,28 @@ def test_scaffold_probes_real_object_rule_and_preserves_reference(tmp_path, monk
     assert 'M2C_DEFINES' in (tmp_path / unit.source).read_text()
 
 
+def test_scaffold_defers_annotated_assembly_but_prepares_other_units(tmp_path, monkeypatch):
+    fp = project(tmp_path)
+    refs = tmp_path / '.decomp-wtf/objdiff-references'
+    (refs / 'objects/other.o').write_bytes(b'verified reference')
+    (refs / 'asm/other.s').write_text('glabel other\njr $ra\nnop\n')
+    (refs / 'asm/demo.s').write_text('/* Handwritten function */\nglabel demo\njr $ra\nnop\n'
+                                     'glabel normal\njr $ra\nnop\n')
+    config = json.loads((tmp_path / 'objdiff.json').read_text())
+    config['units'].append({'name': 'asm/other', 'target_path': '.decomp-wtf/objdiff-references/objects/other.o'})
+    (tmp_path / 'objdiff.json').write_text(json.dumps(config))
+    def build(unit):
+        unit.base.write_bytes(b'candidate')
+        return True, ''
+    monkeypatch.setattr(fp, 'build_unit', build)
+    messages = []
+    assert prepare(fp, log=messages.append) == ['src/decompdecomp/other.c']
+    units = json.loads((tmp_path / 'objdiff.json').read_text())['units']
+    assert not units[0].get('metadata', {}).get('source_path')
+    assert units[1]['metadata']['source_path'].endswith('other.c')
+    assert any('review them first' in message for message in messages)
+
+
 @pytest.mark.parametrize('failure', ['failed', 'missing_object'])
 def test_failed_probe_rolls_back_sources_and_config(tmp_path, monkeypatch, failure):
     fp = project(tmp_path)
