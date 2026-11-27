@@ -82,10 +82,19 @@ def test_a_break_left_by_the_previous_functions_divide_check():
     assert 'starts 4 bytes late' in f.summary()
 
 
-def test_a_loop_tail_jumping_to_itself():
-    f = ef.decide(game([j(0x80001010), NOP]))['f']
-    assert (f.kind, f.at, f.confidence) == ('trim_start', 0x80001018, 'auto')
-    assert any('jumps to itself' in line for line in f.evidence)
+def test_a_self_loop_can_be_an_independent_no_return_function():
+    loop = [j(0x80001010), NOP]
+    assert 'f' not in ef.decide(game(loop))  # an unreferenced SDK panic stub can look just like a loop tail
+    f = ef.decide(game(loop, pointer=0x80001018))['f']
+    assert (f.kind, f.at, f.confidence) == ('split_end', 0x80001018, 'auto')
+    assert any('a loop that never returns' in line for line in f.evidence)
+
+
+def test_a_whole_self_loop_is_not_archived_as_padding():
+    prev = entry('prev', 0x80001000, returning(0x80001000))
+    loop = entry('loop', 0x80001010, [j(0x80001010), NOP])
+    after = entry('after', 0x80001018, body())
+    assert 'loop' not in ef.decide([prev, loop, after])
 
 
 def test_a_frame_given_back_and_taken_again():
