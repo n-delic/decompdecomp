@@ -227,6 +227,39 @@ def _array_pointers(source: str) -> str:
     return source
 
 
+_ELSE_DEFAULT = re.compile(r"\}\s*else\s*\{\s*default:(?P<body>[^{}:?]*;)\s*\}")
+
+
+def _default_in_else(source: str) -> str:
+    """A `default:` m2c printed in the `else` beside the switch it belongs to: the switch's default and the `else` are one
+    block. `_stray_labels` drops the label, which would leave an unmatched value doing nothing, so the block is copied
+    into the switch first (the compiler merges the two again). Only when the switch is the last statement of the `if`'s
+    arm and the block is plain statements. An N64 text converter's draft lost its `default:` this way: 5315 with it
+    left out, exact with it (and three other spellings)."""
+    for found in reversed(list(_ELSE_DEFAULT.finditer(source))):
+        body = found["body"].strip()
+        if re.search(r"\b(?:goto|break|continue|case|default)\b", body):
+            continue
+        # backwards from the arm's closing brace: the switch's own closing brace, then the brace that opened it
+        close = len(source[:found.start()].rstrip()) - 1
+        if close < 0 or source[close] != "}":
+            continue
+        depth, opened = 0, None
+        for brace in reversed(list(re.finditer(r"[{}]", source[:close + 1]))):
+            depth += 1 if brace[0] == "}" else -1
+            if not depth:
+                opened = brace.start()
+                break
+        if opened is None or not re.search(r"\bswitch\s*\([^{};]*\)\s*(?:/\*[^\n]*?\*/\s*)?$", source[:opened]):
+            continue
+        cases = source[opened:close].rstrip()
+        if re.search(r"\bdefault\s*:", cases):
+            continue
+        leaves = "" if re.search(r"\b(?:break|continue|return\b[^;{}]*)\s*;$", cases) else "break; "
+        source = source[:close] + f"{leaves}default: {body} break; " + source[close:]
+    return source
+
+
 def _stray_labels(source: str) -> str:
     """`case 5:` and `default:` that m2c left outside any `switch` (a branch target it could not tie to the switch):
     C only has them inside one. The label goes; the code under it stays."""
@@ -253,6 +286,6 @@ def repair(source: str) -> str:
         return source
     for step in (_void_dereferences, _integer_dereferences, _scalar_dereferences, _table_calls, _literal_calls,
                  _address_sums, _library_calls, _pointer_calls, _unknown_pointer_words, _missing_halves, _array_pointers,
-                 _stray_labels, _call_prototypes):
+                 _default_in_else, _stray_labels, _call_prototypes):
         source = step(source)
     return source
