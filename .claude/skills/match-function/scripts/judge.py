@@ -62,8 +62,11 @@ class App:
         except urllib.error.HTTPError as error:
             return {"HTTP": error.code, "error": error.read().decode()[:1500]}
 
-    def function(self, slug, name):
-        return self.call("/api/function?" + urllib.parse.urlencode({"slug": slug, "name": name}))
+    def function(self, slug, name, quick=False):
+        """The app's record of a function. `quick`: only the drawer's first paint (name, id, address, status, saved C),
+        which a busy app still answers when the full record says "Shared metadata is still being prepared"."""
+        query = {"slug": slug, "name": name, **({"quick": "1"} if quick else {})}
+        return self.call("/api/function?" + urllib.parse.urlencode(query))
 
     def claim(self, slug, name="", strategy="random", max_insns=0):
         """An app started before `nearest` existed refuses it: ask for closest (its near-miss order), then random."""
