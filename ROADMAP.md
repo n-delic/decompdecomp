@@ -844,7 +844,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Supplied assembly code/data verification | ✓ ROM driver | ✓ ROM driver | ✓ ROM driver | — | — | ✓ ROM driver | — | — own build adapter planned | — own build adapter planned | — | — own build adapter planned | — own build adapter planned |
 | Indexed SDK object assembly proof | ✓ MIPS ROM | ✓ MIPS ROM | ✓ MIPS ROM | — | — | ✓ MIPS ROM | — | — owned-build adapter planned | — owned-build adapter planned | — | — owned-build adapter planned | — owned-build adapter planned |
 | Library C that library detection finds set aside (opt-in, Libraries for this game; linked when your SDK has it) | ✓ MIPS ROM, built-in ultralib table; port glue and replaced, and n_audio (no public source) | ✓ MIPS ROM | ✓ MIPS ROM | — | — | ✓ MIPS ROM | — | — owned-build adapter planned | — owned-build adapter planned | — | — owned-build adapter planned | — owned-build adapter planned |
-| Built-in exact SDK assembly detection before claims | ✓ bcmp/bzero | — pack planned | — pack planned | — | — | — pack planned | — | — pack planned | — pack planned | — | — pack planned | — owned-build adapter planned |
+| Built-in exact SDK assembly detection before claims | ✓ exact libultra bodies | — pack planned | — pack planned | — | — | — pack planned | — | — pack planned | — pack planned | — | — pack planned | ✓ N64 ELF references without relocations; other packs planned |
 | Exact C / verified source assembly / verified SDK assembly / other assembly / open counts | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ counts | ✓ counts | — | ✓ counts | ✓ counts |
 | Local mapped source preparation | ✓ | ✓ | ✓ | — | — | ✓ | — | body only¹ | body only¹ | — | body only¹ | body only¹ |
 | Verified neighbour context hypotheses and separate body/header bundles | ✓ ROM | ✓ ROM | ✓ ROM | — | — | ✓ ROM | — | — own build adapter planned | — own build adapter planned | — | — own build adapter planned | — own build adapter planned |
@@ -4861,9 +4861,12 @@ similarity alone is insufficient. Their ordinary assembly classifications still 
 - Done: N64 local-ROM import classifies exact, self-contained libultra bcmp/bzero
   byte variants before claims and names unique entries. Active existing projects
   receive classification/display-name backfill without replacing source symbols.
-- Planned: additional independently verified reference-free SDK bodies and imported
-  project/other-console adapters. Relocated code still needs the full linker proof;
-  partial SDK signatures never establish handwritten assembly.
+- Done: N64 imported projects identify the same exact SDK bodies in sized ELF reference
+  symbols without relocations. Matches, user reopenings and agent claims stay untouched;
+  a proof is rechecked against the reference object when read.
+- Planned: additional independently verified reference-free SDK bodies and other-console
+  adapters. Relocated code still needs the full linker proof; partial SDK signatures
+  never establish handwritten assembly.
 
 Asset discovery now records automatic layout/decompression checks, comparisons with
 static loader extents and independent worker critiques. Use at least two discovery

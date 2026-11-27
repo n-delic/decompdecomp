@@ -25,6 +25,16 @@ def fingerprint(proj, fn):
 def verified(proj, fn):
     proof=json.loads(fn['meta'] or '{}').get('verified_assembly',{})
     if not isinstance(proof,dict):return False
+    if proof.get('verification_method')=='fork-sdk-digest':
+        from .. import consoles
+        from ..forks.sdk_evidence import reverify
+        try:
+            cfg = json.loads(proj['config'])
+            symbol = json.loads(fn['meta'] or '{}').get('symbol')
+            return (fn['status'] == 'asm' and proof.get('verified') is True and isinstance(symbol, str)
+                    and reverify(consoles.of(cfg), Path(proj['root']), symbol, int(fn['size']), proof))
+        except (KeyError, TypeError, ValueError):
+            return False
     if proof.get('verification_method')=='builtin-sdk-digest':
         from .. import consoles
         from .sdk_assembly import known_proof
@@ -44,7 +54,7 @@ def breakdown(net, proj):
     with getattr(net.project_store(proj['id']),'lock',nullcontext()):
         counts=net.project_store(proj['id']).one(f"SELECT SUM(status='matched') c,SUM(status='asm') a,SUM(status='open') o,SUM(size) bytes,SUM(CASE WHEN status='matched' THEN size ELSE 0 END) cbytes FROM functions WHERE project_id=? AND {IN_BUILD}",proj['id'])
         checked=0;sdk=0
-        for row in net.project_store(proj['id']).all(f"SELECT vram,size,target,relocs,meta,status FROM functions WHERE project_id=? AND {IN_BUILD} AND status='asm' AND json_type(meta,'$.verified_assembly')='object'",proj['id']):
+        for row in net.project_store(proj['id']).all(f"SELECT name,unit,vram,size,target,relocs,meta,status FROM functions WHERE project_id=? AND {IN_BUILD} AND status='asm' AND json_type(meta,'$.verified_assembly')='object'",proj['id']):
             current=verified(proj,row);checked+=int(current)
             sdk+=int(current and json.loads(row['meta'] or '{}').get('verified_assembly',{}).get('kind')=='sdk')
     return {'exact_c':counts['c'] or 0,'verified_source_assembly':checked-sdk,'verified_sdk_assembly':sdk,

@@ -1192,6 +1192,14 @@ class ForkEngine:
         counts: dict[str, int] = defaultdict(int)
         for _, f in rows:
             counts[f["name"]] += 1
+        # Complete relocation-free SDK bodies can be identified in reference objects too.
+        # Read only units with a plausible size and leave COFF and unknown bodies unchanged.
+        from ..forks.sdk_evidence import identities as sdk_identities
+        sdk_sizes = set(console.sdk_assembly_sizes)
+        sdk_units = {uname for uname, f in rows if int(f.get('size', 0)) in sdk_sizes
+                     and (f.get('fuzzy_match_percent') or 0) < 100}
+        sdk_evidence = {uname: sdk_identities(console, fp.root, units[uname].target)
+                        for uname in sdk_units if uname in units}
         all_rows = self.net.project_store(slug).all("SELECT * FROM functions WHERE project_id=?", proj["id"])
         existing = {(r["unit"], self._meta(r).get("symbol"), self._meta(r).get("nth", 0)): r for r in all_rows}
         used = {r["name"] for r in all_rows}
@@ -1209,6 +1217,19 @@ class ForkEngine:
             if key not in here and key[0]:
                 moved[(key[0].split("/", 1)[0], key[1])].append(r)
         with self.net.project_store(slug).tx() as db:
+            claimed = ({r['function_id'] for r in db.execute(
+                'SELECT c.function_id FROM claims c JOIN functions f ON f.id=c.function_id WHERE f.project_id=?',
+                (proj['id'],))} if any(sdk_evidence.values()) else set())
+            if fp.scope == GAME:
+                for uname, f in rows:
+                    sym = f['name']
+                    proof = sdk_evidence.get(uname, {}).get(sym)
+                    old = existing.get((uname, sym, 0))
+                    if (counts[sym] == 1 and proof and proof['bytes'] == int(f.get('size', 0))
+                            and (f.get('fuzzy_match_percent') or 0) < 100
+                            and not (old is not None and (old['id'] in claimed or old['status'] == 'matched'
+                                                       or self._meta(old).get('reopened')))):
+                        aside.setdefault(sym, 'Verified SDK assembly; excluded from C matching.')
             for uname, f in rows:
                 sym = f["name"]
                 k = nth[(uname, sym)]
@@ -1241,14 +1262,29 @@ class ForkEngine:
                 if old is not None:  # its code grew (pieces joined to it): why it was set aside was about a piece
                     was = self._meta(old)
                     kept = _KEPT_KEYS if old["size"] == size else ("reopened",)
+                    previous_proof = was.get('verified_assembly')
+                    fork_proof = isinstance(previous_proof, dict) and previous_proof.get('verification_method') == 'fork-sdk-digest'
                     meta.update({k: v for k, v in was.items() if k in kept
-                                 and not (k == "asm_code" and was.get("set_aside"))})  # (set aside: decided below)
+                                 and not (k == "asm_code" and was.get("set_aside"))
+                                 and not (k == 'sdk_identity' and fork_proof)})  # (set aside: decided below)
                 if sym in generated and not meta.get("reopened"):  # set aside as assembly is, whatever the scope
                     meta["asm_code"] = generated[sym]
                 if sym in aside:  # code the project says isn't the game's own (library code, middleware)
                     meta["asm_code"] = aside[sym]
                     meta["set_aside"] = True  # and progress takes it off, as no C code is (network.SET_ASIDE)
                 status = "matched" if fuzzy is not None and fuzzy >= 100 else "open" if u and u.source else "nosource"
+                proof = sdk_evidence.get(uname, {}).get(sym)
+                if (status != 'matched' and counts[sym] == 1 and proof and proof['bytes'] == size
+                        and not meta.get('reopened') and not (old is not None and
+                            (old['id'] in claimed or old['status'] == 'matched'))):
+                    meta.pop('not_c', None)
+                    meta.pop('asm_twin', None)
+                    meta['verified_assembly'] = proof
+                    meta['sdk_identity'] = proof['name']
+                    meta['sdk_display'] = {'name': proof['name'], 'names': proof['names'], 'corpora': [proof['corpus']]}
+                    meta['asm_code'] = 'Verified SDK assembly; excluded from C matching.'
+                    meta['set_aside'] = True
+                    status = 'asm'
                 if status == "open" and any(meta.get(k) for k in _ASM_KEYS):
                     status = "asm"  # hand-written assembly (here or in its twin elsewhere): not for agents
                 score = None if fuzzy is None else scaled(fuzzy, n)
