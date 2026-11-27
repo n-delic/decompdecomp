@@ -2,6 +2,58 @@
 import copy
 
 
+def restore_cut_banks(config):
+    """Rejoin redundant fragments that cut a scoped bank before its own children.
+
+    Old split configurations can contain top-level discoveries inside a code bank,
+    truncating that bank even though its original children continue afterwards.
+    Only discard plain fragments with the same mapping and compatible scope. This
+    operates on the export copy; the project file itself stays untouched.
+    """
+    result = copy.deepcopy(config)
+    segments = result.get('segments', [])
+    index = 0
+    while index < len(segments):
+        bank = segments[index]
+        if not isinstance(bank, dict) or bank.get('type') != 'code' or not bank.get('exclusive_ram_id'):
+            index += 1
+            continue
+        children = bank.get('subsegments') or []
+        starts = [child[0] for child in children if isinstance(child, list) and child and isinstance(child[0], int)]
+        if not starts or index + 1 >= len(segments):
+            index += 1
+            continue
+        def start(segment):
+            return segment[0] if isinstance(segment, list) and segment else segment.get('start') if isinstance(segment, dict) else None
+        next_start = start(segments[index + 1])
+        if not isinstance(next_start, int) or max(starts) < next_start:
+            index += 1
+            continue
+        end_index = next((i for i in range(index + 1, len(segments))
+                          if isinstance(start(segments[i]), int) and start(segments[i]) > max(starts)), None)
+        if end_index is None:
+            index += 1
+            continue
+        fragments = segments[index + 1:end_index]
+        delta = bank['vram'] - bank['start']
+        def redundant(fragment, delta=delta, scope=bank['exclusive_ram_id']):
+            if not isinstance(fragment, dict) or fragment.get('type') not in ('bin', 'code'):
+                return False
+            if fragment['type'] == 'bin':
+                return set(fragment) <= {'type', 'start', 'name'}
+            subs = fragment.get('subsegments') or []
+            return (fragment.get('vram', 0) - fragment['start'] == delta
+                    and fragment.get('exclusive_ram_id', scope) == scope
+                    and set(fragment) <= {'type', 'start', 'name', 'vram', 'subsegments', 'exclusive_ram_id',
+                                           'symbol_name_format', 'symbol_name_format_no_rom'}
+                    and len(subs) == 1 and isinstance(subs[0], list) and len(subs[0]) >= 2
+                    and subs[0][0] == fragment['start'] and subs[0][1] == 'c')
+        if fragments and all(redundant(fragment) for fragment in fragments):
+            del segments[index + 1:end_index]
+        index += 1
+    return result
+
+
 def extend_config(config, functions):
     """Extend only a code parent's immediate raw tail, stopping before the next parent.
 

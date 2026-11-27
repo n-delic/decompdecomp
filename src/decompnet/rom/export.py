@@ -253,8 +253,8 @@ def _export_segments(config: dict, functions) -> dict:
     already recovered that word in the function; exporting the old boundary
     would put it in both the compiled function and a data object.
     """
-    from .reviewed import extend_config
-    config = extend_config(config, functions)
+    from .reviewed import extend_config, restore_cut_banks
+    config = extend_config(restore_cut_banks(config), functions)
     # The export writes its own complete symbol table; project-specific paths are not copied there.
     config.setdefault('options', {})['symbol_addrs_path'] = ['symbol_addrs.txt']
     # Splat uses the function sizes we supply to keep switch tails in text. Its BSS scan
@@ -471,7 +471,7 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
     # its assembly file. Leave its extent to splat when another entry begins
     # exactly at its end; boundary review still decides whether it is valid.
     unsized = _fallthrough_entries(population, console)
-    (out / "symbol_addrs.txt").write_text("\n".join(_symbol_lines(net, proj, population, analysis_only, _segments(split_config), unsized)) + "\n", encoding="utf-8")
+    (out / "symbol_addrs.txt").write_text("\n".join(_symbol_lines(net, proj, population, analysis_only, _segments(exported_config), unsized)) + "\n", encoding="utf-8")
     res = run([console_python(), "-m", "splat", "split", "splat.yaml"], out, log)
     if res.returncode != 0:
         raise ExportError("splat failed:\n" + (res.stdout + res.stderr)[-1500:])
