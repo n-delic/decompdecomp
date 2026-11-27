@@ -392,9 +392,12 @@ explicitly requests deployment.
 
 The user works on more than one computer, and the folders differ between them: never take a checkout or data home
 from a path written down here or remembered from another session. Find the running app on this machine instead:
-- `ps -E -o pid,command | grep -E 'bin/decomp( |$)'` shows each app's process, its checkout (the `.venv` it runs
-  from) and, in its environment, `DECOMP_HOME` and `DECOMP_PORT` (none: the defaults, `~/Decomp-RetroReversing`
-  on 6464 for an installed copy, `~/Decomp-RetroReversing-dev` on 6474 for a checkout, app/edition.py).
+- `ps -ax -o pid,command | grep -E 'bin/decomp( |$)'` shows each app's process and its checkout (the `.venv` it
+  runs from).
+- `ps -E -o command= -p <pid> | grep -oE '(^| )DECOMP_(HOME|PORT)=[^ ]*'` then shows that process's `DECOMP_HOME`
+  and `DECOMP_PORT` (none: the defaults, `~/Decomp-RetroReversing` on 6464 for an installed copy,
+  `~/Decomp-RetroReversing-dev` on 6474 for a checkout, app/edition.py). Never run `ps -E` without that filter, or
+  otherwise print a process's environment: the app's holds secrets.
 - `<home>/.decomp/server.json` names the port and pid of the app serving that home.
 - More than one app running, or none: ask the user which one they mean.
 
