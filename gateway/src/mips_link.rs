@@ -18,7 +18,7 @@ fn patch(word: u32, kind: u8, address: u32, gp: u32) -> Result<u32, String> {
     Ok((word & !mask) | (field & mask))
 }
 
-fn bytes(value: &Value) -> Result<Vec<u8>, String> {
+pub(crate) fn bytes(value: &Value) -> Result<Vec<u8>, String> {
     let text = value.as_str().ok_or("missing MIPS instruction bytes")?;
     if text.len() % 2 != 0 {
         return Err("odd length MIPS instruction hex".into());

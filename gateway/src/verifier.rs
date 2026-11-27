@@ -134,12 +134,21 @@ impl Judge {
                 let line = self.output.next_line().await.map_err(|error| error.to_string())?
                     .ok_or("the judge ended")?;
                 let reply: Value = serde_json::from_str(&line).map_err(|error| format!("the judge said {line:?}: {error}"))?;
-                let Some(plan) = reply.get("link_mips") else { return Ok(reply) };
-                if request["link_mips"].as_u64() != Some(crate::mips_link::VERSION) {
-                    return Err("unexpected MIPS link request from the judge".into());
-                }
-                // Return an error to the adapter before accepting another job, so no response stays in flight.
-                let result = crate::mips_link::link(plan).unwrap_or_else(|error| json!({"error": error}));
+                let result = if let Some(plan) = reply.get("parse_mips") {
+                    if request["parse_mips"].as_u64() != Some(crate::mips_elf::VERSION) {
+                        return Err("unexpected MIPS ELF request from the judge".into());
+                    }
+                    crate::mips_elf::prepare(plan)
+                } else if let Some(plan) = reply.get("link_mips") {
+                    if request["link_mips"].as_u64() != Some(crate::mips_link::VERSION) {
+                        return Err("unexpected MIPS link request from the judge".into());
+                    }
+                    crate::mips_link::link(plan)
+                } else {
+                    return Ok(reply);
+                };
+                // Answer errors too, so no callback response stays in flight.
+                let result = result.unwrap_or_else(|error| json!({"error": error}));
                 self.input.write_all(format!("{result}\n").as_bytes()).await.map_err(|error| error.to_string())?;
                 self.input.flush().await.map_err(|error| error.to_string())?;
             }
@@ -256,6 +265,7 @@ impl Verifier {
         if let Some(trial) = item["trial"].as_object() {
             request["score_evidence"] = json!(crate::rom_judge::SCORE_VERSION);
             request["link_mips"] = json!(crate::mips_link::VERSION);
+            request["parse_mips"] = json!(crate::mips_elf::VERSION);
             for (key, value) in trial {
                 request[key] = value.clone();
             }

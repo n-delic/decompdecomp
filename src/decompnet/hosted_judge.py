@@ -439,23 +439,32 @@ class Packs:
 
 
 def _judge_with_mips_linker(packs, request, lines, out):
-    from .rom.match import instruction_linker
+    from .rom.match import elf_preparer, instruction_linker
+
+    def exchange(operation, plan):
+        out.write(json.dumps({operation: plan}) + "\n")
+        out.flush()
+        reply = json.loads(next(lines))
+        if isinstance(reply, dict) and "error" in reply:
+            raise RuntimeError(reply["error"])
+        return reply
 
     def link(code, target, patches):
         plan = {"code": code.hex(), "target": target.code.hex(), "big_endian": target.big_endian,
                 "gp": target.gp & 0xFFFFFFFF, "patches": patches}
-        out.write(json.dumps({"link_mips": plan}) + "\n")
-        out.flush()
-        reply = json.loads(next(lines))
-        if "error" in reply:
-            raise RuntimeError(reply["error"])
+        reply = exchange("link_mips", plan)
         return bytes.fromhex(reply["linked"]), reply["instructions_exact"]
 
-    token = instruction_linker.set(link)
+    def prepare(obj, name):
+        return exchange("parse_mips", {"object": obj.hex(), "name": name})
+
+    link_token = instruction_linker.set(link)
+    prepare_token = elf_preparer.set(prepare if request.get("parse_mips") == 1 else None)
     try:
         return packs.judge(request)
     finally:
-        instruction_linker.reset(token)
+        elf_preparer.reset(prepare_token)
+        instruction_linker.reset(link_token)
 
 
 def serve(net, lines=sys.stdin, out=sys.stdout) -> None:
