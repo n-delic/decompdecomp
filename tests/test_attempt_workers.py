@@ -157,7 +157,7 @@ def test_project_attempt_records_across_worker_update(fork, tmp_path, monkeypatc
                           SCALE, ("project-build", "project-diff"), update_kind)
 
 
-def audit_rust_judge(methods, trace):
+def audit_rust_judge(methods, trace, set_method=setattr):
     """Instrument the worker to compare the Rust and Python paths on the same object."""
     from decompnet import scoring
     from decompnet.rom import match
@@ -177,15 +177,16 @@ def audit_rust_judge(methods, trace):
             log.write("link\n")
         return actual
 
-    def diff(judge, target, candidate):
-        expected = scoring.diff(target, candidate)
-        actual = native_diff(judge, target, candidate)
+    def diff(judge, target, candidate, *, details=True):
+        expected = scoring._diff(target, candidate, details=details)
+        actual = native_diff(judge, target, candidate, details=details)
         assert actual is not None and actual == expected, (actual, expected)
         with open(trace, "a", encoding="utf-8") as log:
             log.write("diff\n")
         return actual
 
-    methods.link, methods.diff = link, diff
+    set_method(methods, "link", link)
+    set_method(methods, "diff", diff)
 
 
 @pytest.mark.parametrize("toolchain", ["gcc-2.7.2-kmc", "ido-7.1"])
@@ -194,6 +195,7 @@ def test_n64_desktop_attempt_and_interactive_diff_use_rust(project, monkeypatch,
 
     from decompnet import scoring
     from decompnet.app import mcp_gateway
+    from decompnet.rom.desktop_judge import RustJudge
     from decompnet.rom.match import RomTarget, link
 
     if not (program := mcp_gateway.built()) or not scoring._native_mips_decoder_compatible():
@@ -266,8 +268,32 @@ def test_n64_desktop_attempt_and_interactive_diff_use_rust(project, monkeypatch,
             assert "link" in phases and "diff" in phases
             net._diffs.clear()
             net.attempt_workers = None
-            expected = net.function_diff("game", "reader")
+            with monkeypatch.context() as python:
+                python.setenv("DECOMP_MCP_GATEWAY", "0")
+                expected = net.function_diff("game", "reader")
             assert actual == expected
+            net._diffs.clear()
+            trace.write_text("")
+            with monkeypatch.context() as audit:
+                audit_rust_judge(RustJudge, trace, audit.setattr)
+                assert net.function_diff("game", "reader") == expected
+                assert {"link", "diff"} <= set(trace.read_text().splitlines())
+                if index == 0:
+                    row = net._function("reader", "game")
+                    proj = net.project_row("game", sync=False)
+                    output = net._compile(proj, "", source, row)
+                    assert output.ok, output.log
+                    target = net._rom_target(row)
+                    reader = net.reader(proj, row)
+                    # Standalone exports supply their own reader instead of a project snapshot.
+                    read_calls = []
+                    def custom_read(address, size, calls=read_calls, read=reader):
+                        calls.append((address, size))
+                        return read(address, size)
+
+                    linked = net.console(proj).link_function(output.obj, "reader", target, net.symbols(pid), custom_read)
+                    assert not linked.exact and linked.instructions_exact and read_calls
+                    assert scoring.score(net._target_obj(row, proj), linked.candidate).rows == []
             assert actual["score"] == attempt["score"]
             if index == 0:
                 assert actual["score"] == 1 and actual["checks"]["instructions"]["exact"]

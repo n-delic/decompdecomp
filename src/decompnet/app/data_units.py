@@ -233,7 +233,8 @@ def compile_data(net, slug: str, name: str, source: str, *, save: bool = True) -
     else:
         end, ends = _bounds(net, proj, address)
         result = link_data(compiled.obj, name, symbols, reader(net, proj),
-                           big_endian=bool(net.cfg(proj).get("big_endian", True)), end=end, ends=ends)
+                           big_endian=bool(net.cfg(proj).get("big_endian", True)), end=end, ends=ends,
+                           native=net.console(proj).rust_desktop_judge)
     store = _store(net, proj)
     with store.tx() as db:
         row = db.execute("SELECT status FROM data_units WHERE project_id=? AND address=?",

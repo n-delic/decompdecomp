@@ -126,7 +126,8 @@ class JudgeMixin:
             def local_link():
                 from ...rom.verifier_link import PackReader, project_inputs
 
-                if project_inputs.get() and type(target) is match.RomTarget and "rom_offset" in fn.keys():
+                if (type(target) is match.RomTarget and "rom_offset" in fn.keys()
+                        and (project_inputs.get() or getattr(console, "rust_desktop_judge", False))):
                     read = PackReader(self, proj, fn)
                 else:
                     read = self.reader(proj, fn)
@@ -205,10 +206,11 @@ class JudgeMixin:
             from ...elfobj import FunctionObj
             from ..allocation_evidence import diagnose
             from ..allocation_evidence import text as allocation_text
-            cpu = self._target_obj(fn,proj).cpu
+            original = self._target_obj(fn, proj)
             physical = self._compare_candidate(
-                proj, FunctionObj(fn['name'], proj['arch'], bool(proj['big_endian']), target.code, cpu=cpu),
-                FunctionObj(fn['name'], proj['arch'], bool(proj['big_endian']), res.linked_code, cpu=cpu),
+                proj, FunctionObj(fn['name'], proj['arch'], bool(proj['big_endian']), target.code,
+                                  cpu=original.cpu, native_judge=original.native_judge),
+                FunctionObj(fn['name'], proj['arch'], bool(proj['big_endian']), res.linked_code, cpu=original.cpu),
                 advisory=True).rows
             diagnosis = diagnose(physical,proj['arch'])
             if diagnosis['register_only'] and diagnosis['register_cycles']:
@@ -245,11 +247,12 @@ class JudgeMixin:
                 from ..allocation_evidence import diagnose
                 # Search actually consumes physical register cycles. Keep those rows without
                 # producing unrelated export/address diagnostics or relinking the object.
-                cpu = self._target_obj(fn, proj).cpu
+                original = self._target_obj(fn, proj)
                 with compile_timing.phase('search_diagnostics'):
                     physical = scoring.diff(
-                        FunctionObj(fn['name'],proj['arch'],bool(proj['big_endian']),target.code,cpu=cpu),
-                        FunctionObj(fn['name'],proj['arch'],bool(proj['big_endian']),res.linked_code,cpu=cpu)).rows
+                        FunctionObj(fn['name'], proj['arch'], bool(proj['big_endian']), target.code,
+                                    cpu=original.cpu, native_judge=original.native_judge),
+                        FunctionObj(fn['name'], proj['arch'], bool(proj['big_endian']), res.linked_code, cpu=original.cpu)).rows
                     diagnosis = diagnose(physical, proj['arch'])
                 if diagnosis['register_only'] and diagnosis['register_cycles']:
                     return physical

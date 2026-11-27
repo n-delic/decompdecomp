@@ -64,6 +64,8 @@ struct Request {
     align_branches: bool,
     #[serde(default)]
     details: bool,
+    #[serde(default)]
+    summary: bool,
 }
 
 struct Insn {
@@ -378,7 +380,7 @@ fn compare(left: &[Insn], right: &[Insn], request: &Request, bytes_match: bool) 
         a = block.a + block.size;
         b = block.b + block.size;
     }
-    if request.details {
+    if request.details || request.summary {
         let mut reordered = 0;
         for (text, count) in &missing {
             reordered += (*count).min(extra.get(text).copied().unwrap_or(0));

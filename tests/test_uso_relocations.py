@@ -47,7 +47,7 @@ def rust_overlay_parity(monkeypatch):
 
 
 @pytest.mark.parametrize('compressed', [False, True])
-def test_rebuild_uso_checks_text_and_symbol_binding(tmp_path, compressed):
+def test_rebuild_uso_checks_text_and_symbol_binding(tmp_path, compressed, monkeypatch):
     if toolchains.installed('ido-5.3') is None:
         pytest.skip('needs IDO 5.3')
     cfg = compiler_config(tmp_path, {'compiler': {'toolchain': 'ido-5.3', 'flags': toolchains.get('ido-5.3').flags}})
@@ -71,6 +71,24 @@ def test_rebuild_uso_checks_text_and_symbol_binding(tmp_path, compressed):
     assert missing.problems == [f'Overlay relocation at +0x{at:X} requires {uso_match.alias(region.offset, index)}.'
                                 for at, index in [(0, 4), (4, 3)]]
     assert uso.rebuild(cartridge, [('test_entry', info, built.obj)]) == cartridge
+    from decompnet.app import mcp_gateway
+    from decompnet.rom.desktop_judge import RustJudge
+
+    if mcp_gateway.built():
+        calls = []
+        def audited_overlay(judge, *args):
+            result = audit_overlay(judge._exchange, *args)
+            calls.append(result.exact)
+            return result
+
+        with monkeypatch.context() as audit:
+            audit.setattr(RustJudge, "link_overlay", audited_overlay)
+            token = uso_match.overlay_linker.set(None)
+            try:
+                assert uso.rebuild(cartridge, [('test_entry', info, built.obj)]) == cartridge
+                assert calls == [True]
+            finally:
+                uso_match.overlay_linker.reset(token)
     wrong = compile_source(cfg, '', source.replace(binding, uso_match.alias(region.offset, 2)))
     assert wrong.ok, wrong.log
     result = uso_match.link(wrong.obj, 'test_entry', code, info)
@@ -1325,7 +1343,9 @@ def test_uso_desktop_and_shared_queue_use_rust(tmp_path, monkeypatch, toolchain)
 
     token = overlay_linker.set(None)
     try:
-        scores = queue_parity(tmp_path, net, request, [exact, wrong], worker_module=__name__)
+        with monkeypatch.context() as python:
+            python.setenv("DECOMP_MCP_GATEWAY", "0")
+            scores = queue_parity(tmp_path, net, request, [exact, wrong], worker_module=__name__)
     finally:
         overlay_linker.reset(token)
     assert scores[0] == 0 and scores[1] > 0

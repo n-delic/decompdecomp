@@ -379,7 +379,7 @@ def _data_in_c(net, proj, out: Path, layout: list, objects: list, image: bytes, 
                 kept_out.append((name, "doesn't compile any more"))
                 continue
             judged = link_data(compiled.obj, name, symbols, data_units.reader(net, proj),
-                               big_endian=bool(cfg.get("big_endian", True)))
+                               big_endian=bool(cfg.get("big_endian", True)), native=net.console(proj).rust_desktop_judge)
             if not judged.exact or not judged.initialised:
                 kept_out.append((name, "no longer holds the game's bytes"))
                 continue
@@ -543,7 +543,8 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
             donor_unit = is_unit(hdr, proj)
             single = _single_definition(compiled.obj, row["name"])
             reader = net.reader(proj, row)
-            linked = match.link(compiled.obj, row["name"], net._rom_target(row), net.symbols(proj["id"]), reader)
+            linker = console.link_function if console.rust_desktop_judge else match.link
+            linked = linker(compiled.obj, row["name"], net._rom_target(row), net.symbols(proj["id"]), reader)
             if not linked.exact:
                 as_fallback.append((f["name"], "no longer matches"))
                 f["kind"] = "asm"

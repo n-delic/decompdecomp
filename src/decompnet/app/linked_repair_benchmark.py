@@ -59,7 +59,8 @@ def evaluator(root, name, header):
     # No exported commands are executed: construct only an already installed registry compiler.
     cfg = compiler_config(root,{'compiler':profile})
     canonical = match.canonical_target(target,table)
-    linked_target = FunctionObj(name,console.arch,target.big_endian,target.code,cpu=console.cpu_variant)
+    canonical.native_judge = console.rust_desktop_judge
+    linked_target = FunctionObj(name,console.arch,target.big_endian,target.code, cpu=console.cpu_variant, native_judge=console.rust_desktop_judge)
     cache = {}
     def evaluate(source):
         if source in cache:
@@ -70,7 +71,8 @@ def evaluator(root, name, header):
             result = dict(score=None,matched=False,outcome='compile_error')
         else:
             with compile_timing.phase('link'):
-                linked = match.link(built.obj,name,target,table,read)
+                linker = console.link_function if console.rust_desktop_judge else match.link
+                linked = linker(built.obj, name, target, table, read)
             if linked.candidate is None or linked.linked_code is None:
                 result = dict(score=None,matched=False,outcome='link_error')
             else:

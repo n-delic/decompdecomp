@@ -311,6 +311,18 @@ def _explicit_offset_fields(raw, target, expected, explicit, section):
     return fields
 
 
+def verify(obj, name, target, info):
+    from ...rom.desktop_judge import direct_overlay
+
+    if overlay_linker.get() is not None:
+        return link(obj, name, target, info)
+    token = overlay_linker.set(direct_overlay)
+    try:
+        return link(obj, name, target, info)
+    finally:
+        overlay_linker.reset(token)
+
+
 def link(obj, name, target, info):
     section = info['section']
     expected = {at: (kind, index) for at, kind, index in info['relocs'] or ()}
