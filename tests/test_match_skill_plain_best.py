@@ -90,3 +90,21 @@ def test_setup_runs_the_orientation_scripts_with_the_session_python_and_survives
     lines.clear()
     setup.orient(info, tmp_path, run=run, write=lines.append)
     assert "skipped" in lines[-1]
+
+
+def test_a_much_closer_optimisation_level_is_told_and_the_compiler_is_put_back():
+    plain_best = load("plain_best")
+    compiler = {"toolchain": "gcc-2.7.2-kmc", "flags": ["-G0", "-mips3", "-O2"]}
+    lines, seen = [], []
+
+    def score(source):
+        seen.append(compiler["flags"])
+        return 40 if "-O1" in compiler["flags"] else 90
+
+    found = plain_best.level_report("C", compiler, 100, score, write=lines.append)
+    assert found["-G0 -mips3 -O1"] == 40 and compiler["flags"] == ["-G0", "-mips3", "-O2"]
+    assert not any("-O2" in flags for flags in seen)  # its own level is already scored
+    assert lines[0].startswith("levels ") and "-O1 40" in lines[0] and "closer under -G0 -mips3 -O1" in lines[1]
+    lines.clear()
+    plain_best.level_report("C", compiler, 45, score, write=lines.append)  # 40 against 45 is not far closer
+    assert len(lines) == 1

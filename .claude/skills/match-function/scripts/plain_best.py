@@ -24,6 +24,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fast_judge  # noqa: E402
 
+CLOSER = 0.7  # another level's score at most this share of the own one is told to the agent
+
 
 def plain_form(source, name, header=""):
     """The stripped source, or None when the library's version has no `plain` or nothing changed."""
@@ -84,6 +86,33 @@ def _plain(found, plain, score, out_dir, write):
           + "   (fences opened, scaffolding stripped: prove_chain can step from here when it can't from the best)")
 
 
+def level_report(source, compiler, own, score, write=print):
+    """Score the saved best at each other -O level of the function's compiler and say when one is clearly closer.
+
+    A saved best is climbed under the function's own settings, so one that scores far lower at another level without
+    having been written for it says the function was built at that level: state routines at 16165 and 17498 under
+    -O2 scored 8451 and 9802 under -O1, and their plain C was exact there (the first or second compile). Returns
+    {flags: score}. `compiler` is the judge's own request dict, changed per level and put back."""
+    from decompnet.app import opt_levels
+    mine, found = list(compiler["flags"]), {}
+    try:
+        for flags in opt_levels.variants(compiler["toolchain"], mine):
+            compiler["flags"] = flags
+            found[" ".join(flags)] = score(source)
+    finally:
+        compiler["flags"] = mine
+    scored = {flags: value for flags, value in found.items() if value is not None}
+    if not scored:
+        return found
+    level = {flags: next(f for f in flags.split() if opt_levels.LEVEL.fullmatch(f)) for flags in scored}
+    write("levels       " + ", ".join(f"{level[flags]} {value}" for flags, value in scored.items()) + f"   (own {own})")
+    closest = min(scored, key=scored.get)
+    if own is not None and scored[closest] <= own * CLOSER:
+        write(f"             closer under {closest}: write PLAIN C (no fences, no scaffolding) and judge it with "
+              "fast_judge.py --toolchain and --replace-flags, or compiler_experiments, before editing the best")
+    return found
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("source", nargs="?", help="C to start from (default: the app's saved best)")
@@ -102,7 +131,8 @@ def main(argv=None):
         return 0
     j = fast_judge.Judge(a.slug, a.function, home=a.home)
     try:
-        report(source, a.function, j.score, j.header, a.out_dir)
+        found = report(source, a.function, j.score, j.header, a.out_dir)
+        level_report(source, j.compiler, found["best"], j.score)
     finally:
         j.close()
     return 0

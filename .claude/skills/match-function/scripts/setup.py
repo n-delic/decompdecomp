@@ -71,7 +71,8 @@ import judge  # noqa: E402  (the app's connection file, and its window API for c
 
 ORIENT_SECONDS = 180  # each orientation script after a claim; a slow app must not hold the session's start
 ORIENT_SCRIPTS = (
-    # the saved best and its scaffolding-stripped form, judged (plain_best.py): both places a chain can start from
+    # the saved best and its scaffolding-stripped form, judged (plain_best.py): both places a chain can start from; and
+    # the saved best at each other -O level (a function built at -O1 shows there before anyone writes C)
     ("plain_best.py", lambda info, out: ["--slug", info["slug"], "--function", info["function"], "--out-dir", str(out)]),
     # the closest matched functions with the start of their C (neighbours.py): callers, callees, the file's neighbours
     # (with the saved best plain_best.py wrote: also those sharing the mismatched region's instruction shape)

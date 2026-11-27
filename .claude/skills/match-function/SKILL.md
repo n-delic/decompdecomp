@@ -783,6 +783,9 @@ says the fix and the library families it names; try those families with `prove_c
 
 ## 3a. The fast tools (use them before writing variants by hand)
 
+- **Read the `levels` line first.** `plain_best.py` judges the saved best at each other -O level. When one is far closer
+  (`closer under ... -O1`), the function was built at that level: write plain C from the target (typed records, a real
+  `switch`, no fences) and judge it there; do not tune the old best.
 - **A claim starts with several sources.** `setup.py` prints the saved best, its plain form (`plain_best.py`:
   decomprepair `scaffold_strip.plain`, fences opened and scaffolding stripped) and the levels of decomprepair
   `clean_rewrite` (`clean_rewrite_structure.c`: m2c's gotos as loops, `if`s, `break`s and returns;
