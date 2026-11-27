@@ -1433,6 +1433,7 @@ def stale_code_copies(functions, image, order, console, segments, owner, explici
     ordered = sorted(functions, key=lambda fn: (owner(fn), fn.rom))
     stale = set()
     closed = {}
+    named = _code_table_entries(functions, image, order, segments)
     for index in range(1, len(ordered)-1):
         before, fn, after = ordered[index-1:index+2]
         if (not 32 <= fn.size <= 64 or fn.size % 4 or owner(fn)[0] < 0
@@ -1459,11 +1460,11 @@ def stale_code_copies(functions, image, order, console, segments, owner, explici
         if sum(s.contains(fn.vram, fn.size) for s in segments) != 1:
             continue
         for other in ordered:
-            if (other is fn or owner(other) != owner(fn) or other.vram not in calls
-                    or not any(not fn.rom <= src < fn.rom+fn.size
-                               and int.from_bytes(image[src:src+4], order) >> 26 == 3
-                               for src, _ in references.get(other.vram, ()))
-                    or abs(other.rom-fn.rom) > 0x800):
+            if (other is fn or owner(other) != owner(fn) or abs(other.rom-fn.rom) > 0x800
+                    or other.vram not in named and (other.vram not in calls
+                        or not any(not fn.rom <= src < fn.rom+fn.size
+                                   and int.from_bytes(image[src:src+4], order) >> 26 == 3
+                                   for src, _ in references.get(other.vram, ())))):
                 continue
             key = (other.rom, other.vram)
             if key not in closed:
@@ -1480,6 +1481,25 @@ def stale_code_copies(functions, image, order, console, segments, owner, explici
             if (fn.rom, fn.vram) in stale:
                 break
     return stale
+
+
+def _code_table_entries(functions, image, order, segments):
+    """Code starts named by a contiguous table outside executable mappings."""
+    starts = {fn.vram for fn in functions}
+    fmt = '>I' if order == 'big' else '<I'
+    result, run = set(), []
+    def finish():
+        if len(run) >= 3 and len(set(run)) >= 3:
+            result.update(run)
+        run.clear()
+    for index, (word,) in enumerate(struct.iter_unpack(fmt, image[:len(image)//4*4])):
+        offset = index*4
+        if word in starts and not any(s.rom_start <= offset < s.rom_end for s in segments):
+            run.append(word)
+        elif run:
+            finish()
+    finish()
+    return result
 
 
 def _same_stale_instructions(image, first, second, size, order):
