@@ -152,7 +152,14 @@ def refine(config, workdir, image, console, log=print, *, visited=None):
                     if not isinstance(part,list) or len(part)<2 or part[1]!='c':continue
                     limit=next((s[0] for s in raw['subsegments'][i+1:] if isinstance(s,list) and s),segment.rom_end)
                     if part[0]<=fn.rom<fn.rom+fn.size<=limit:
-                        cuts.update((fn.rom,fn.rom+fn.size));break
+                        cuts.add(fn.rom)
+                        end = fn.rom+fn.size
+                        # A new source unit beginning with a NOP can turn padding or a delay slot
+                        # into a spurious one-word function. Preserve a separately known entry.
+                        if (rom[end:end+4] != bytes(4) or any(other.rom == end for other in known)
+                                or any(offset == end for offset, _, _ in calls)):
+                            cuts.add(end)
+                        break
         for at in sorted(cuts):
             if at<segment.rom_end and at not in existing:
                 raw['subsegments'].append([at,'c',f'{sub[2]}_{at:06X}'])

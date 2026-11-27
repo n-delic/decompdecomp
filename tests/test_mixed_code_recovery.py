@@ -225,3 +225,16 @@ def test_find_missed_functions_scans_inside_code_segments_given_the_known_functi
     assert (0x40,0x5C,BASE+0x40) in found
     subs=yaml.safe_load(path.read_text())['segments'][0]['subsegments']
     assert 0x40 in [s[0] for s in subs]
+
+
+def test_anchor_does_not_create_a_source_unit_on_unentered_nop(tmp_path):
+    path, console = project(tmp_path)
+    image = bytearray((tmp_path/'rom.bin').read_bytes())
+    image[0x20:0x24] = bytes(4)
+    (tmp_path/'rom.bin').write_bytes(image)
+    asm(tmp_path/'asm/nonmatchings/unit/dropped.s',
+        list(struct.unpack('>24I', image[0x20:])), 0x20, raw=True)
+    assert mixed_code.refine(path, tmp_path, 'rom.bin', console, log=lambda _: None)
+    starts = [part[0] for part in yaml.safe_load(path.read_text())['segments'][0]['subsegments']]
+    assert 0x20 not in starts
+    assert 0x40 in starts
