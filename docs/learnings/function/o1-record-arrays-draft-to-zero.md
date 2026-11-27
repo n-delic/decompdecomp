@@ -2,7 +2,7 @@
 title: -O1 drafts of record tables reach 0 as record arrays (entry-value while, stored-address write)
 kind: function
 compiler: gcc-2.7.2-kmc
-evidence: matched
+evidence: verified
 date: 2026-11-27
 ---
 
