@@ -507,7 +507,10 @@ def linker_script(provides: dict[str, str], placed: list[tuple[int, int, str]], 
     from elftools.elf.elffile import ELFFile
 
     auto_addresses = {}
-    for obj in set(provides.values()):
+    # Standalone assembly pieces are not in provides (only functions are), but may
+    # branch to a local address in another object, including a boot entry.
+    scanned = set(provides.values()) | {item["obj"] for item in B.get("assembly", [])} | {item["obj"] for item in B.get("data", [])}
+    for obj in scanned:
         with open(ROOT / obj, "rb") as stream:
             symtab = ELFFile(stream).get_section_by_name(".symtab")
             for symbol in symtab.iter_symbols() if symtab else ():
