@@ -261,6 +261,7 @@ def test_assembly_units_are_visible_without_counting_original_assembly_as_c(tmp_
 @pytest.mark.parametrize('source_tree', [True, False])
 def test_verified_rebuild_retains_nested_config_version(tmp_path, monkeypatch, root_elf, source_tree, duplicate_elf):
     cfg = config(tmp_path)
+    cfg['segments'][0]['subsegments'].append([12, 'bin', 'opaque'])
     data = b'full original cartridge'
     image = tmp_path/'baserom.jp.z64'
     image.write_bytes(data)
@@ -320,6 +321,7 @@ def test_verified_rebuild_retains_nested_config_version(tmp_path, monkeypatch, r
     assert shared['metadata']['source_path'] == 'shared/common.c'
     assert shared['base_path'] == 'build/shared/common.c.o'
     assert '1 linked binary assembly' in result['coverage_notes'][0]
+    assert '1 binary piece' in result['coverage_notes'][1]
 
 
 @pytest.mark.parametrize('verified', [False, True])
@@ -728,3 +730,12 @@ def test_assemble_skips_zero_size_unit(tmp_path):
     from decompnet.forks.splatrefs import assemble
     unit = {'name': 'buffers/empty', 'vram': 0x80000000}
     assert assemble(tmp_path, tmp_path, unit, {}, b'', 'as', 'ld', (), lambda *a: None) is None
+
+
+def test_binary_pieces_in_code_segments_warn_about_function_coverage():
+    cfg = {'segments': [{'type': 'code', 'subsegments': [[0, 'asm', 'a'], [4, 'bin', 'mixed'],
+                                                         {'type': 'textbin', 'start': 8}, [12, 'databin', 'data']]},
+                        {'type': 'bin', 'subsegments': [[20, 'bin', 'asset']]}, [24]]}
+    notes = splatrefs.binary_code_coverage(cfg)
+    assert len(notes) == 1 and '2 binary pieces' in notes[0] and 'may contain code' in notes[0]
+    assert splatrefs.binary_code_coverage({'segments': [{'type': 'code', 'subsegments': [[0, 'c', 'unit']]}]}) == []

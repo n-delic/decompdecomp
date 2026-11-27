@@ -129,6 +129,19 @@ def _through_header_crc(root: Path, build_dir: Path, elves, image_path: Path, sh
     return matches
 
 
+def binary_code_coverage(config: dict) -> list[str]:
+    """Binary pieces inside code segments may contain functions, but have no objdiff units."""
+    count = 0
+    for segment in config.get('segments', []):
+        if not isinstance(segment, dict) or segment.get('type') != 'code':
+            continue
+        for entry in segment.get('subsegments') or []:
+            kind = entry.get('type') if isinstance(entry, dict) else entry[1] if isinstance(entry, list) and len(entry) > 1 else None
+            if kind in ('bin', 'textbin'):
+                count += 1
+    return ([f'{count} binary piece{"s" if count != 1 else ""} in code segments may contain code and are not represented as functions.'] if count else [])
+
+
 def verified_rebuild(project, config_path: Path, config: dict, image_path: Path, sha1: str, log) -> bool:
     """Freeze linked code objects only when objcopy of the ELF reproduces the complete original image.
 
@@ -260,7 +273,7 @@ def verified_rebuild(project, config_path: Path, config: dict, image_path: Path,
                                        'build_target': False, 'build_base': True, 'units': entries,
                                        'coverage_notes': ([f'{len(binary_assembly)} linked binary assembly images '
                                            'are not split into functions and are excluded from function progress.']
-                                           if binary_assembly else [])}, indent=2) + '\n',
+                                           if binary_assembly else []) + binary_code_coverage(config)}, indent=2) + '\n',
                            encoding='utf-8')
         if (root / 'objdiff.json').exists():
             raise ForkError("objdiff.json appeared during setup; the existing configuration was retained")
@@ -770,7 +783,7 @@ def generate(project, config_path: Path, config: dict, console, log=print) -> bo
                                        'units': entries,
                                        'coverage_notes': ([] if matching else [
                                            'The source rebuild has not passed the whole-image checksum. Function '
-                                           'progress uses independently byte-verified original sections.'])},
+                                           'progress uses independently byte-verified original sections.']) + binary_code_coverage(config)},
                                       indent=2) + '\n', encoding='utf-8')
         # All outputs stay private to the project. Never overwrite a hand-written configuration or expected/.
         if (root / 'objdiff.json').exists():
