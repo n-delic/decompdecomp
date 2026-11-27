@@ -10,6 +10,24 @@ from decompnet.app import source_assembly
 from decompnet.forks.sdk_evidence import identities, reverify
 
 
+def test_kmc_runtime_identity_requires_complete_reference_bytes(tmp_path, monkeypatch):
+    import hashlib
+
+    from decompnet.consoles.n64 import sdk_assembly
+    from tests.mips_elf_fixture import linked_object
+
+    # Use synthetic bytes so tests do not redistribute an SDK routine.
+    code = bytes(range(56))
+    monkeypatch.setitem(sdk_assembly.KMC_ASSEMBLY, hashlib.sha256(code).hexdigest(), ('__muldi3', 56, 'test'))
+    obj = tmp_path / 'target.o'
+    obj.write_bytes(linked_object('entry', 0x80001000, code))
+    proof = identities(consoles.get('n64'), tmp_path, obj)['entry']
+    assert proof['kind'] == 'sdk' and proof['name'] == '__muldi3'
+    assert proof['corpus'] == 'KMC handwritten runtime'
+    obj.write_bytes(linked_object('entry', 0x80001000, code[:-1] + b'\xff'))
+    assert identities(consoles.get('n64'), tmp_path, obj) == {}
+
+
 def _object(tmp_path, *, reloc=False, changed=False):
     if toolchains.installed('binutils-mips') is None:
         pytest.skip('needs pinned MIPS binutils')
