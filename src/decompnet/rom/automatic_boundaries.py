@@ -380,7 +380,7 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
 
     recovered_data=[]
     predecessors={(fn.rom+fn.size,fn.vram+fn.size):fn for fn in result if fn.size>=8}
-    kept=[];dropped=markers=recovered_shared=recovered_fallthrough=recovered_continuations=shared_delay_entries=return_wrappers=0;ordered=sorted(result,key=lambda f:(owner(f),f.rom))
+    kept=[];dropped=markers=recovered_shared=recovered_fallthrough=recovered_continuations=shared_delay_entries=return_wrappers=backward_loops=0;ordered=sorted(result,key=lambda f:(owner(f),f.rom))
     for i,fn in enumerate(ordered):
         previous=kept[-1] if kept else None;following=ordered[i+1] if i+1<len(ordered) else None
         successor = following if fn.size == 4 else original_entries.get((fn.rom+4, fn.vram+4))
@@ -455,6 +455,17 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
                 data.extend((DataSymbol(previous.name,previous.vram,previous.rom,0,'func'),
                              DataSymbol(fn.name,fn.vram,fn.rom,0,'func')))
                 return_wrappers += 1
+                continue
+        if (previous is not None and owner(previous)[0] >= 0 and owner(previous) == owner(fn)
+                and previous.size == 8 and previous.vram not in direct_calls and fn.vram in direct_calls
+                and previous.lines[0].word >> 26 in (20,21,22,23)):
+            external = explicit | pointers | {address for address, sources in references.items()
+                if any(not previous.rom <= src < fn.rom+fn.size for src, _ in sources)}
+            if backward_loop_entry(previous,fn,image,console,order,segments,external,data):
+                kept[-1] = replace(previous,lines=previous.lines+fn.lines,labels=previous.labels|fn.labels,
+                                   entry_aliases={**previous.entry_aliases,fn.vram:fn.name})
+                data.append(DataSymbol(fn.name,fn.vram,fn.rom,0,'func'))
+                backward_loops += 1
                 continue
         same_owner = previous is not None and owner(previous) == owner(fn)
         possible_fallthrough = (same_owner and 8 <= previous.size <= 128 and fn.lines
@@ -583,14 +594,46 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
         log(f'Recovered {recovered_shared} closed leaves with independently entered assembly tails.')
     if recovered_fallthrough:
         log(f'Recovered {recovered_fallthrough} straight initializers with preserved framed entries.')
+    if backward_loops:
+        log(f'Joined {backward_loops} backward-entered assembly loops, preserving their callable entries.')
     if return_wrappers:
         log(f'Recovered {return_wrappers} shared assembly return wrappers with their entry symbols.')
     if recovered_continuations:
         log(f'Joined {recovered_continuations} unentered framed continuations.')
     if shared_delay_entries:
         log(f'Preserved {shared_delay_entries} called NOP entries shared with a return delay slot.')
-    return kept if dropped or markers or recovered_data or recovered_shared or recovered_fallthrough or recovered_continuations or shared_delay_entries or return_wrappers else result if changed else functions
+    return kept if dropped or markers or recovered_data or recovered_shared or recovered_fallthrough or recovered_continuations or shared_delay_entries or return_wrappers or backward_loops else result if changed else functions
 
+
+
+def backward_loop_entry(head, body, image, console, order, segments, entered, data):
+    """Keep a callable leaf whose loop branches back to the preceding two words."""
+    if (head.piece or body.piece or head.size != 8 or body.size < 16 or head.entry_aliases or body.entry_aliases
+            or head.rom+head.size != body.rom or head.vram+head.size != body.vram
+            or sum(segment.contains(head.vram,head.size+body.size) for segment in segments) != 1
+            or any(head.vram <= address < body.vram+body.size and address != body.vram for address in entered)):
+        return False
+    end = body.rom+body.size
+    if (end > len(image) or any(d.rom is not None and d.rom < end and head.rom < d.rom+d.size for d in data)
+            or image[head.rom:end] != b''.join(line.word.to_bytes(4,order) for fn in (head,body) for line in fn.lines)):
+        return False
+    branch = head.lines[0].word
+    if branch >> 26 not in (20,21,22,23):
+        return False
+    delta = branch & 0xffff
+    target = head.vram+4+(delta-0x10000 if delta & 0x8000 else delta)*4
+    if not body.vram <= target < body.vram+body.size:
+        return False
+    for line in body.lines:
+        op = line.word >> 26
+        if op in (1,4,5,6,7,20,21,22,23):
+            offset = line.word & 0xffff
+            destination = line.vram+4+(offset-0x10000 if offset & 0x8000 else offset)*4
+            if destination == head.vram:
+                break
+    else:
+        return False
+    return assembly_extent(image,head.rom,end,head.vram,console,order) == head.size+body.size
 
 
 def shared_return_wrapper(head, body, continuation, image, console, order, segments, entered, data):
