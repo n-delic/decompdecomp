@@ -12,7 +12,7 @@ Saved m2c best 2270 -> 0 with three one-step edits, each an improvement on its o
 
 1. The four stores went to globals named by their own addresses (`D_X = 2;`) that the target never names: it builds the
    address of a lower symbol (`lui; addiu %lo`) and adds the rest. Written as members of one struct at that symbol:
-   2270 -> 1185. decomp-repair `far_global_member`.
+   2270 -> 1185. decomp-repair `far_record_members`.
 2. m2c's three stray arguments on a one-argument SDK call dropped: 1185 -> 40. `callee_arity_trim`.
 3. `start = ROM_START; size = ROM_END - start;` and `start` passed to the DMA (the target loads the start address before
    the end address): 40 -> 0. `symbol_address_local`.
@@ -22,5 +22,8 @@ target's frame order (the m2c draft already had it).
 
 Controlled, with the other two edits held: separate globals 2120, `*(T *)(base + off)` casts 2230 (GCC folds the
 constant back into the symbol), a struct declared at the base 0 (a flat struct and an array of two records both match).
+The whole chain was run with `prove_chain.py` from the saved best. A second family written for edit 1
+(`far_global_member`) offered the same child at the same score and was removed again as a duplicate: check the latest
+library, not the session's pinned one, before writing a rewrite.
 Only this function; why GCC keeps the base in a register for a member is a hypothesis (the offset exceeds a 16-bit
 displacement and the object is one symbol).
