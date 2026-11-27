@@ -4,7 +4,7 @@ use std::io::{self, BufRead, Write};
 
 use serde_json::{json, Value};
 
-use crate::{mips_diff, mips_rom, rom_project};
+use crate::{mips_diff, mips_rom, mips_uso, rom_project};
 
 struct Reader<'a>(rom_project::View<'a>);
 
@@ -28,6 +28,7 @@ impl Judge {
         match action.as_str() {
             Some("ping") => Ok(json!(1)),
             Some("compare_mips") => mips_diff::evidence(request),
+            Some("link_uso") => mips_uso::link(request),
             Some("rom_mips") => {
                 if let Some(inputs) = request
                     .as_object_mut()

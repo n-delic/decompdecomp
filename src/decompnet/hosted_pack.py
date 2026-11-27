@@ -28,7 +28,7 @@ FORMAT = "1"
 # The settings the judge reads (consoles/, rom/, project.py, judging.py); everything else stays with the owner.
 JUDGE_KEYS = ("kind", "platform", "big_endian", "gp", "rom", "segments", "compiler", "compiler_ranges",
               "function_compilers", "units", "system_calls_named", "kernel_calls_named", "overlays",
-              "object_reading", "modules", "main_module", "autoloads", "options")
+              "donor_overlays", "object_reading", "modules", "main_module", "autoloads", "options")
 PRIVATE_COMPILER_KEYS = ("cmd", "ro_paths")  # paths on the owner's computer
 PROGRAM = "program.bin"
 

@@ -15,7 +15,7 @@ from decompnet.compile_worker import _read, _write
 from decompnet.forks.project import ForkProject
 from decompnet.rom import match, split
 from decompnet.rom.desktop_judge import RustJudge
-from decompnet.rom.verifier_link import PackReader
+from decompnet.rom.verifier_link import PackReader, overlay_linker
 
 
 class RomReader:
@@ -67,14 +67,17 @@ def perform(reader, judge, build, action, args):
         proj, fn, obj, target, symbols = args
         try:
             console = consoles.of(reader.cfg(proj))
-            if console.rust_desktop_judge and type(target) is match.RomTarget:
-                # Enter through the same linker as Python so its C++ symbol normalization still runs.
-                token = match.rom_linker.set(judge.link)
-                try:
-                    return console.link_function(obj, fn["name"], target, symbols, PackReader(reader, proj, fn))
-                finally:
-                    match.rom_linker.reset(token)
-            return console.link_function(obj, fn["name"], target, symbols, reader.reader(proj, fn))
+            if not console.rust_desktop_judge:
+                return console.link_function(obj, fn["name"], target, symbols, reader.reader(proj, fn))
+            # The console picks the overlay or ordinary ROM linker and normalizes C++ names.
+            read = PackReader(reader, proj, fn)
+            ordinary = match.rom_linker.set(judge.link if type(target) is match.RomTarget else None)
+            overlay = overlay_linker.set(judge.link_overlay)
+            try:
+                return console.link_function(obj, fn["name"], target, symbols, read)
+            finally:
+                overlay_linker.reset(overlay)
+                match.rom_linker.reset(ordinary)
         finally:
             if os.name == "nt":  # a live mapping would block replacing an image on Windows
                 reader.close()

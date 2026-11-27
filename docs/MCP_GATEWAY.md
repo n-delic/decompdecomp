@@ -212,8 +212,14 @@ uv run pytest -q tests/test_mcp_gateway.py tests/test_mcp_gateway_install.py tes
 ## Desktop N64 judging
 
 The local attempt worker starts the gateway executable in `desktop-judge` mode when it needs to link an
-ordinary N64 ROM candidate or produce MIPS instruction diff rows. This private stdin/stdout process uses the
-same Rust ROM linker, overlay reader and instruction comparison as shared-queue workers. It loads the active
+standard N64 ROM candidate, check USO overlay text, or produce MIPS instruction diff rows. This private
+stdin/stdout process uses the same Rust linkers, overlay reader and instruction comparison as shared-queue
+workers. The standard ROM linker loads the active
 image from the local project and refreshes the snapshot when the image, overlay data, layout or symbols change.
 Compilation, claims and attempt recording stay with the desktop. The worker falls back to Python when the
 gateway is unavailable, the input requires a different linker, or the instruction decoder is incompatible.
+
+The USO linker works from the target text and validated loader relocation metadata. It checks the emitted ELF
+against the loader's bindings, including local calls, constructor entry markers, explicit data bindings,
+constant pools and jump tables. Shared-queue workers negotiate the same linker. Cartridge parsing and export
+remain in the app.

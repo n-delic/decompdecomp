@@ -140,6 +140,11 @@ impl Judge {
                         return Err("unexpected MIPS ROM link request from the judge".into());
                     }
                     self.link_rom(plan, request).await
+                } else if let Some(plan) = reply.get("link_uso") {
+                    if request["link_uso"].as_u64() != Some(crate::mips_uso::VERSION) {
+                        return Err("unexpected MIPS overlay link request from the judge".into());
+                    }
+                    crate::mips_uso::link(plan)
                 } else if let Some(plan) = reply.get("parse_mips") {
                     if request["parse_mips"].as_u64() != Some(crate::mips_elf::VERSION) {
                         return Err("unexpected MIPS ELF request from the judge".into());
@@ -343,6 +348,7 @@ impl Verifier {
             request["link_mips"] = json!(crate::mips_link::VERSION);
             request["parse_mips"] = json!(crate::mips_elf::VERSION);
             request["rom_mips"] = json!(crate::mips_rom::VERSION);
+            request["link_uso"] = json!(crate::mips_uso::VERSION);
             request["project_mips"] = json!(crate::rom_project::VERSION);
             for (key, value) in trial {
                 request[key] = value.clone();

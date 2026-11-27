@@ -9,6 +9,8 @@ from ..elfobj import FunctionObj, Reloc, symbol_at
 from .link import DataMismatch, LinkResult
 from .match import _Linker, compiler_library_name
 
+overlay_linker = ContextVar("mips_overlay_linker", default=None)
+
 project_inputs: ContextVar[bool] = ContextVar("mips_verifier_project_inputs", default=False)
 
 
@@ -111,3 +113,16 @@ def compare_mips(target, candidate, align_branches, exchange, *, details=False):
     if details:
         request["details"] = True
     return exchange("compare_mips", request)
+
+
+def link_overlay(obj, name, target, info, exchange):
+    reply = exchange("link_uso", {"object": obj.hex(), "name": name, "target": target.hex(), "info": info})
+    if reply is None:
+        return None
+    problems = reply["problems"]
+    if "code" not in reply:
+        return LinkResult(None, False, problems)
+    candidate = FunctionObj(name, "mips", True, bytes.fromhex(reply["code"]),
+                            [Reloc.from_json(row) for row in reply["relocs"]])
+    return LinkResult(candidate, reply["exact"], problems, instructions_exact=reply["instructions_exact"],
+                      linked_code=bytes.fromhex(reply["linked"]))
