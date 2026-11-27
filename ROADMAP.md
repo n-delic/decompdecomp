@@ -2537,7 +2537,7 @@ The N64 import runs the game too, when the emulator is installed (consoles/n64/l
 about two, pressing Start and A, with RAM written five times. A function the known code calls that's in no segment
 and is code in RAM byte for byte as a stretch of the ROM gives its segment exactly, ROM range and load address; the
 stretch the split has some of comes in as its gaps, a leaf function before the first frame starts it, and each one
-found is followed for its own calls. A racing game whose small overlays each load at their own address had 48
+found is followed for its own calls. When many cross-bank calls enter the middle of framed code, a longer run without controller input checks whether multiple callers and targets prove a different bank at the same RAM address; verified disjoint ROM ranges get separate scopes. A racing game whose small overlays each load at their own address had 48
 functions its code calls in no segment (its main thread's code among them): its old split had 1,125 functions, a new
 one 1,269, 39 KiB of code found only by running it. Left: code the game decodes as it loads (counted, not added),
 a known segment the game runs elsewhere (reported, not moved), leaf functions just before a known segment's start,

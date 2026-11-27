@@ -274,6 +274,50 @@ def scope(config, found, scoped):
                            symbol_name_format_no_rom=f'$VRAM_{name}')
 
 
+def scope_resident_bss(config):
+    """Share an overlay scope when its RAM overlaps only a resident segment's BSS.
+
+    Return false instead of making a guessed scope when a resident code range
+    overlaps or its BSS touches more than one independently scoped group.
+    """
+    rows = config['segments']
+    scoped = []
+    for index, segment in enumerate(rows[:-1]):
+        if not isinstance(segment, dict) or segment.get('type') != 'code':
+            continue
+        if not segment.get('exclusive_ram_id') or not isinstance(segment.get('vram'), int):
+            continue
+        following = rows[index+1]
+        end = following[0] if isinstance(following, list) else following.get('start')
+        if isinstance(end, int):
+            scoped.append((segment['vram'], segment['vram']+end-segment['start'], segment['exclusive_ram_id']))
+    updates = []
+    for index, segment in enumerate(rows[:-1]):
+        if (not isinstance(segment, dict) or segment.get('type') != 'code' or segment.get('exclusive_ram_id')
+                or not segment.get('bss_size') or not isinstance(segment.get('vram'), int)):
+            continue
+        following = rows[index+1]
+        end = following[0] if isinstance(following, list) else following.get('start')
+        if not isinstance(end, int):
+            return False
+        code_start = segment['vram']
+        code_end = code_start+end-segment['start']
+        if not isinstance(segment['bss_size'], int) or segment['bss_size'] < 0:
+            return False
+        bss_end = code_end+segment['bss_size']
+        touching = [(a,b,ident) for a,b,ident in scoped if a < bss_end and code_start < b]
+        if any(a < code_end and code_start < b for a,b,_ in touching):
+            return False
+        identities = {ident for _,_,ident in touching}
+        if len(identities) > 1:
+            return False
+        if identities:
+            updates.append((segment, identities.pop()))
+    for segment, ident in updates:
+        segment['exclusive_ram_id'] = ident
+    return True
+
+
 def drop_pointer_fragments(image, found, taken=()):
     """Leave a terminated pointer table outside text when discovery split it into one-word scopes."""
     ordered = sorted(found)

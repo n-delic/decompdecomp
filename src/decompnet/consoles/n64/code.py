@@ -657,12 +657,15 @@ def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_rep
     from . import inferred_overlays
 
     before_mapping = found
+    overlaps = [item for item in loaded.get('overlap_segments', ())
+                if not any(a < item[1] and item[0] < b for a,b,_ in (*taken, *found))]
+    found = sorted(found + overlaps)
     found, runtime = inferred_overlays.runtime_mappings(rom, found, loaded.get('moved_ranges', ()), taken)
     found = inferred_overlays.extend_adjacent_frame(rom, found)
     found, banks = inferred_overlays.split_concatenated(rom, found, getattr(log, 'check_cancel', lambda: None),
                                                        taken=taken)
     found, scoped = inferred_overlays.recover(rom, found, taken, getattr(log, 'check_cancel', lambda: None),
-                                             changed=runtime | banks)
+                                             changed=runtime | banks | {start for start,_,_ in overlaps})
     # Corrected addresses can expose a called prologue whose frame lies beyond
     # the scanner's original alignment tail.
     from .code_tails import complete as complete_tails
@@ -720,11 +723,18 @@ def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_rep
                     coverage.write_text(json.dumps(list(dict.fromkeys([*notes, message]))), encoding='utf-8')
             else:
                 log('Kept the original code mappings: relocation-backed fragments conflict with resident code.')
+    if overlaps:
+        import copy
+        unscoped_cfg = copy.deepcopy(cfg)
     insert_segments(config, cfg, found, len(rom))
     if scoped:
         cfg = yaml.safe_load(config.read_text(encoding='utf-8'))
         inferred_overlays.scope(cfg, found, scoped)
-        config.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding='utf-8')
+        if overlaps and not inferred_overlays.scope_resident_bss(cfg):
+            log('Kept the original code mappings: the observed overlays conflict with resident code scopes.')
+            insert_segments(config, unscoped_cfg, before_mapping, len(rom))
+        else:
+            config.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding='utf-8')
         log('Recovered overlapping code-bank addresses from their independent internal calls.')
     kib = sum(en - st for st, en, _ in found) // 1024
     log(f"found {len(found)} more code segment{'s' if len(found) != 1 else ''} the game loads later ({kib} KiB)")

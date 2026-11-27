@@ -11,7 +11,9 @@ exactly: that stretch's ROM range and the address it's loaded at. Each segment f
 Only what the run loads is found (a later track's overlay needs a run that gets there), and only code the ROM holds
 as it is: code a game decodes as it loads is counted and reported (`summary`), not added. A known segment the game
 runs at another address than the split placed it is reported with its verified ROM and RAM range. A fresh import
-can use the range when independent internal calls also support its mapping.
+can use the range when independent internal calls also support its mapping. When cross-bank calls repeatedly appear
+to enter framed bodies, a later no-input run can recover a second overlapping bank if several captured callers and
+targets independently match the same ROM-to-RAM mapping.
 """
 
 from __future__ import annotations
@@ -82,6 +84,8 @@ def find(rom_path: Path, rom: bytes, taken, found=(), *, log=print, stop=lambda:
 
     if emulator.ensure(log) is None:
         return {"segments": [], "decoded": 0, "moved": [], "skipped": "the reversing emulator isn't installed"}
+    known = list(taken) + list(found)
+    late_dumps = []
     with tempfile.TemporaryDirectory(prefix="decomp-loaded-code-") as tmp:
         try:
             run = emulator.run(Path(rom_path), VIS, inputs=inputs(), dumps={v: Path(tmp) / f"{v}.bin" for v in DUMPS},
@@ -89,7 +93,17 @@ def find(rom_path: Path, rom: bytes, taken, found=(), *, log=print, stop=lambda:
         except emulator.EmulatorError as error:
             return {"segments": [], "decoded": 0, "moved": [], "skipped": str(error)}
         dumps = [p.read_bytes() for _, p in sorted(run.dumps.items()) if p.is_file()]
-    known = list(taken) + list(found)
+        from . import runtime_overlays
+        check = getattr(log, 'check_cancel', lambda: None)
+        if runtime_overlays.ambiguous(rom, known, check=check):
+            log('Observing later code banks to distinguish overlapping runtime addresses.')
+            try:
+                late = emulator.run(Path(rom_path), 6000,
+                                    dumps={v: Path(tmp) / f"late-{v}.bin" for v in (3000, 4500, 6000)},
+                                    timeout=300, stop=stop)
+                late_dumps = [p.read_bytes() for _, p in sorted(late.dumps.items()) if p.is_file()]
+            except emulator.EmulatorError as error:
+                log(f'Later code-bank observation was unavailable: {error}')
     added: list[tuple[int, int, int]] = []
     moved, moved_ranges, decoded, seen = [], set(), set(), set()
     todo = _targets(rom, known)
@@ -152,5 +166,8 @@ def find(rom_path: Path, rom: bytes, taken, found=(), *, log=print, stop=lambda:
             f"ROM {m['rom']:#x} at {m['split']:#x}, run at {m['runs_at']:#x}" for m in moved[:4]))
     from . import runtime_zlib
     programs = runtime_zlib.find(rom, dumps, decoded, known+added)
-    return {"segments": added, "decoded": len(decoded), "moved": moved, "moved_ranges": sorted(moved_ranges),
+    overlaps = runtime_overlays.regions(rom, late_dumps, known+added, check=getattr(log, 'check_cancel', lambda: None))
+    if overlaps:
+        log(f'Found {len(overlaps)} independently corroborated overlapping code bank(s) in later runtime snapshots.')
+    return {"segments": added, "overlap_segments": overlaps, "decoded": len(decoded), "moved": moved, "moved_ranges": sorted(moved_ranges),
             "decoded_programs": programs}

@@ -264,3 +264,25 @@ def test_separate_called_banks_leave_intervening_data_unmapped(second_start):
     # A leaf return is also evidence that the gap may contain code.
     struct.pack_into('>2I', image, end+4, 0x01020304, 0x03e00008)
     assert inferred_overlays.split_concatenated(image, found) == (found, set())
+
+
+def test_resident_bss_can_share_a_single_overlapping_overlay_scope():
+    config = {'segments': [
+        {'type': 'code', 'name': 'main', 'start': 0x1000, 'vram': 0x80000000, 'bss_size': 0x3000},
+        {'type': 'code', 'name': 'overlay', 'start': 0x2000, 'vram': 0x80003000,
+         'exclusive_ram_id': 'slot'},
+        [0x3000],
+    ]}
+    assert inferred_overlays.scope_resident_bss(config)
+    assert config['segments'][0]['exclusive_ram_id'] == 'slot'
+    broken = {'segments': [dict(config['segments'][0]), dict(config['segments'][1]), [0x3000]]}
+    broken['segments'][0].pop('exclusive_ram_id')
+    broken['segments'][1]['vram'] = 0x80000800
+    assert not inferred_overlays.scope_resident_bss(broken)
+    assert 'exclusive_ram_id' not in broken['segments'][0]
+    ambiguous = {'segments': [dict(config['segments'][0]), dict(config['segments'][1]),
+                              {'type': 'code', 'name': 'other', 'start': 0x2800, 'vram': 0x80002800,
+                               'exclusive_ram_id': 'other-slot'}, [0x3000]]}
+    ambiguous['segments'][0].pop('exclusive_ram_id')
+    assert not inferred_overlays.scope_resident_bss(ambiguous)
+    assert 'exclusive_ram_id' not in ambiguous['segments'][0]

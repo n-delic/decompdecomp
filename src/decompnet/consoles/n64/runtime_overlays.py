@@ -1,0 +1,108 @@
+"""Recover overlapping code only from corroborated runtime caller and target bytes."""
+import struct
+from collections import defaultdict
+
+from ...arch.mips import is_frame
+from .loaded_code import _code, _region
+
+
+def ambiguous(rom, known, *, check=lambda: None):
+    """Whether many cross-bank calls land inside framed bodies in another mapping.
+
+    This only decides whether a longer observation is worthwhile; it never
+    classifies an entry or changes a mapping.
+    """
+    found = set()
+    tested = set()
+    for start, end, base in known:
+        if not 0 <= start < end <= len(rom) or (start | end) % 4:
+            continue
+        for offset in range(start, end-3, 4):
+            if not offset & 0xffff:
+                check()
+            word, = struct.unpack_from('>I', rom, offset)
+            if word >> 26 != 3:
+                continue
+            pc = base+offset-start
+            target = ((pc+4) & 0xf0000000) | ((word & 0x3ffffff) << 2)
+            if target in tested:
+                continue
+            for lo, hi, vram in known:
+                if (not vram <= target < vram+hi-lo or lo <= offset < hi
+                        or base-start == vram-lo):
+                    continue
+                tested.add(target)
+                at = lo+target-vram
+                if at+8 > hi or is_frame(int.from_bytes(rom[at:at+4], 'big')):
+                    continue
+                for frame in range(max(lo, at-128), at, 4):
+                    first = int.from_bytes(rom[frame:frame+4], 'big')
+                    if not is_frame(first):
+                        continue
+                    pop = 0x27bd0000 | ((-first) & 0xffff)
+                    if any(int.from_bytes(rom[end:end+4], 'big') == 0x03e00008
+                           and int.from_bytes(rom[end+4:end+8], 'big') == pop
+                           for end in range(at, min(hi-8, at+512), 4)):
+                        found.add(target)
+                        break
+                if len(found) >= 8:
+                    return True
+    return False
+
+
+def regions(rom, dumps, known, *, check=lambda: None):
+    """Find missing ROM code with a runtime-observed mapping and independent calls.
+
+    A call and its target must both match the same unique contiguous ROM/RAM
+    region in one snapshot. Several distinct targets are required, and existing
+    ROM ranges with different mappings are never displaced.
+    """
+    groups = defaultdict(list)
+    for dump in dumps:
+        checked = set()
+        for start, end, base in known:
+            if not 0 <= start < end <= len(rom) or (start | end) % 4:
+                continue
+            for offset in range(start, end-15, 4):
+                if not offset & 0xffff:
+                    check()
+                word, = struct.unpack_from('>I', rom, offset)
+                if word >> 26 != 3:
+                    continue
+                pc = base+offset-start
+                target = ((pc+4) & 0xf0000000) | ((word & 0x3ffffff) << 2)
+                at, destination = pc & 0x1fffffff, target & 0x1fffffff
+                if (target in checked or not 0x80000400 <= target < 0x80800000
+                        or at+16 > len(dump) or destination+128 > len(dump)
+                        or dump[at:at+16] != rom[offset:offset+16]):
+                    continue
+                mapped = [(a,b,v) for a,b,v in known if v <= target < v+b-a]
+                if not mapped or any(dump[destination:destination+32] == rom[a+target-v:a+target-v+32]
+                                     for a,b,v in mapped):
+                    continue
+                found = _region(rom, dump, target)
+                if not found:
+                    continue
+                lo, hi, vram = found
+                if lo <= offset < hi and vram+offset-lo == pc:
+                    checked.add(target)
+                    groups[vram-lo].append((lo, hi, target, offset))
+    result = []
+    for delta, observations in groups.items():
+        if len({target for _,_,target,_ in observations}) < 3:
+            continue
+        lo = max(row[0] for row in observations)
+        hi = min(row[1] for row in observations)
+        if lo >= hi or any(a < hi and lo < b and v-a != delta for a,b,v in known):
+            continue
+        cursor = lo
+        for a,b,v in sorted(known):
+            if b <= cursor or a >= hi:
+                continue
+            if cursor < a and (code := _code(rom, cursor, min(a, hi),
+                                             [target-delta for _,_,target,_ in observations])):
+                result.append((*code, code[0]+delta))
+            cursor = max(cursor, b)
+        if cursor < hi and (code := _code(rom, cursor, hi, [target-delta for _,_,target,_ in observations])):
+            result.append((*code, code[0]+delta))
+    return sorted(set(result))
