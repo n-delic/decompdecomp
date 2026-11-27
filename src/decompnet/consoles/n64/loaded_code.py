@@ -88,8 +88,9 @@ def find(rom_path: Path, rom: bytes, taken, found=(), *, log=print, stop=lambda:
     late_dumps = []
     with tempfile.TemporaryDirectory(prefix="decomp-loaded-code-") as tmp:
         try:
-            run = emulator.run(Path(rom_path), VIS, inputs=inputs(), dumps={v: Path(tmp) / f"{v}.bin" for v in DUMPS},
-                               timeout=300, stop=stop)
+            run, expansion = emulator.run_for_observation(
+                Path(rom_path), VIS, inputs=inputs(), dumps={v: Path(tmp) / f"{v}.bin" for v in DUMPS},
+                timeout=300, stop=stop, log=log)
         except emulator.EmulatorError as error:
             return {"segments": [], "decoded": 0, "moved": [], "skipped": str(error)}
         dumps = [p.read_bytes() for _, p in sorted(run.dumps.items()) if p.is_file()]
@@ -100,7 +101,7 @@ def find(rom_path: Path, rom: bytes, taken, found=(), *, log=print, stop=lambda:
             try:
                 late = emulator.run(Path(rom_path), 6000,
                                     dumps={v: Path(tmp) / f"late-{v}.bin" for v in (3000, 4500, 6000)},
-                                    timeout=300, stop=stop)
+                                    timeout=300, stop=stop, expansion_pak=expansion)
                 late_dumps = [p.read_bytes() for _, p in sorted(late.dumps.items()) if p.is_file()]
             except emulator.EmulatorError as error:
                 log(f'Later code-bank observation was unavailable: {error}')

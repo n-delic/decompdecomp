@@ -44,6 +44,12 @@ class EmulatorError(RuntimeError):
     pass
 
 
+class EmulatorStuckError(EmulatorError):
+    def __init__(self, message: str, frame: int):
+        super().__init__(message)
+        self.frame = frame
+
+
 OWN = ("frontend.c", "input.c", "video.c", "audio.c", "live.h")  # decompdecomp's own programs, built beside the pinned core
 
 
@@ -363,8 +369,9 @@ def run(rom: Path, vis: int, *, inputs: str = "", dumps: dict[int, Path] | None 
                 kept.add(line)
         text = kept.text()
     if kept.stuck:
-        raise EmulatorError(f"The emulator is stuck repeating {kept.stuck!r} and was stopped "
-                            f"(after {kept.repeats:,} times, frame {parse(text).vis or 0}).")
+        frame = parse(text).vis or 0
+        raise EmulatorStuckError(f"The emulator is stuck repeating {kept.stuck!r} and was stopped "
+                                 f"(after {kept.repeats:,} times, frame {frame}).", frame)
     result = parse(text)
     if cut:
         result.timed_out = True
@@ -374,6 +381,27 @@ def run(rom: Path, vis: int, *, inputs: str = "", dumps: dict[int, Path] | None 
     if proc.returncode and not result.vis:
         raise EmulatorError("The emulator stopped: " + ("; ".join(result.errors) or text[-400:]))
     return result
+
+
+def run_for_observation(rom: Path, vis: int, *, log=print, stop=lambda: False, **kwargs) -> tuple[Run, bool]:
+    """Retry a boot that never reaches video once with the Expansion Pak, for passive observation."""
+    try:
+        result = run(rom, vis, stop=stop, **kwargs)
+        retry = result.timed_out and not result.vis and not result.dumps
+    except EmulatorStuckError as error:
+        if error.frame or stop():
+            raise
+        retry = True
+    if not retry:
+        return result, False
+    if stop():
+        raise EmulatorError('Stopped.')
+    # A racing game's bootloader writes a stack argument just beyond 4 MiB. Without the
+    # Expansion Pak its invalid TLB entry traps before the first video interrupt.
+    log('The game did not reach video with 4 MiB; retrying observation with the Expansion Pak.')
+    for path in (kwargs.get('dumps') or {}).values():
+        Path(path).unlink(missing_ok=True)
+    return run(rom, vis, stop=stop, expansion_pak=True, **kwargs), True
 
 
 def word(dump: bytes, address: int) -> int:

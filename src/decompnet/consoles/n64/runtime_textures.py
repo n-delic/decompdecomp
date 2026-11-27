@@ -34,7 +34,7 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
         progress(dict(phase='Observing runtime textures', done=0, total=1))
         with tempfile.TemporaryDirectory(prefix='decomp-runtime-textures-') as folder:
             dumps = {vi: Path(folder)/f'{vi}.ram' for vi in VIS}
-            run = emulator.run(rom, VIS[-1], dumps=dumps, timeout=120)
+            run, _ = emulator.run_for_observation(rom, VIS[-1], dumps=dumps, timeout=120, log=log)
             snapshots = (path.read_bytes() for path in dumps.values() if path.is_file())
             assets = runtime_textures.regions(image, snapshots)
         if run.timed_out:
