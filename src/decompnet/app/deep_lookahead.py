@@ -15,8 +15,12 @@ class Window:
 
     def ensure(self,sources):
         search=self.search;pool=getattr(search,'compile_pool',None)
-        if (not sources or pool is None or self.fork or not hasattr(search.net,'compiled_ahead')
-                or len(getattr(search,'compiler_profiles',[]))>1):return
+        if not sources or self.fork:
+            return
+        if pool is None or not hasattr(search.net, 'compiled_ahead') or len(getattr(search, 'compiler_profiles', [])) > 1:
+            if len(sources) > 1:
+                search._prime_trials(self.agent, self.proj, self.fn, sources, self.fork)
+            return
         ticket=getattr(search,'_ahead',{}).get(sources[0])
         if ticket is not None and not ticket.counted:return
         if self.tickets:

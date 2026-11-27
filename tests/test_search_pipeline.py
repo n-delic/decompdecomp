@@ -8,6 +8,7 @@ import pytest
 from decompnet import compile_sessions, scoring
 from decompnet.app import deep_permuter, permute, trial_bookkeeping
 from decompnet.elfobj import FunctionObj, Reloc
+from decompnet.repair_feedback import trial
 from tests.test_deep_permuter import Log
 from tests.test_permute import AGENT, FakeNet
 
@@ -121,6 +122,59 @@ def test_batched_lookup_avoids_per_candidate_reads_and_honors_pending_feedback(m
     net._context = lambda *args: {'header':'changed', 'version':2}
     search._score_current(AGENT, proj, fn, sources[0], 40, None)
     assert len(queries) == 2
+
+
+def test_forced_and_baseline_scores_do_not_read_miss_history(monkeypatch):
+    net = FakeNet()
+    fn, proj = net.function(), net.project_row('game')
+    search = deep_permuter.Search(net, 1, 100, Log(), fn)
+    original = net.store.one
+
+    def read(sql, *args):
+        assert 'FROM reuse_trials' not in sql
+        return original(sql, *args)
+
+    monkeypatch.setattr(net.store, 'one', read)
+    scores = iter([40, 41])
+    monkeypatch.setattr(permute.Permuter, '_score', lambda *args: next(scores))
+    source = 'int f(void){return 42;}'
+    search.measuring_baseline = True
+    assert search._score_current(AGENT, proj, fn, source, 40, None) == 40
+    search.measuring_baseline = False
+    with trial({'fresh': True}):
+        assert search._score_current(AGENT, proj, fn, source, 40, None) == 41
+    assert not search._trial_reused
+
+
+def test_local_proposal_pages_batch_reads_in_order(monkeypatch):
+    net = FakeNet()
+    fn, proj = net.function(), net.project_row('game')
+    search = deep_permuter.Search(net, 1, 100, Log(), fn)
+    original_one, original_all = net.store.one, net.store.all
+    batches, judged = [], []
+
+    def one(sql, *args):
+        assert 'FROM reuse_trials' not in sql
+        return original_one(sql, *args)
+
+    def all_(sql, *args):
+        if 'FROM reuse_trials' in sql:
+            batches.append(len(args) - 1)
+        return original_all(sql, *args)
+
+    def score(self, agent, proj, fn, source, best, fork):
+        judged.append(source)
+        return 40
+
+    monkeypatch.setattr(net.store, 'one', one)
+    monkeypatch.setattr(net.store, 'all', all_)
+    monkeypatch.setattr(permute.Permuter, '_score', score)
+    proposals = [('family', f'int f(void){{return {num};}}') for num in range(16)]
+    with trial_bookkeeping.scope():
+        for _, source in search._trial_proposals(AGENT, proj, fn, proposals, None):
+            assert search._score_current(AGENT, proj, fn, source, 40, None) == 40
+    assert judged == [source for _, source in proposals]
+    assert batches == [8, 8]
 
 
 def test_stream_primes_each_chunk_and_closes_on_discard():

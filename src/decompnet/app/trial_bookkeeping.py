@@ -138,7 +138,7 @@ def submit(store, statements, *, immediate=False, memo=None):
     if value.bytes >= value.max_bytes or sum(len(b['pending']) for b in value.buffers) >= value.max_statements or time.monotonic()-value.started >= value.seconds:value.flush()
 
 
-def count(store, sql, args, key, merge, *, immediate=False):
+def count(store, sql, args, key, merge=None, *, immediate=False, memo=None):
     """A counter upsert (attempted+N and the like): within a batch, one with the same SQL and key (`key` leading
     arguments) is merged into the pending one by `merge(old, new)`, so a batch writes one row per key rather than
     one per trial. The deep search wrote three counter rows for every candidate through the single writer."""
@@ -149,7 +149,15 @@ def count(store, sql, args, key, merge, *, immediate=False):
     buffer = value.buffer(store)
     slot = (sql, tuple(args[:key]))
     old = buffer['counters'].get(slot)
-    buffer['counters'][slot] = tuple(args) if old is None else tuple(merge(old, args))
+    updated = tuple(merge(old, args)) if old is not None and merge is not None else tuple(args)
+    buffer['counters'][slot] = updated
+    if memo is not None:
+        buffer['values'][memo[0]] = memo[1]
+        # Replacement records can carry large feedback. Include it in the same
+        # byte limit as ordinary queued writes, even when a key is reused.
+        buffer['bytes'] += sum(len(arg.encode()) for arg in updated if isinstance(arg, str))
+        if old is not None:
+            buffer['bytes'] -= sum(len(arg.encode()) for arg in old if isinstance(arg, str))
     if old is None:
         buffer['bytes'] += len(sql.encode()) + 64*len(args)
     if immediate:value.flush(store)
