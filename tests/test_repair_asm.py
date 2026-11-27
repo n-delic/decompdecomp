@@ -24,3 +24,10 @@ def test_unchanged_without_names_or_a_reader():
     assert repair_asm.current(Net(), {}, ASM, 'void f(void) {}') == ASM
     assert repair_asm.current(object(), {}, ASM, 'sprintf') == ASM
     assert repair_asm.current(Net(), {}, '', 'sprintf') == ''
+
+
+def test_renames_are_only_the_renamed_names_and_apply_follows_the_source():
+    names = repair_asm.renames(Net(), {}, ASM)
+    assert names == {'func_8005BB50': 'sprintf', 'func_80001000': 'strcmp', 'D_8006DF60': 'sBusy'}
+    assert 'jal        strcmp' in repair_asm.apply(ASM, names, 'strcmp(a, b);')
+    assert repair_asm.apply(ASM, {}, 'strcmp') == ASM
