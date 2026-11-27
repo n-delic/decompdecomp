@@ -266,7 +266,19 @@ def verified_rebuild(project, config_path: Path, config: dict, image_path: Path,
                 entry.update(base_path=base.relative_to(root).as_posix(),
                              metadata={'source_path': source.relative_to(root).as_posix()})
             else:
-                entry['metadata'] = {'assembly_source': source.relative_to(root).as_posix()}
+                # Splat output is often ignored and a later clean removes it. Keep the assembly
+                # used for the verified object beside the reference so drafts can still read it.
+                if root not in source.resolve().parents:
+                    raise ForkError('assembly source leaves the checkout; no reference files were created')
+                if source.stat().st_mtime_ns > base.stat().st_mtime_ns:
+                    raise ForkError(f'{source.relative_to(root)} changed after its verified object; rebuild the project')
+                saved = work / 'assembly' / source.relative_to(root)
+                saved.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, saved)
+                entry['metadata'] = {
+                    'assembly_source': source.relative_to(root).as_posix(),
+                    'draft_assembly': (destination / saved.relative_to(work)).relative_to(root).as_posix(),
+                }
             entries.append(entry)
         pending = work / 'objdiff.json'
         pending.write_text(json.dumps({'custom_make': 'make', 'custom_args': make_args,

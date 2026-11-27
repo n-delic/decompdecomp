@@ -63,7 +63,9 @@ def prepare(project, log=print, *, limit: int = 32, units: set[str] | None = Non
                     continue
             elif layout.name == 'targets':
                 relative = target.relative_to(layout).with_suffix('')
-                value = (entry.get('metadata') or {}).get('assembly_source')
+                metadata = entry.get('metadata') or {}
+                # A verified rebuild keeps its original split assembly even if `make clean` removed it.
+                value = metadata.get('draft_assembly') or metadata.get('assembly_source')
                 if not isinstance(value, str) or Path(value).is_absolute():
                     continue
                 assembly = (project.root / value).resolve()

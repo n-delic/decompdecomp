@@ -311,6 +311,10 @@ def test_verified_rebuild_retains_nested_config_version(tmp_path, monkeypatch, r
     asm = next(u for u in result['units'] if u['name'] == 'asm/start')
     assert 'base_path' not in asm and 'source_path' not in asm['metadata']
     assert asm['metadata']['assembly_source'] == 'asm/start.s'
+    saved = tmp_path / asm['metadata']['draft_assembly']
+    assert saved.read_text() == (tmp_path/'asm/start.s').read_text()
+    (tmp_path/'asm/start.s').unlink()
+    assert saved.is_file()
     for unit in result['units']:
         for key in ('name', 'base_path', 'target_path'):
             assert '\\' not in unit.get(key, '')

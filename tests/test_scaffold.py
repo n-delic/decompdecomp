@@ -238,3 +238,24 @@ def test_scaffold_refuses_object_directory_symlink_outside_checkout(tmp_path, mo
         prepare(fp)
     assert existing.read_bytes() == b'outside data'
     assert not (root / 'src/decompdecomp/demo.c').exists()
+
+
+def test_scaffold_uses_preserved_assembly_after_project_clean(tmp_path, monkeypatch):
+    ref = tmp_path / '.decomp-wtf/objdiff-references'
+    target = ref / 'targets/asm/demo.s.o'
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b'verified')
+    saved = ref / 'assembly/asm/demo.s'
+    saved.parent.mkdir(parents=True)
+    saved.write_text('glabel demo\njr $ra\nnop\n')
+    (tmp_path / 'objdiff.json').write_text(json.dumps({'units': [{
+        'name': 'asm/demo', 'target_path': str(target.relative_to(tmp_path)),
+        'metadata': {'assembly_source': 'asm/demo.s', 'draft_assembly': str(saved.relative_to(tmp_path))}}]}))
+    fp = ForkProject(tmp_path)
+    def build(unit):
+        unit.base.write_bytes(b'compiled')
+        return True, ''
+    monkeypatch.setattr(fp, 'build_unit', build)
+    assert len(prepare(fp)) == 1
+    from decompnet.forks.drafts import find_asm
+    assert find_asm(tmp_path, 'asm/demo', 'demo', None) == saved
