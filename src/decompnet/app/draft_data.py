@@ -24,7 +24,7 @@ def case_target(word, instruction_addresses):
     return high if not word & 0x80000000 and high in instruction_addresses else None
 
 
-def jump_table_extent(name, reader, instruction_addresses, endian):
+def jump_table_extent(name, reader, instruction_addresses, endian, max_cases=MAX_CASES):
     """(address, size) of a jump table the symbol list doesn't have: its address is in its name (`jtbl_800E1DE8`)
     and it runs as long as its words are addresses of this function's own instructions. Nothing is invented: a word
     that is not a case target ends the table, and fewer than two cases is not a table. m2c can't resolve a `jr`
@@ -35,12 +35,52 @@ def jump_table_extent(name, reader, instruction_addresses, endian):
         return None
     address = int(match[1], 16)
     cases = 0
-    while cases < MAX_CASES:
+    while cases < min(max_cases, MAX_CASES):
         word = reader(address + 4 * cases, 4)
         if word is None or len(word) != 4 or case_target(struct.unpack(endian + 'I', word)[0], instruction_addresses) is None:
             break
         cases += 1
     return (address, 4 * cases) if cases >= 2 else None
+
+
+def guarded_table_sizes(asm):
+    """Exact bounds for a direct MIPS dispatch guarded by an unsigned range check.
+
+    Tables may be adjacent and point into the same function, so scanning until a non-case can swallow the next
+    table. Only use a bound when the guard, scaled index, relocation and indirect jump form one straight sequence.
+    """
+    insns = []
+    for line in asm.splitlines():
+        line = re.sub(r"^\s*(?:/\*.*?\*/\s*)?", "", line).strip()
+        if not line or line.endswith(':') or line.startswith(('glabel ', 'nonmatching ', 'endlabel ')):
+            insns.append('')  # do not match across labels or other block boundaries
+        else:
+            insns.append(re.sub(r"\s*,\s*", ", ", re.sub(r"\s+", " ", line)))
+    bounds = {}
+    for i in range(len(insns) - 6):
+        match = re.fullmatch(r"sltiu \$(\w+), \$(\w+), (0x[0-9A-Fa-f]+|\d+)", insns[i])
+        if not match:
+            continue
+        result, index, size = match.groups()
+        if result in (index, "at"):
+            continue  # the comparison or address load would overwrite the index
+        branch, shift, high, add, load, jump = insns[i + 1:i + 7]
+        if not re.fullmatch(rf"beqz \${result}, \S+", branch):
+            continue
+        if not re.fullmatch(rf"sll \${result}, \${index}, (?:2|0x2)", shift):
+            continue
+        table = re.fullmatch(r"lui \$at, %hi\(((?:jtbl_|D_)[0-9A-Fa-f]{8})\)", high)
+        if not table or not re.fullmatch(rf"addu \$at, \$at, \${result}", add):
+            continue
+        name = table[1]
+        target = re.fullmatch(rf"lw \$(\w+), %lo\({name}\)\(\$at\)", load)
+        if not target or not re.fullmatch(rf"jr \${target[1]}", jump):
+            continue
+        name = 'jtbl_' + name[2:] if name.startswith('D_') else name
+        bound = int(size, 16 if size.lower().startswith("0x") else 10)
+        if 2 <= bound <= MAX_CASES:
+            bounds.setdefault(name, set()).add(bound)
+    return {name: sizes.pop() for name, sizes in bounds.items() if len(sizes) == 1}
 
 
 def beside_code_reader(rom, fn, reader):  # (`rom`: the bytes, or a function that returns them, read only when needed)
@@ -102,6 +142,7 @@ def read(net, proj, fn):
     dispatched = {'jtbl_' + found[2][2:]: found[2] for found in _DISPATCH.finditer(asm)}
     names = [name for name in names if name not in dispatched.values()] + sorted(dispatched)
     names.sort(key=lambda name: not name.startswith('jtbl_'))
+    bounds = guarded_table_sizes(asm)
     count = tables = 0
     beside = []
     found_readers = {}
@@ -117,7 +158,7 @@ def read(net, proj, fn):
             if reader is None:
                 reader = net.reader(proj, fn)
             for candidate in (table_reader(), *delta_readers(net, proj, fn)):
-                if extent := jump_table_extent(name, candidate, instruction_addresses, endian):
+                if extent := jump_table_extent(name, candidate, instruction_addresses, endian, bounds.get(name, MAX_CASES)):
                     symbol = SimpleNamespace(address=extent[0], size=extent[1], kind='jtbl')
                     found_readers[name] = candidate
                     break

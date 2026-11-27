@@ -126,3 +126,46 @@ def test_a_data_word_that_is_only_read_is_not_taken_for_a_jump_table():
                           reader=lambda *_: _reader(CASES))
     fn = {"asm": ASM + "lui $at, %hi(D_800E1DE8)\nlw $v0, %lo(D_800E1DE8)($at)\njr $ra\nnop\n"}
     assert draft_data.read(net, {"id": 1}, fn) == [".section .rodata"]
+
+
+def test_guarded_adjacent_tables_do_not_absorb_each_others_cases():
+    # Each of two contiguous tables targets the same function. The sentinel scan alone joins them, changing the
+    # switches and sometimes making m2c see more than one table in a block.
+    second = BASE + 12
+    words = (*CASES, CASES[2], CASES[1], CASES[0])
+    net = SimpleNamespace(symbols=lambda _: SimpleNamespace(by_name={}), cfg=lambda _: {},
+                          reader=lambda *_: _reader(words))
+
+    def dispatch(name):
+        return (f"sltiu $v0, $v1, 3\nbeqz $v0, .L800DF90C\nsll $v0, $v1, 2\n"
+                f"lui $at, %hi({name})\naddu $at, $at, $v0\nlw $v0, %lo({name})($at)\njr $v0\nnop\n")
+
+    fn = {"asm": ASM + dispatch(f"jtbl_{BASE:08X}") + dispatch(f"jtbl_{second:08X}")}
+    lines = draft_data.read(net, {"id": 1}, fn)
+    assert lines[1:] == [f"dlabel jtbl_{BASE:08X}", *(".word .L%08X" % w for w in CASES),
+                         f"dlabel jtbl_{second:08X}", *(".word .L%08X" % w for w in reversed(CASES))]
+
+
+def test_guarded_table_size_requires_the_same_index_and_a_complete_dispatch():
+    asm = ("sltiu $v0, $v1, 3\nbeqz $v0, .L800DF90C\nsll $v0, $v1, 2\n"
+           "lui $at, %hi(D_800E1DE8)\naddu $at, $at, $v0\nlw $v0, %lo(D_800E1DE8)($at)\njr $v0\n")
+    assert draft_data.guarded_table_sizes(asm) == {"jtbl_800E1DE8": 3}
+    assert draft_data.guarded_table_sizes(asm.replace("sll $v0, $v1", "sll $v0, $a0")) == {}
+    assert draft_data.guarded_table_sizes(asm.replace("jr $v0", "jr $a0")) == {}
+    assert draft_data.guarded_table_sizes(asm.replace("beqz $v0", "bnez $v0")) == {}
+    assert draft_data.guarded_table_sizes(asm.replace("addu $at", ".L80000000:\naddu $at")) == {}
+
+
+def test_guarded_table_size_ignores_conflicting_uses_of_the_same_table():
+    asm = ("sltiu $v0,$v1,03\nbeqz $v0,.L800DF90C\nsll $v0,$v1,2\n"
+           "lui $at,%hi(jtbl_800E1DE8)\naddu $at,$at,$v0\n"
+           "lw $v0,%lo(jtbl_800E1DE8)($at)\njr $v0\n")
+    assert draft_data.guarded_table_sizes(asm) == {"jtbl_800E1DE8": 3}
+    assert draft_data.guarded_table_sizes(asm + asm.replace(",03", ",04")) == {}
+
+
+def test_guard_cannot_destroy_its_own_index():
+    asm = ("sltiu $v0, $v0, 3\nbeqz $v0, .L800DF90C\nsll $v0, $v0, 2\n"
+           "lui $at, %hi(jtbl_800E1DE8)\naddu $at, $at, $v0\n"
+           "lw $v0, %lo(jtbl_800E1DE8)($at)\njr $v0\n")
+    assert draft_data.guarded_table_sizes(asm) == {}
