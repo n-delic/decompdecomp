@@ -254,11 +254,23 @@ def _start(args,home,internal,state_file,log,restarted,headless):
             window.tell_desktop(f"{edition.NAME} can't start its MCP gateway", message)
         return 1
 
+    warnings = []
+
+    def gateway_warning(message):
+        log.warning("%s", message)
+        print(message, file=sys.stderr, flush=True)
+        warnings.append(message)
+
     try:
-        with step("Finding or installing the agents' MCP gateway"):
-            executable = mcp_gateway.startup_program()
+        with step("Checking the agents' MCP gateway"):
+            executable = mcp_gateway.startup_program(warn=gateway_warning)
     except (OSError, RuntimeError, ValueError) as error:
         return gateway_error(error)
+
+    if executable is not None:
+        os.environ["DECOMP_ACTIVE_MCP_GATEWAY"] = str(executable.resolve())
+    if warnings and not headless and window.wanted():
+        window.tell_desktop(f"{edition.NAME} gateway update", "\n\n".join(warnings))
 
     sock = _listen(restarted["port"] if restarted else args.port, exact=bool(restarted) or headless)
     port = sock.getsockname()[1]

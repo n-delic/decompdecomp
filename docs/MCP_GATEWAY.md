@@ -186,8 +186,8 @@ uv run pytest -q tests/test_mcp_gateway.py tests/test_mcp_gateway_install.py tes
   tests/test_window_gateway.py tests/test_window_reads.py && (cd gateway && cargo test)
 ```
 
-- Build it only when you change `gateway/`. A checkout or worktree that hasn't built it uses the copy `decomp setup`
-  downloaded, so a branch that leaves `gateway/` alone needs no Rust build. The release profile (thin LTO, one
+- For worktree tests unrelated to the gateway, set `DECOMP_BUILD_GATEWAY=0` for `uv sync`. A checkout or worktree
+  without a build can use a downloaded copy. The release profile (thin LTO, one
   codegen unit) takes minutes of every core, and several worktrees building it at once slow down everything else on
   the machine, including the user's running app.
 - Iterating on the gateway, share one target folder between worktrees for `cargo test` and `cargo check`
@@ -201,8 +201,10 @@ uv run pytest -q tests/test_mcp_gateway.py tests/test_mcp_gateway_install.py tes
 - Every release also carries `decomp-mcp-gateway-<platform>` and its `.sha256` (macOS arm64 and x86_64, Linux
   x86_64, Windows x86_64). An install from source (`site/public/install.sh`, `uv tool install`) has no Rust build:
   `decomp setup`, which the installer and every update run, downloads the one for this computer and checks it
-  against its checksum. Startup also tries this version’s release and then the latest if the executable is missing.
-- The app uses the newest of the package's copy and a checkout's cargo build, else the downloaded one.
+  against its checksum. Startup checks the latest published checksum and refreshes the cached executable when it can run the app's Rust
+  judge. The app warns when it has to use an older build.
+- Editable Git checkouts build the gateway during `uv sync` when Cargo is available. Startup prefers a current
+  checkout build. Use `uv sync --reinstall-package decompnet` after installing Cargo or recovering from a failed build.
 - If the gateway is unavailable or fails to launch, decompdecomp reports the error before starting its server
   or helpers. Use a packaged build or point `DECOMP_MCP_GATEWAY=<path>` at a compatible executable.
   Set `DECOMP_MCP_GATEWAY=0` to explicitly use the app's own MCP endpoint. The test suite uses that opt-out
