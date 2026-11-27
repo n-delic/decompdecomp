@@ -77,6 +77,7 @@ class Toolchain:
     driver: str = ""  # packaged, console-owned compiler adapter, staged read-only with the tools
     pass_dumps: bool = False  # its driver passes -da on to cc1, which writes the pass dumps (compiler_diagnostics)
     build: str = ""  # native source-built tools, after checksum-verified parts are extracted
+    build_revision: str = ""  # change when the local build recipe changes what the installed tool can do
     family: str = ""  # backend family when the registry id doesn't carry its compiler's name
     wine: bool = False  # Windows programs wibo cannot run: use wine on Linux and macOS
     headers: list[str] = field(default_factory=list)  # shared compiler header packs
@@ -353,6 +354,8 @@ def fingerprint(tc: Toolchain, linux: bool = False) -> str:
     parts = tc.linux_parts() if linux else tc.parts_for()
     entry = {"parts": [{k: v for k, v in p.items() if k != "platforms"} for p in parts],
              **{k: getattr(tc, k) for k in INSTALLED_FROM}}
+    if tc.build_revision:  # preserve the fingerprints of unrelated installs
+        entry["build_revision"] = tc.build_revision
     return hashlib.sha256(json.dumps(entry, sort_keys=True).encode()).hexdigest()[:16]
 
 
@@ -920,6 +923,19 @@ def _install(tid: str, *, accept_license: bool, force: bool, log, linux: bool | 
 
 def _build_psyq_parser(dest: Path, linux: bool, log) -> None:
     """Build only PCSX-Redux's standalone converter and its pinned header dependencies."""
+    # The pinned converter rejects GCC's constructor/destructor tables. They are ordinary writable,
+    # allocated PROGBITS sections; preserve their names and relocations for the linker's startup code.
+    parser = dest / "source/pcsx/src/supportpsx/psyq-obj.cc"
+    anchor = '        {".data", ELFIO::SHF_ALLOC | ELFIO::SHF_WRITE},'
+    try:
+        code = parser.read_text(encoding="utf-8")
+        if code.count(anchor) != 1:
+            raise ToolchainError("The pinned PsyQ converter's section table changed; its C++ section patch needs updating.")
+        parser.write_text(code.replace(anchor, anchor + '\n'
+                          '        {".ctors", ELFIO::SHF_ALLOC | ELFIO::SHF_WRITE},\n'
+                          '        {".dtors", ELFIO::SHF_ALLOC | ELFIO::SHF_WRITE},'), encoding="utf-8")
+    except OSError as error:
+        raise ToolchainError(f"Couldn't prepare the pinned PsyQ converter: {error}") from error
     source = "source"
     argv = ["c++", "-std=c++20", "-O2", "-DNDEBUG", "-DFMT_HEADER_ONLY",
             *["-I" + source + "/" + p for p in ("", "pcsx/src", "fmt/include", "elfio", "args", "magic_enum/include")],
