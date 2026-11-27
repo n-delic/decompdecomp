@@ -1257,7 +1257,18 @@ def _cut_inside(cfg, bodies):
                     previous[1:] = [kind, name]
                 existing.add(at)
                 changed = True
-        subs.sort(key=lambda s: s[0] if isinstance(s, list) and s else s.get("start", 0))
+        def offset(sub, parent=seg):
+            if isinstance(sub, list) and sub:
+                return sub[0]
+            if isinstance(sub, dict):
+                if isinstance(sub.get('start'), int):
+                    return sub['start']
+                if isinstance(sub.get('vram'), int) and isinstance(parent.get('vram'), int):
+                    return parent['start'] + sub['vram'] - parent['vram']
+            return float('inf')
+        # A BSS child has a VRAM but no ROM start. Sorting it as offset zero puts it
+        # before code and makes Splat reject the otherwise valid staged split.
+        subs.sort(key=offset)
     return changed
 
 
