@@ -875,7 +875,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Supplied assembly code/data verification | ✓ ROM driver | ✓ ROM driver | ✓ ROM driver | — | — | ✓ ROM driver | — | — own build adapter planned | — own build adapter planned | — | — own build adapter planned | — own build adapter planned |
 | Indexed SDK object assembly proof | ✓ MIPS ROM | ✓ MIPS ROM | ✓ MIPS ROM | — | — | ✓ MIPS ROM | — | — owned-build adapter planned | — owned-build adapter planned | — | — owned-build adapter planned | — owned-build adapter planned |
 | Library C that library detection finds set aside (opt-in, Libraries for this game; linked when your SDK has it) | ✓ MIPS ROM, built-in ultralib table; port glue and replaced, and n_audio (no public source) | ✓ MIPS ROM | ✓ MIPS ROM | — | — | ✓ MIPS ROM | — | — owned-build adapter planned | — owned-build adapter planned | — | — owned-build adapter planned | — owned-build adapter planned |
-| Built-in exact SDK assembly detection before claims | ✓ exact libultra bodies | — pack planned | — pack planned | — | — | — pack planned | — | — pack planned | — pack planned | — | — pack planned | ✓ N64 ELF references without relocations; other packs planned |
+| Built-in exact SDK assembly detection before claims | ✓ exact libultra bodies | — pack planned | — pack planned | — | — | — pack planned | — | — pack planned | — pack planned | — | — pack planned | ✓ N64 self-contained ELF references and validated makerom entry relocations; other packs planned |
 | Exact C / verified source assembly / verified SDK assembly / other assembly / open counts | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ counts | ✓ counts | — | ✓ counts | ✓ counts |
 | Local mapped source preparation | ✓ | ✓ | ✓ | — | — | ✓ | — | body only¹ | body only¹ | — | body only¹ | body only¹ |
 | Verified neighbour context hypotheses and separate body/header bundles | ✓ ROM | ✓ ROM | ✓ ROM | — | — | ✓ ROM | — | — own build adapter planned | — own build adapter planned | — | — own build adapter planned | — own build adapter planned |
@@ -3344,6 +3344,8 @@ Target-table reading currently supports MIPS ROM assembly with bounded, mapped t
 processors and imported object-mode table discovery: **—**, require their relocation/table adapters.
 Approximate SDK hints in imported project mode: **—**, require reading the target unit object through
 that mode's existing object-format adapter. Generic C source-shape repairs already reach that mode.
+Source-less units mixing verified SDK assembly and unresolved functions are deferred during automatic C
+preparation. Identify the remaining SDK bodies or split mixed units before opening their other functions.
 
 - Done: typed SDK math-call mapping hints, allocation-extent advisories, bounded post-preparation compiler checks,
   and first-error compiler summaries with private full logs. Imported builds retain their own compiler settings;

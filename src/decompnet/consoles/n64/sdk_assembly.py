@@ -485,6 +485,20 @@ def identify_entry(code):
             'evidence': 'The cartridge entry stub: its instructions are the SDK boot code\'s, only its addresses are the game\'s.'}
 
 
+def identify_relocated_entry(code, relocations):
+    """The makerom entry shape with exactly four paired MIPS address relocations."""
+    if not (identity := identify_entry(code)):
+        return None
+    pairs = ((0, 4), (8, 12), (40, 44), (48, 56))
+    expected = {(offset, kind) for hi, lo in pairs for offset, kind in ((hi, 5), (lo, 6))}
+    if len(relocations) != len(expected) or {(offset, kind) for offset, kind, _ in relocations} != expected:
+        return None
+    symbols = {offset: symbol for offset, _, symbol in relocations}
+    if any(not symbols[hi] or symbols[hi] != symbols[lo] for hi, lo in pairs):
+        return None
+    return identity
+
+
 def identify(code,big_endian=True):
     if big_endian and (entry := identify_entry(code)):return entry
     if not big_endian or len(code) not in SIZES:return None

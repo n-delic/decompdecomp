@@ -265,6 +265,9 @@ class Nintendo64(Console):
     def sdk_assembly_identity(self, code, big_endian=True):
         return sdk_assembly.identify(code, big_endian)
 
+    def sdk_relocated_assembly_identity(self, code, relocations, machine):
+        return sdk_assembly.identify_relocated_entry(code, relocations) if machine == 'EM_MIPS' else None
+
     sdk_shape_sizes = (sdk_shapes._MIN_ANY, sdk_shapes._MAX)
 
     def sdk_shape_identity(self, code, big_endian=True):

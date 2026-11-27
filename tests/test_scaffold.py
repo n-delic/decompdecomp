@@ -345,6 +345,8 @@ def test_autopilot_prepares_every_batch_and_stop_keeps_completed_units(tmp_path,
     monkeypatch.setattr(fp, 'build_unit', build)
     monkeypatch.setattr('decompnet.app.forkengine.toolchains.installed', lambda tool: {'id': tool})
     def all_rows(query, *args):
+        if "verified_assembly.kind" in query:
+            return []
         if 'SELECT DISTINCT unit' in query:
             return [{'unit': u['name']} for u in fp.objdiff_config()['units']
                     if not (u.get('metadata') or {}).get('source_path')]

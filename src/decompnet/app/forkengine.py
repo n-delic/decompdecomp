@@ -3821,6 +3821,7 @@ class ForkEngine:
                 if not (stop is not None and stop.is_set()):
                     self.sync(slug)
             eligible = None
+            reported_sdk_units = set()
             while stop is None or not stop.is_set():
                 if all_units:
                     eligible = {r['unit'] for r in self.net.project_store(slug).all(
@@ -3828,6 +3829,18 @@ class ForkEngine:
                         "AND COALESCE(json_extract(meta,'$.set_aside'),0)=0 "
                         "AND json_extract(meta,'$.asm_code') IS NULL AND json_extract(meta,'$.asm_twin') IS NULL",
                         proj['id']) if r['unit']}
+                    # A single generated C file makes every unresolved function in a
+                    # unit open. Hold mixed SDK units until each body is identified;
+                    # otherwise the remaining SDK routines become game candidates.
+                    sdk_units = {r['unit'] for r in self.net.project_store(slug).all(
+                        "SELECT DISTINCT unit FROM functions WHERE project_id=? AND status='asm' "
+                        "AND json_extract(meta,'$.verified_assembly.kind')='sdk'", proj['id']) if r['unit']}
+                    held_sdk_units = eligible & sdk_units
+                    if progress is not None:
+                        for unit_name in sorted(held_sdk_units - reported_sdk_units):
+                            progress(f'Deferred {unit_name}: it contains verified SDK assembly; review its other functions first.')
+                    reported_sdk_units.update(held_sdk_units)
+                    eligible -= sdk_units
                 with self._tree(proj).exclusive(), self._build_locks[proj["id"]]:
                     if all_units:
                         made = prepare(fp, log=progress or (lambda *_: None), stop=stop, units=eligible)
