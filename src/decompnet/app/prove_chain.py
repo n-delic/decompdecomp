@@ -3,7 +3,8 @@
 Hand sessions with the match-function skill answer that with `prove_chain.py`: at each step it asks the app's own
 proposal code (`draft_repairs.variants`, the path drafts and the permuter's beam use) for every child of the current
 source, keeps those of the chosen families, judges them with the exact judge and keeps the best child that beats the
-current score, until 0, no improvement, or the step cap. A whole-path audit matched 11 of 42 stalled functions with
+current score, until 0, no improvement, or the step cap. Each step judges the first few children of every family
+before it takes one (`survey`). A whole-path audit matched 11 of 42 stalled functions with
 the library alone that way; app helpers could only try one family at a time (try_local_repairs), each try a compile.
 
 This is the same chain inside the app: judged by a small judge_pool (the app's judge, attach-only, recording
@@ -30,6 +31,27 @@ MAX_JUDGED = 400
 MAX_JUDGED_LIMIT = 2000
 SECONDS = 120
 WORKERS = 2
+# Children of each family a step judges before it commits to the best one (`survey`).
+FEW = 3
+
+
+def survey(options, left):
+    """(options reordered, how many of them a step judges before it takes an improving child).
+
+    A step used to take the best of its first improving batch, so a family whose children all came later was never
+    judged (a near-miss at 1030 took small steps while another family reached 330 in one). Up to FEW children of every
+    family now come first, one family after another, then the rest in the order given. In a capped run the survey takes
+    at most half of the `left` variants, so later steps still have some, but never fewer than one per family while
+    `left` allows it. `options` is [(family, child)]; `left` is infinite (or sys.maxsize) without a cap."""
+    seen, ranks = {}, []
+    for family, _ in options:
+        ranks.append(seen.get(family, 0))
+        seen[family] = ranks[-1] + 1
+    order = sorted(range(len(options)), key=lambda i: min(ranks[i], FEW))  # stable: rounds, then the given order
+    count = sum(rank < FEW for rank in ranks)
+    if left != float('inf'):
+        count = int(min(count, max(len(seen), left // 2), left))
+    return [options[i] for i in order], count
 
 
 def chain(source, generate, score, families=None, steps=STEPS, children=CHILDREN, check=lambda: None,
@@ -57,6 +79,7 @@ def chain(source, generate, score, families=None, steps=STEPS, children=CHILDREN
             if (not families or family in families) and child not in seen:
                 seen.add(child)
                 options.append((family, child))
+        options, first = survey(options, left)
         scores = []
         offset = 0
         out_of_time = False
@@ -72,7 +95,7 @@ def chain(source, generate, score, families=None, steps=STEPS, children=CHILDREN
                 left -= len(batch)
                 scores += score([child for _, child in batch])
                 offset += len(batch)
-                if any(s is not None and s < best for s in scores):
+                if offset >= first and any(s is not None and s < best for s in scores):
                     break
         except TimeoutError:
             out_of_time = True
@@ -86,11 +109,11 @@ def chain(source, generate, score, families=None, steps=STEPS, children=CHILDREN
             if not improved:
                 break
         elif 0 < offset < len(options) and improved:
-            notes.append(f"step {step}: {len(options) - offset} of {len(options)} children left out: a batch of "
-                         f"children={children} already improved; name families to narrow it")
-        elif offset > children:
-            notes.append(f"step {step}: judged {offset} children in batches of {children}: the first batch "
-                         "did not improve")
+            notes.append(f"step {step}: {len(options) - offset} of {len(options)} children left out: one already "
+                         f"improved after the first few of every family; name families to narrow it")
+        elif offset >= max(first, children) + children:
+            notes.append(f"step {step}: judged {offset} children in batches of {children}: none improved among the "
+                         "first few of every family")
         options = options[:len(scores)]
         scored = [(s, i) for i, s in enumerate(scores) if s is not None]
         if not scored or min(scored)[0] >= best:

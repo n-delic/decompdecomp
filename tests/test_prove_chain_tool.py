@@ -161,3 +161,27 @@ def test_project_mode_says_what_to_use_instead():
     with pytest.raises(NetworkError, match='try_local_repairs'):
         prove_chain.run(Fork(), None, 's', 'f', 'r')
     assert prove_chain._families('all') is None and prove_chain._families(['a', ' b']) == {'a', 'b'}
+
+
+def test_a_step_judges_a_few_children_of_every_family_before_it_takes_one():
+    # family 'a' fills the first batches with small steps; family 'b' comes last and holds the large one
+    many = [('a', f'a{i}') for i in range(20)] + [('b', 'big')]
+    scores = {'start': 1030, 'big': 330} | {f'a{i}': 1000 for i in range(20)}
+    judged = []
+
+    def score(sources):
+        judged.extend(sources)
+        return [scores.get(s) for s in sources]
+    final, best, taken, _ = prove_chain.chain('start', lambda s: many if s == 'start' else [], score, children=3,
+                                              max_judged=10)
+    assert (final, best, taken[0][0]) == ('big', 330, 'b') and len(judged) <= 1 + 10
+
+
+def test_the_survey_puts_each_familys_first_few_first_and_stays_within_the_cap():
+    options = [('a', f'a{i}') for i in range(6)] + [('b', 'b0'), ('c', 'c0')]
+    ordered, count = prove_chain.survey(options, float('inf'))
+    assert [c for _, c in ordered[:count]] == ['a0', 'b0', 'c0', 'a1', 'a2'] and sorted(ordered) == sorted(options)
+    assert prove_chain.survey(options, 400)[1] == 5
+    assert prove_chain.survey(options, 8)[1] == 4  # half of what is left
+    assert prove_chain.survey(options, 4)[1] == 3  # never under one per family while the cap allows
+    assert prove_chain.survey(options, 2)[1] == 2
