@@ -98,7 +98,7 @@ def remove_foreign_bank_labels(root: Path, functions, segments=()) -> None:
     for path in (root / 'asm' / 'nonmatchings').rglob('*.s'):
         text = path.read_text(encoding='utf-8')
         removed_entries = set()
-        def keep(match, source=text, directory=path.parent.name):
+        def keep(match, source=text, directory=path.parent.name, removed_entries=removed_entries):
             name = match[2]
             if match[1] == 'endlabel':
                 if name in removed_entries:
