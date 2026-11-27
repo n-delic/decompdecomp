@@ -147,13 +147,13 @@ def generator(net, proj, fn, flags):
 
     def generate(source):
         source = _rename(source, fn['name'], fn['vram'])
-        labels = {}
+        labels = draft_repairs.Labels()
         texts = draft_repairs.variants(source, fn['name'], proj['arch'],
                                        repair_asm.current(net, proj, fn['asm'] or '', source), flags, labels, limit=None,
                                        header=header, tables=tables,
                                        callees=draft_repairs.capture_followup_repairs.callee_evidence(net, proj, fn, source),
                                        entry_scope=scope, words=words)
-        return [(labels.get(text, 'unlabelled'), text) for text in texts]
+        return draft_repairs.pairs(texts, labels)  # every family of a source: `families` may name any of them
     return generate
 
 

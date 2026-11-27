@@ -165,7 +165,9 @@ def test_prove_chain_offers_the_diff_gated_children_the_permuter_would(monkeypat
     judge = SimpleNamespace(arch="mips", asm="asm", header="h", compiler={"toolchain": "gcc-2.7.2-kmc", "flags": ["-O2"]},
                             big_endian=False, rows=lambda source: (5, [("r", "a", "b")]))
     out = prove.generator(judge, "f")("void f(void){}")
-    assert [family for family, _ in out] == ["unlabelled", "gated"]
+    # (a gated family writing the same source as another keeps its name too, so --families may ask for it)
+    assert [family for family, _ in out] == ["unlabelled", "gated", "dup"]
+    assert out[0][1] == out[2][1]
     assert seen["args"][5] == [("r", "a", "b")] and seen["kw"]["big_endian"] is False
 
 

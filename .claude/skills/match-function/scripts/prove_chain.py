@@ -278,9 +278,13 @@ def _combined_step(step, current, best, best_bad, scored, cover, bad, parent_bad
             if not budget.left():  # not expanded: proposing a parent's children costs the judge too
                 budget.stopped(step, f"the lookahead of {len(parents) - index} of {len(parents)} children", log)
                 break
-            eligible = [(second, grandchild) for second, grandchild in generate(child)
-                        if (families is None or second in families) and grandchild not in visited
-                        and grandchild != current][:lookahead_children]
+            eligible, offered = [], set()
+            for second, grandchild in generate(child):  # one per source, however many families proposed it
+                if ((families is None or second in families) and grandchild not in visited and grandchild != current
+                        and grandchild not in offered):
+                    offered.add(grandchild)
+                    eligible.append((second, grandchild))
+            eligible = eligible[:lookahead_children]
             batch = eligible[:budget.left()]
             budget.judged += len(batch)
             for second, grandchild in batch:
@@ -338,7 +342,7 @@ def generator(judge, name):
 
     def generate(source):
         source = current_name(source, name, vram)
-        labels = {}
+        labels = draft_repairs.Labels()
         # as the app gives it to the families: callees and data under the names this source spells
         asm = repair_asm.apply(judge.asm, getattr(judge, "asm_names", {}), source)
         texts = draft_repairs.variants(source, name, judge.arch, asm, judge.compiler["flags"], labels,
@@ -346,13 +350,13 @@ def generator(judge, name):
                                        callees=getattr(judge, "callees", ""),
                                        entry_scope=getattr(judge, "entry_scope", None),
                                        words=getattr(judge, "words", None))
-        found = [(labels.get(text, "unlabelled"), text) for text in texts]
+        found = draft_repairs.pairs(texts, labels)  # every family of a source: --families may name any of them
         # The families that read the judge's differing rows (diff_gated_repairs: the Deep Permuter calls them with
         # the candidate's diff) are not in draft_repairs.variants; without them a chain never sees what the permuter's
         # diff-gated lane would offer (boolean_guard_operands' sink, measured_* repairs).
         from decompnet.app import diff_gated_repairs
         _, rows = judge.rows(source) if hasattr(judge, "rows") else (None, [])
-        seen = {text for _, text in found}
+        seen = set(found)
         try:
             gated = diff_gated_repairs.proposals(
                 source, name, judge.header, judge.arch, judge.compiler.get("toolchain", ""), rows, asm,
@@ -362,7 +366,7 @@ def generator(judge, name):
         except Exception as error:  # a family's bug must not end a chain
             print(f"note: diff-gated proposals failed ({error})", file=sys.stderr)
             gated = []
-        found += [(family, text) for family, text in gated if text not in seen and not seen.add(text)]
+        found += [pair for pair in map(tuple, gated) if pair not in seen and not seen.add(pair)]
         return found
     return generate
 
