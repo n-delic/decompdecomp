@@ -85,7 +85,6 @@ class Metrics:
         elapsed = max(.001, now-self.started)
         with self.lock:
             values = dict(self.values)
-            local_busy = any(values.get(key, 0) for key in LIVE_COMPILER_COUNTERS)
             values['proposal_workers'] = getattr(getattr(self, 'proposals', None), 'running', 0)
             for worker in self.remote_live.values():
                 for key in LIVE_WORKER_COUNTERS:
@@ -97,9 +96,7 @@ class Metrics:
                     for key,value in bucket.items():recent[key]=recent.get(key,0)+value
         rate_seconds=min(5,elapsed)
         gate = getattr(self,'gate',None)
-        slots = self.remote_slots
-        if gate and (not slots or local_busy):
-            slots += gate.limit
+        slots = self.remote_slots or (gate.limit if gate else 0)
         return {'active_proposal_workers':values['proposal_workers'],
                 'active_compiles':values.get('executing',0),
                 'shared_active_compiles':getattr(compiler._SLOTS,'active',0),
@@ -139,6 +136,8 @@ def scope(pool):
         if pool is not None:
             stack.enter_context(compile_timing.collect(pool.metrics))
             stack.enter_context(compiler.throughput_slots(pool.maximum, pool.slots))
+            if shared := getattr(pool, 'shared_slots', None):
+                stack.enter_context(compiler.shared_slots(shared))
         yield
 
 
@@ -146,7 +145,8 @@ def search(function):
     @functools.wraps(function)
     def run(*args, **kwargs):
         log = kwargs.get('log') or args[5]
-        with scope(getattr(log, 'compile_pool', None)):return function(*args, **kwargs)
+        with scope(getattr(log, 'compile_pool', None)), compiler.cancellable(log.check_cancel):
+            return function(*args, **kwargs)
     return run
 
 
@@ -159,10 +159,12 @@ def sweep(function):
         count = width(opts['maximum_throughput'],opts['compile_slots'])
         if not opts['maximum_throughput'] and not opts['compile_slots']:count = compiler.concurrency_limit()
         pool = Pool(count, maximum=opts['maximum_throughput'])
+        pool.shared_slots = compiler._SLOTS.group(count)
         previous = getattr(log, 'compile_pool', None)
         log.compile_pool = pool
         try:
-            with compiler._SLOTS.capacity(pool.count), compile_timing.collect(pool.metrics):
+            with (compiler._SLOTS.capacity(pool.count), compile_timing.collect(pool.metrics),
+                  compiler.shared_slots(pool.shared_slots)):
                 return function(self,slug,minutes,variants,log,*args,**kwargs)
         finally:
             try:pool.close()

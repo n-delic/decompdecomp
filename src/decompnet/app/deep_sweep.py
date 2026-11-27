@@ -715,10 +715,11 @@ class Sweeps:
         compile_pool = getattr(log, 'compile_pool', None)
         # A maximum pass with no slot count set sizes each lane itself (deep_lanes.Lanes); a number the user chose is split.
         lane_slots = int(self.config(slug).get('compile_slots', 0) or 0) if maximum else getattr(compile_pool, 'count', 0)
-        log.deep_lanes = (deep_lanes.Lanes(self.net, count, lane_slots, maximum=maximum)
+        log.deep_lanes = (deep_lanes.Lanes(self.net, count, lane_slots, maximum=maximum,
+                                         shared_slots=getattr(compile_pool, 'shared_slots', None))
                           if count > 1 and slug not in self.net.links and deep_lanes.enabled() else None)
         if log.deep_lanes is not None:
-            compile_pool.metrics.remote_slots = log.deep_lanes.count * log.deep_lanes.slots
+            compile_pool.metrics.remote_slots = compile_pool.count
         stats['activity'].publish({'cycle': cycle, 'loop': loop,
             'preparation': {'checked': 0, 'total': 0, 'eligible': 0, 'waiting': 0, 'done': False}}, force=True)
         try:

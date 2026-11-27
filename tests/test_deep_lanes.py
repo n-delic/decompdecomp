@@ -185,3 +185,66 @@ def test_lanes_share_four_compile_slots_per_core_unless_a_number_is_set(net, mon
     assert deep_lanes.Lanes(net, 12, 0, maximum=True).slots == 6  # automatic: the lane window can reach its depth
     assert deep_lanes.Lanes(net, 27, 0, maximum=True).slots == 4
     assert deep_lanes.Lanes(net, 12, 24, maximum=True).slots == 2  # a number the user chose is split between lanes
+
+
+def test_worker_processes_share_one_permit_and_a_dead_lane_returns_it(net, monkeypatch):
+    from decompnet.compile_admission import Admission
+
+    # Exercise the real lane pipes and the child's compiler admission without needing a compiler.
+    worker = """
+import json
+import sys
+import threading
+
+from decompnet import compiler
+from decompnet.app.deep_lanes import RemoteSlots
+
+def emit(message):
+    print(json.dumps(message), flush=True)
+
+slots = RemoteSlots(emit)
+finish = threading.Event()
+
+def compile():
+    with compiler.shared_slots(slots), compiler._slot():
+        emit({'kind': 'admitted'})
+        finish.wait()
+
+thread = threading.Thread(target=compile)
+thread.start()
+for line in sys.stdin:
+    message = json.loads(line)
+    if message['action'] == 'compile-grant':
+        slots.grant(message['lease'])
+    elif message['action'] == 'shutdown':
+        finish.set()
+        break
+thread.join()
+"""
+    spawn = deep_lanes.subprocess.Popen
+
+    def launch(argv, **kwargs):
+        return spawn([argv[0], '-c', worker], **kwargs)
+
+    monkeypatch.setattr(deep_lanes.subprocess, 'Popen', launch)
+    gate = Admission(4)
+    group = gate.group(1)
+    lanes = deep_lanes.Lanes(net, 4, 1, shared_slots=group)
+    assert lanes.slots == 1
+    first = lanes._take(lambda: None)
+    try:
+        assert first.messages.get(timeout=10)['kind'] == 'admitted'
+        second = lanes._take(lambda: None)
+        try:
+            with pytest.raises(deep_lanes.queue.Empty):
+                second.messages.get(timeout=.15)
+            assert group.active == 1
+            first.process.kill()
+            assert second.messages.get(timeout=10)['kind'] == 'admitted'
+            assert group.active == 1
+        finally:
+            second.close()
+    finally:
+        first.close()
+    with gate.condition:
+        assert group.active == gate.active == 0

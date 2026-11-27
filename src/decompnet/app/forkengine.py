@@ -651,9 +651,10 @@ class ForkEngine:
         return builds.build(unit, lambda units: self._build_units(proj, fp, units))
 
     def _build_units(self, proj, fp: ForkProject, units: list) -> list[tuple[bool, str]]:
+        from ..compiler import _slot
         from . import attempt_workers
 
-        with self._build_locks[proj["id"]]:  # (and nothing changes the build's files meanwhile)
+        with self._build_locks[proj["id"]], _slot():  # (and nothing changes the build's files meanwhile)
             return attempt_workers.run("project-build", (fp.root, units), lambda: fp.build_units(units),
                                        build=fp._execute)
 
