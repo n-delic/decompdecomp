@@ -2465,7 +2465,8 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
     """Visit the supported local repairs, then spend the remaining budget on random permutations."""
     proj, fn = validate_function(net, slug, name)
     sweeps = getattr(net, 'deep_sweeps', None) if lane is None else None
-    if sweeps:
+    owns_completion = sweeps is not None and not getattr(log, 'sweep_owns_completion', False)
+    if owns_completion:
         from ..candidate_scope import key
         build_scope = key(net, proj, fn)
     from . import deep_profiles
@@ -2770,6 +2771,6 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
                 log('Saved the measured residual for the next agent claim.')
     result['compiler_profiles'] = compiler_profiles
     result['rank_candidates'] = rank_candidates
-    if sweeps:
+    if owns_completion:
         sweeps.completed(slug, fn, minutes, max_variants, result, build_scope)
     return result

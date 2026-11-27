@@ -6,7 +6,7 @@ import threading
 from .. import compiler, toolchains
 from ..network import NetworkError
 from ..project import compiler_for
-from . import switch_tables
+from . import switch_tables, trial_bookkeeping
 from .candidate_diagnostics import unresolved
 
 MAX_PROFILES = 4
@@ -24,7 +24,8 @@ def run(net, proj, fn, log=lambda text: None, check=lambda: None, max_profiles=M
     if not lock.acquire(blocking=False):
         return {'tested': 0}
     try:
-        return _run(net, proj, fn, log, check, max_profiles)
+        with trial_bookkeeping.scope():
+            return _run(net, proj, fn, log, check, max_profiles)
     finally:
         lock.release()
 
@@ -137,6 +138,7 @@ def _run(net, proj, fn, log, check, max_profiles):
     relocation_source = None
     allowance = min(MAX_PROFILES, max_profiles)
     jump_probes = []
+    store = net.project_store(proj['id'])
     baseline = None  # the saved C's score under its own flags
     improvers = []  # flag additions that each brought the saved C closer
     def ensure():
@@ -146,9 +148,13 @@ def _run(net, proj, fn, log, check, max_profiles):
         with compiler.cancellable(ensure):
             for index, (flags, source) in enumerate(probes):
                 probe_key = key+':probe:'+hashlib.sha256(repr((flags,source)).encode()).hexdigest()
-                old = net.project_store(proj['id']).one('SELECT feedback FROM reuse_trials WHERE function_id=? AND signature=?', fn['id'], probe_key)
-                if old:
-                    item = json.loads(old['feedback'])
+                memo = ('reuse_trials', fn['id'], probe_key)
+                feedback = trial_bookkeeping.lookup(store, memo)
+                if feedback is None:
+                    old = store.one('SELECT feedback FROM reuse_trials WHERE function_id=? AND signature=?', fn['id'], probe_key)
+                    feedback = old['feedback'] if old else None
+                if feedback is not None:
+                    item = json.loads(feedback)
                 else:
                     if result['tested'] >= allowance:
                         result['pending'] += 1
@@ -198,9 +204,11 @@ def _run(net, proj, fn, log, check, max_profiles):
                     if item['link']:
                         from .helper_call_diagnostics import suggestions
                         for hint in suggestions(getattr(diff, 'rows', [])):log(hint)
-                    with net.project_store(proj['id']).tx() as db:
-                        db.execute('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason,feedback) VALUES(?,?,?,?,?)',
-                                   (fn['id'],probe_key,'profile','completed bounded profile',json.dumps(item)))
+                    feedback = json.dumps(item)
+                    trial_bookkeeping.submit(store, [
+                        ('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason,feedback) VALUES(?,?,?,?,?)',
+                         (fn['id'], probe_key, 'profile', 'completed bounded profile', feedback))],
+                        memo=(memo, feedback))
                 if index == 0 and item.get('inferred'):
                     # Keep these trials when resuming a small budget, even if no live diff survives.
                     inferred = [(variant, source) for variant in item['inferred']]
@@ -255,9 +263,10 @@ def _run(net, proj, fn, log, check, max_profiles):
     if check() is False:
         return result
     result['cached'] = result['tested'] == 0
-    with net.project_store(proj['id']).tx() as db:
-        db.execute('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason,feedback) VALUES(?,?,?,?,?)',
-                   (fn['id'],key,'preflight','resumable compiler preflight',json.dumps(result)))
+    # Commit the probe batch with its summary before publishing any verified outcome.
+    trial_bookkeeping.submit(store, [
+        ('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason,feedback) VALUES(?,?,?,?,?)',
+         (fn['id'], key, 'preflight', 'resumable compiler preflight', json.dumps(result)))], immediate=True)
     if result['pending']:
         log(f"Compiler preflight has {result['pending']} untested profiles remaining for this saved source/context; later passes resume them.")
     if relocated := result.get('jump_table_profile'):

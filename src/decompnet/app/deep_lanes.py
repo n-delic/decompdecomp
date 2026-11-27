@@ -150,7 +150,8 @@ class Lanes:
     def search(self, slug, name, minutes, variants, function_log, **options):
         """deep_permuter.run(...) for one function in a lane; raises Unavailable when no lane can take it."""
         return self._request(function_log, action='search', slug=slug, name=name, minutes=minutes,
-                             variants=variants, **options)
+                             variants=variants,
+                             sweep_owns_completion=getattr(function_log, 'sweep_owns_completion', False), **options)
 
     def donors(self, slug, function_ids, function_log, *, imported_since=None):
         return self._request(function_log, action='donors', slug=slug, function_ids=function_ids,
@@ -333,6 +334,7 @@ def child(db_path, workspace, background):
 
         class Log:
             compile_pool = pool
+            sweep_owns_completion = message.get('sweep_owns_completion', False)
 
             def __call__(self, line):
                 emit({'kind': 'line', 'ident': ident, 'line': str(line)})

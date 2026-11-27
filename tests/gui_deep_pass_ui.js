@@ -279,13 +279,18 @@ vm.runInContext(source.slice(source.indexOf("let deepSweepFollowing"), source.in
   assert.equal(follower.job,'fast-live','attach before loading saved statistics');
   assert.equal(element('deepSweepStop').hidden,false);
   assert.equal(element('deepSweepStart').hidden,true);
-  follower.callback([], {state:'running',progress:{workers:[{},{}],functions_tested:4}});
+  follower.callback([], {state:'running',progress:{workers:[{},{}],functions_tested:4,matches:1}});
+  assert.match(element('deepSweepProgressText').textContent,/1 match this run/);
   rejectTotals(Error('Statistics are slow'));
   await totalsPending;
   assert.equal(element('deepSweepQueueTitle').textContent, '');
   assert.equal(element('deepSweepStop').hidden,false);
   assert.equal(element('deepSweepMatched').textContent,'—');
   assert.match(element('deepSweepQueueReason').textContent,/automatically/);
+  const readsBeforeLiveUpdate = reads;
+  follower.callback([], {state:'running',progress:{workers:[{}],functions_tested:5,matches:2}});
+  assert.equal(reads, readsBeforeLiveUpdate, 'live updates do not reload saved statistics');
+  assert.match(element('deepSweepProgressText').textContent,/2 matches this run/);
   // Keep known totals and active controls through a later connection failure.
   ctx.renderDeepSweepResults({has_activity:true,improved:2,improvements:[{function:'f',new_score:0}]});
   ctx.renderDeepQueueState({job:'fast-live',state:'running',statistics_pending:false,queue_left:9,progress:{workers:[{},{}]}});

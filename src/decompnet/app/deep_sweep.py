@@ -8,6 +8,7 @@ import threading
 import time
 from concurrent.futures import FIRST_COMPLETED, wait
 from contextlib import nullcontext
+from time import monotonic
 
 from .. import candidate_scope, claim_stalls, scoring
 from ..network import IN_BUILD, NetworkError
@@ -592,9 +593,11 @@ class Sweeps:
         result['stalled_passes'] = 0 if improved else self.stalled(slug, before) + 1
         proj = self.net.project_row(slug)
         stable = build_scope == candidate_scope.key(self.net, proj, before)
+        state = 'completed' if stable else 'pending'
         self.record(fresh, signature(self.net, proj, fresh, minutes, variants, result.get('compiler_profiles'),
                                      None, result.get('targeted_retry'), rank_candidates=result.get('rank_candidates')),
-                    'completed' if stable else 'pending', minutes, variants, result)
+                    state, minutes, variants, result)
+        return state
 
     def reopen_without_randomizer(self, slug) -> int:
         """Passes that finished with only the simple rewrites go back to pending once decomp-permuter is here:
@@ -682,8 +685,27 @@ class Sweeps:
         caught_up = set()  # (finished functions given the profile probe this run: once each)
         lock = threading.Lock()  # (the counters are shared by every thread's function)
         cycle = 1
-        order = []
+        order = {}
         futures = {}
+        inflight = set()
+        retry_pending = False
+
+        def collect(timeout):
+            nonlocal retry_pending
+            log.check_cancel()
+            finished, _ = wait(futures, timeout=timeout, return_when=FIRST_COMPLETED)
+            for future in finished:
+                inflight.remove(futures.pop(future))
+                if future.result() == 'pending':
+                    retry_pending = True
+
+        def enqueue(fid, work, *args):
+            # Keep just enough prepared turns to refill a free worker immediately.
+            while len(futures) >= count * 2:
+                collect(.1)
+            inflight.add(fid)
+            futures[pool.submit(work, *args)] = fid
+
         pool = Executor(max_workers=count, purpose='Deep search functions', project=slug, thread_name_prefix='deep-pass', initializer=None if maximum else workers.started_priority)
         # Several functions at once each run in a child process of their own (deep_lanes.py): one interpreter
         # judging every candidate capped a pass near a hundred a second. A room's project stays in the app (its
@@ -703,6 +725,9 @@ class Sweeps:
                 log.check_cancel()
                 with looking(self.net):
                     proj = self.net.project_row(slug)
+                store = self._store(slug)
+                scan_inputs = store.read_version('inputs', proj['id'])
+                retry_pending = False
                 candidates = []
                 waiting = 0
                 # Shuffle lightweight identities first. Never fingerprint the entire project before
@@ -730,7 +755,7 @@ class Sweeps:
                         log(f'Searching functions {FUNCTION_ORDERS[how][0].lower() + FUNCTION_ORDERS[how][1:]}.')
                     # Restore missing baselines before the bounded search queue fills.
                     identities.sort(key=lambda row: row['id'] not in unscored)
-                    order.extend(r["id"] for r in identities)
+                    order.update((r["id"], None) for r in identities)
                 ranks = {fid: i for i, fid in enumerate(order)}
                 identities.sort(key=lambda r: ranks.get(r["id"], len(ranks)))
                 total = len(identities)
@@ -742,12 +767,12 @@ class Sweeps:
                 activity.prepare(scanned, total, candidates, waiting)
 
                 failed = threading.Event()
-                def execute(item, blocked, pid=proj['id'], total=total, minutes=minutes, variants=variants,
+                def execute(fid, blocked, pid=proj['id'], total=total, minutes=minutes, variants=variants,
                             expanded_budget=cycle > 1):
                     log.check_cancel()
                     store = self._store(slug)
                     proj = store.one('SELECT * FROM projects WHERE id=?', pid)
-                    fn = store.one('SELECT * FROM functions WHERE id=? AND project_id=?', item['id'], pid)
+                    fn = store.one('SELECT * FROM functions WHERE id=? AND project_id=?', fid, pid)
                     if not proj or not fn or fn['status'] != 'open' or fn['gone_mark'] is not None:
                         return
                     # Dispatch always uses fresh inputs, never the producer's shared snapshot.
@@ -759,19 +784,19 @@ class Sweeps:
                                           previous['residual'] if previous else None)
                     if previous and previous['scope'] == scope and (previous['state'] == 'error' or (not loop and previous['state'] == 'completed')):
                         return
-                    self.search_one(slug, proj, fn, scope, minutes, variants, log, stats, lock, total, blocked,
-                                    expanded_budget=expanded_budget)
-                    previous = self._store(slug).one('SELECT state FROM deep_permutation_passes WHERE function_id=?', fn['id'])
-                    if previous and (previous['state'] == 'rotated' or (loop and previous['state'] == 'completed')):
+                    state = self.search_one(slug, proj, fn, scope, minutes, variants, log, stats, lock, total, blocked,
+                                            expanded_budget=expanded_budget)
+                    if state == 'rotated' or (loop and state == 'completed'):
                         with lock:
-                            visited_turns.add(fn['id'])
-                            stats['rotated'] += int(previous['state'] == 'rotated')
+                            visited_turns.add(fid)
+                            stats['rotated'] += int(state == 'rotated')
+                    return state
 
-                def search(item, blocked, execute=execute, failed=failed):
+                def search(fid, blocked, execute=execute, failed=failed):
                     if failed.is_set():
                         return
                     try:
-                        return execute(item, blocked)
+                        return execute(fid, blocked)
                     except BaseException:
                         failed.set()
                         raise
@@ -779,8 +804,12 @@ class Sweeps:
                 chunk = min(128, max(8, count * 2))
                 for offset in range(0, total, chunk):
                     log.check_cancel()
-                    ids = [r['id'] for r in identities[offset:offset + chunk]]
-                    rows = {r['id']: r for r in self._store(slug).all(f"""SELECT f.id,f.project_id,f.name,f.size,f.vram,f.unit,f.status,f.best_score,
+                    ids = [r['id'] for r in identities[offset:offset + chunk]
+                           if r['id'] not in inflight and r['id'] not in visited_turns]
+                    scanned += min(chunk, total - offset) - len(ids)
+                    if not ids:
+                        continue
+                    rows = {r['id']: r for r in store.all(f"""SELECT f.id,f.project_id,f.name,f.size,f.vram,f.unit,f.status,f.best_score,
                         f.best_source,f.target,f.relocs,f.asm,f.seed,d.scope AS pass_scope,d.state AS pass_state,
                         json_extract(d.result,'$.targeted_retry') AS pass_residual,c.expires_at AS claim_expires FROM functions f
                         LEFT JOIN deep_permutation_passes d ON d.function_id=f.id
@@ -789,10 +818,9 @@ class Sweeps:
                         AND f.id IN (SELECT value FROM json_each(?))""", proj['id'], json.dumps(ids))}
                     for fid in ids:
                         log.check_cancel()
-                        activity.prepare(scanned, total, candidates, waiting)
                         scanned += 1
                         fn = rows.get(fid)
-                        if fn is None or fid in visited_turns or fid in futures.values():
+                        if fn is None:
                             continue
                         probe_only = False
                         with looking(self.net):
@@ -816,31 +844,19 @@ class Sweeps:
                                     continue
                         if probe_only:
                             caught_up.add(fid)
-                            while len(futures) >= count * 2:
-                                log.check_cancel()
-                                finished, _ = wait(futures, timeout=.1, return_when=FIRST_COMPLETED)
-                                for future in finished:
-                                    futures.pop(future)
-                                    future.result()
-                            futures[pool.submit(self.probe_only, slug, fid, minutes, variants, log, stats, lock)] = fid
+                            enqueue(fid, self.probe_only, slug, fid, minutes, variants, log, stats, lock)
                             continue
                         candidates.append(fn['name'])
                         if slug in self.net.links and (fn['claim_expires'] or 0) > time.time():
                             waiting += 1
                             continue
                         activity.prepare(scanned, total, candidates, waiting)
-                        while len(futures) >= count * 2:
-                            log.check_cancel()
-                            finished, _ = wait(futures, timeout=.1, return_when=FIRST_COMPLETED)
-                            for future in finished:
-                                futures.pop(future)
-                                future.result()
-                        futures[pool.submit(search, {'id': fid}, waiting)] = fid
+                        enqueue(fid, search, fid, waiting)
                         caught_up.add(fid)  # (its full turn probes it)
-                        if fid in order:
-                            order.remove(fid)
-                        order.append(fid)
+                        order.pop(fid, None)
+                        order[fid] = None
                         submitted += 1
+                    activity.prepare(scanned, total, candidates, waiting)
                 activity.prepare(scanned, total, candidates, waiting, done=True)
                 if loop and visited_turns and not submitted and not futures:
                     cycle += 1
@@ -854,12 +870,16 @@ class Sweeps:
                     # (lanes left without a turn hold processes: close the ones idle for a while, all when waiting)
                     log.deep_lanes.trim(deep_lanes.IDLE_SECONDS if futures else 0)
                 if futures:
-                    # Recheck blocked inputs periodically even while a slow turn is running.
-                    finished, _ = wait(futures, timeout=1, return_when=FIRST_COMPLETED)
-                    for future in finished:
-                        futures.pop(future)
-                        future.result()
-                    continue  # Refill free workers without waiting for the longest turn.
+                    # The prepared queue is exhausted. Wait for capacity and changed inputs
+                    # before loading detailed rows again. Room claims and imported files can
+                    # change without an input revision, so free workers also get a timed refresh.
+                    refresh_at = monotonic() + max(1, POLL_SECONDS)
+                    while futures:
+                        if len(futures) < count and (retry_pending or monotonic() >= refresh_at
+                                                     or scan_inputs != store.read_version('inputs', proj['id'])):
+                            break
+                        collect(1)
+                    continue
                 if not candidates and not waiting:
                     self.save(slug, self.config(slug) | {'enabled': False})
                     log('Deep pass finished. Completed bounded passes are saved; this is not an exhaustive search of all C.')
@@ -916,6 +936,7 @@ class Sweeps:
             activity.update(fn["name"], line=line)
             log(f'{fn["name"]}: {line}')
         function_log.compile_pool = getattr(log, 'compile_pool', None)
+        function_log.sweep_owns_completion = True
         function_log.check_cancel = log.check_cancel
         function_log.progress = progress
         function_log.refresh_metrics = activity.refresh_metrics
@@ -939,10 +960,8 @@ class Sweeps:
                     log(f'{fn["name"]}: no worker process could take this turn; it runs in the app.')
             if result is None:
                 result = deep_permuter.run(self.net, slug, fn['name'], minutes, variants, function_log, **options)
-            # Also records test backends and older search providers that do not publish history.
-            # The actual single-function search uses the same completion gate.
             with looking(self.net):
-                self.completed(slug, fn, minutes, variants, result, build_scope)
+                state = self.completed(slug, fn, minutes, variants, result, build_scope)
             activity.update(fn['name'], {'phase': 'matched' if result['matched'] else 'finished', **result}, finished=True)
             with lock:
                 stats['visited'] += 1
@@ -955,7 +974,8 @@ class Sweeps:
             from .deep_room import unavailable
             from .progress import ProgressMoved
             claim_wait = isinstance(error, ProgressMoved) or unavailable(error) or bool((busy and slug in self.net.links) or 'claim' in str(error).lower() or str(error).startswith('This function is working'))
-            self.record(fn, scope, 'pending' if claim_wait else 'error', minutes, variants, error=str(error))
+            state = 'pending' if claim_wait else 'error'
+            self.record(fn, scope, state, minutes, variants, error=str(error))
             activity.update(fn['name'], {'phase': 'waiting' if claim_wait else 'error', 'error': str(error)}, line=str(error), finished=True)
             log(f'{fn["name"]}: {error}')
         except Exception as error:
@@ -976,7 +996,8 @@ class Sweeps:
                 self.record(fn, scope, 'pending', minutes, variants)
                 raise NetworkError(f'The app could not load part of itself ({message}); the pass stopped and its functions stay queued. Restart the app once its update finishes.') from error
             logging.getLogger('decompdecomp').exception('Deep search failed for %s; continuing with other functions', fn['name'])
-            self.record(fn, scope, 'error', minutes, variants, error=message)
+            state = 'error'
+            self.record(fn, scope, state, minutes, variants, error=message)
             activity.update(fn['name'], {'phase': 'error', 'error': message}, line=message, finished=True)
             log(f'{fn["name"]}: {message}; continuing with other functions.')
         except BaseException:
@@ -985,3 +1006,4 @@ class Sweeps:
             raise
         activity.publish({'phase': 'moving to next function', 'tested': stats['tested'], 'functions_tested': stats['visited'],
                   'matches': stats['matched']})
+        return state

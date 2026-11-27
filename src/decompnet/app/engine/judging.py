@@ -48,8 +48,19 @@ class JudgeMixin:
         return super()._compile_batch(proj, header, sources, fn)
 
     def _rom_target(self, fn) -> match.RomTarget:
-        cfg = self.cfg(self.project_store(fn['project_id']).one("SELECT config FROM projects WHERE id=?", fn["project_id"]))
+        project_id = fn['project_id']
+        store = self.project_store(project_id)
         session = compile_sessions.current()
+
+        def load_config():
+            return self.cfg(store.one("SELECT config FROM projects WHERE id=?", project_id))
+
+        # The project config changes less often than the candidate or its score.
+        if session is not None and getattr(store, 'project_rows_tracked', False):
+            cfg = store.read_cache.get(('rom-target-config', project_id),
+                                       store.read_version('project_rows', project_id), load_config)
+        else:
+            cfg = load_config()
         key = None
         if session is not None:
             row = dict(fn)

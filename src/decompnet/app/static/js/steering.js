@@ -2653,6 +2653,7 @@ function openDeepMetric(kind) {
   deepMetricSlug = slug;
   $("dialogBody")._deepMetricHtml = null;
   renderDeepMetricDrawer();
+  if (deepSweepSnapshot?.state === "running" && ["matched", "improved", "attention"].includes(kind)) renderDeepSweep();
 }
 function renderDeepMetricDrawer() {
   if (!S.dialogKind?.startsWith("deep-metric:") || $("dialog").hidden) return;
@@ -2867,7 +2868,7 @@ function renderDeepQueueState(status) {
   }
   const recovering = running && status.progress?.phase === "Rechecking saved matches";
   const recoveryTotal = recovering ? status.progress.total || 0 : 0;
-  const checked = status.progress?.functions_tested;
+  const checked = status.progress?.functions_tested, liveMatches = status.progress?.matches;
   const run = running && status.loop ? `Pass ${status.progress?.cycle || 1} (looping)` : running ? "This run" : "Last run";
   $("deepSweepBar").max = Math.max(1, recovering ? recoveryTotal : total);
   $("deepSweepBar").value = recovering ? status.progress.completed || 0 : done;
@@ -2885,6 +2886,7 @@ function renderDeepQueueState(status) {
       ? `Rechecking saved matches: ${(status.progress.completed || 0).toLocaleString()} / ${recoveryTotal.toLocaleString()} · ${status.progress.matched || 0} recovered`
       : "Looking for saved matches…" : "",
     checked != null ? `${run}: ${checked.toLocaleString()} functions checked` : "",
+    running && liveMatches != null ? `${liveMatches.toLocaleString()} ${liveMatches === 1 ? "match" : "matches"} this run` : "",
     waiting ? `${waiting.toLocaleString()} waiting for saved C` : "",
   ].filter(Boolean).join(" · ") || emptyProgress;
   $("deepSweepLoadingBar").hidden = recovering ? !!recoveryTotal : preparing || !(status.statistics_pending || (running && !total));
@@ -3017,28 +3019,12 @@ async function followDeepSweep(slug, job) {
   const following = {job, finish: () => { if (!finished) { finished = true; done(); } }};
   deepSweepFollowing = following;
   renderDeepQueueState({...deepSweepSnapshot, state:"running"});
-  let lastResults = 0, refreshing = false;
   try {
     await followJob(job, log, (_, state) => {
       const progress = state.progress || {};
       if (S.slug !== slug || deepSweepFollowing !== following) return;
-      // Nobody sees the panel in a minimised window or on another tab: the search runs on in the app, and
-      // finishing (or coming back) redraws it, so drawing the activity and fetching the 10 MB of results now would
-      // only spend the web view's CPU.
       if (document.hidden || (S.tab && S.tab !== "matching")) return;
       renderDeepActivity((state.state || deepSweepSnapshot?.state) !== "running" ? {...progress, workers:[]} : progress);
-      if (!refreshing && $("deepSweepPanel").dataset.statusLoading !== slug && Date.now() - lastResults >= 5000) {
-        refreshing = true; lastResults = Date.now();
-        api(`/api/permuter/pass?slug=${encodeURIComponent(slug)}`).then(status => {
-          if (S.slug === slug && deepSweepFollowing === following) {
-            const live = deepSweepSnapshot;
-            const combined = live && live.job === status.job
-              ? {...status, state:live.state, progress:live.progress, error:live.error} : status;
-            renderDeepSweepResults(combined);
-            renderDeepQueueState(combined);
-          }
-        }).catch(() => {}).finally(() => { refreshing = false; });
-      }
       if (deepSweepSnapshot?.state === "running") {
         renderDeepQueueState({...deepSweepSnapshot, state:state.state || "running", progress, error:state.error || ""});
       }
