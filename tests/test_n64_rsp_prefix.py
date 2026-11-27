@@ -129,3 +129,25 @@ def test_standard_boot_and_jump_to_vector_graphics():
     assert list(graphics_spans(image)) == [(0, len(image))]
     image[0x100:0x200] = bytes(0x100)
     assert not list(graphics_spans(image))
+
+
+def test_bootstrapped_vector_overlay_stops_before_a_cpu_frame():
+    from decompnet.consoles.n64.port import RSPBOOT
+    from decompnet.consoles.n64.rsp_prefix import graphics_spans
+
+    image = bytearray(0x1600)
+    image[:len(RSPBOOT)] = RSPBOOT
+    code = 0xd0
+    image[code:code+12] = bytes.fromhex('4a00002cc81f201bc81e201c')
+    for i in range(64):
+        struct.pack_into('>I', image, code+0x100+i*4, 0x4a000037)
+        struct.pack_into('>I', image, code+0x1100+i*4, 0x4a000037)
+    for i in range(3):
+        struct.pack_into('>I', image, code+0x300+i*4, 0x0c000400+i)
+    struct.pack_into('>I', image, code+0xffc, 0x080007f6)
+    stop = code+0x1420
+    struct.pack_into('>2I', image, stop-24, 0x08000513, 0x4a952748)
+    struct.pack_into('>5I', image, stop, 0x27bdffe8, 0xafbf0010, 0x8fbf0010, 0x03e00008, 0x27bd0018)
+    assert (0, stop) in list(graphics_spans(image))
+    image[stop-20:stop-16] = bytes(4)  # no vector delay-slot evidence
+    assert (0, stop) not in list(graphics_spans(image))
