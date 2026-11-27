@@ -81,6 +81,9 @@ def exported_source(prelude: str, include: str, source: str) -> str:
 _SPLAT_LABEL = re.compile(
     r'^[ \t]*(nonmatching|glabel|dlabel|jlabel|alabel|ehlabel|enddlabel)[ \t]+'
     r'([A-Za-z_.$][\w.$]*)(?=[, \t\r\n]|$)[^\n]*(?:\n|$)', re.M)
+_SPLAT_CODE_LABEL = re.compile(
+    r'^[ \t]*(nonmatching|glabel|dlabel|jlabel|alabel|ehlabel|enddlabel|endlabel)[ \t]+'
+    r'([A-Za-z_.$][\w.$]*)(?=[, \t\r\n]|$)[^\n]*(?:\n|$)', re.M)
 
 
 def remove_foreign_bank_labels(root: Path, functions, segments=()) -> None:
@@ -94,8 +97,14 @@ def remove_foreign_bank_labels(root: Path, functions, segments=()) -> None:
             scopes.setdefault(segment['name'], []).append(segment)
     for path in (root / 'asm' / 'nonmatchings').rglob('*.s'):
         text = path.read_text(encoding='utf-8')
-        def keep(match, source=text, directory=path.parent.name):
+        removed_entries = set()
+        def keep(match, source=text, directory=path.parent.name, removed_entries=removed_entries):
             name = match[2]
+            if match[1] == 'endlabel':
+                if name in removed_entries:
+                    removed_entries.remove(name)
+                    return ''
+                return match[0]
             expected = locations.get(name)
             if expected is None and (local := re.fullmatch(r'\.L([0-9A-Fa-f]{8})_(.+)', name)):
                 address = int(local[1], 16)
@@ -110,9 +119,11 @@ def remove_foreign_bank_labels(root: Path, functions, segments=()) -> None:
                 return match[0]
             next_word = _ADDR_COMMENT.search(source, match.end())
             if next_word and int(next_word[1], 16) != expected:
+                if match[1] == 'glabel':
+                    removed_entries.add(name)
                 return ''
             return match[0]
-        updated = _SPLAT_LABEL.sub(keep, text)
+        updated = _SPLAT_CODE_LABEL.sub(keep, text)
         if updated != text:
             path.write_text(updated, encoding='utf-8')
 
