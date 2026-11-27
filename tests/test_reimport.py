@@ -1,6 +1,9 @@
 """Reimporting a ROM project replaces its analysis while preserving valid work."""
 
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
 
 import pytest
 
@@ -9,6 +12,36 @@ from decompnet.app.repository_git import git
 from decompnet.consoles import Console
 from decompnet.network import NetworkError
 from decompnet.rom import Picked, split
+
+
+def test_simultaneous_reimports_recheck_only_their_own_saved_sources(monkeypatch):
+    from decompnet.app.engine.importing import ImportMixin
+
+    barrier = threading.Barrier(2)
+    seen = {}
+    class Fake(ImportMixin):
+        def _project(self, slug):
+            return {'id': slug, 'config': '{"kind":"rom"}'}
+        def import_split(self, console, picked, *, reimport_slug, rejudge_out=None, **kwargs):
+            item = (reimport_slug, f'{reimport_slug} source', None)
+            if rejudge_out is None:  # The old shared queue made the race reproducible.
+                self._reimport_rejudge = [item]
+            else:
+                rejudge_out.append(item)
+            barrier.wait(timeout=5)
+        def _judge_kept_matches(self, slug, kept, log):
+            seen[slug] = kept[:]
+        def project_store(self, pid):
+            return SimpleNamespace(one=lambda *args: {'functions': 1, 'matched': 0})
+    net = Fake()
+    monkeypatch.setattr('decompnet.app.engine.importing.consoles.identify',
+                        lambda _: SimpleNamespace(read_game=lambda data, name: data))
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(net.reimport_rom, slug, b'game', confirmed=True, log=lambda _: None)
+                   for slug in ('one', 'two')]
+        for future in futures:
+            future.result(timeout=10)
+    assert seen == {'one': [('one', 'one source', None)], 'two': [('two', 'two source', None)]}
 
 
 def test_reimport_rejudge_releases_only_its_own_claims(tmp_path):
@@ -48,6 +81,10 @@ def test_reimport_rejudge_releases_only_its_own_claims(tmp_path):
     with pytest.raises(RuntimeError, match='interrupted'):
         net._judge_kept_matches('game', [('first', 'int x;', agent.id)], lambda _: None)
     assert store.one('SELECT COUNT(*) AS n FROM claims')['n'] == 0
+
+    net._judge_kept_matches('game', [('removed', 'int preserved;', None)], lambda _: None)
+    note = store.one("SELECT text FROM notes WHERE project_id=? AND function_id IS NULL", pid)
+    assert 'removed' in note['text'] and 'int preserved;' in note['text']
 
 
 @pytest.mark.parametrize("legacy_reset",[False,True])

@@ -125,16 +125,16 @@ class ImportMixin:
 
     def import_split(self, console: consoles.Console, picked: Picked, *, toolchain: str | None = None,
                      flags: list[str] | None = None, log=print, reimport_slug: str | None = None,
-                     on_new_rom=None) -> str:
+                     on_new_rom=None, rejudge_out: list | None = None) -> str:
         """ROM mode: split the program `console` read from the user's file, store every function as a target."""
         if reimport_slug is None:
             return self._import_split(console, picked, toolchain=toolchain, flags=flags, log=log,
                                       on_new_rom=on_new_rom)
         with self.progress.rebuilding(reimport_slug):
             return self._reimport_split(console, picked, toolchain=toolchain, flags=flags, log=log,
-                                        reimport_slug=reimport_slug)
+                                        reimport_slug=reimport_slug, rejudge_out=rejudge_out)
 
-    def _reimport_split(self, console, picked, *, toolchain, flags, log, reimport_slug):
+    def _reimport_split(self, console, picked, *, toolchain, flags, log, reimport_slug, rejudge_out):
         proj = self._project(reimport_slug)
         cfg = json.loads(proj["config"])
         if cfg.get("kind") != "rom" or self.console(proj).id != console.id:
@@ -150,12 +150,13 @@ class ImportMixin:
         stage = Path(tempfile.mkdtemp(prefix=f".{reimport_slug}-reimport-", dir=root.parent))
         try:
             return self._import_split(console, picked, toolchain=toolchain, flags=flags, log=log,
-                                      reimport=proj, workdir=stage)
+                                      reimport=proj, workdir=stage, rejudge_out=rejudge_out)
         finally:
             shutil.rmtree(stage, ignore_errors=True)
 
     def _import_split(self, console: consoles.Console, picked: Picked, *, toolchain: str | None = None,
-                      flags: list[str] | None = None, log=print, reimport=None, workdir: Path | None = None, on_new_rom=None) -> str:
+                      flags: list[str] | None = None, log=print, reimport=None, workdir: Path | None = None,
+                      on_new_rom=None, rejudge_out: list | None = None) -> str:
         rom, info = picked.data, picked.info
         check_cancel = getattr(log, "check_cancel", lambda: None)
         check_cancel()
@@ -619,8 +620,8 @@ class ImportMixin:
             log(f"reimport kept {preserved} matched functions whose targets were unchanged")
         if sdk_classified:log(f"Identified {sdk_classified} known SDK library functions; excluded from C agents.")
         log(f"ready: {len(res.functions)} functions to decompile")
-        if reimport is not None and rejudge:
-            self._reimport_rejudge = rejudge
+        if reimport is not None and rejudge_out is not None:
+            rejudge_out.extend(rejudge)
         if reimport is None and on_new_rom is not None:
             on_new_rom(slug)
         return slug
@@ -637,9 +638,9 @@ class ImportMixin:
         console = consoles.identify(data)
         picked = console.read_game(data, name)
         log("Game recognized; starting the replacement split.")
-        self._reimport_rejudge = []
-        self.import_split(console, picked, reimport_slug=slug, log=log)
-        self._judge_kept_matches(slug, self._reimport_rejudge, log)
+        rejudge = []  # Each project owns its rechecks, including during simultaneous reimports.
+        self.import_split(console, picked, reimport_slug=slug, log=log, rejudge_out=rejudge)
+        self._judge_kept_matches(slug, rejudge, log)
         counts = self.project_store(proj['id']).one(
             "SELECT COUNT(*) AS functions, SUM(status='matched') AS matched FROM functions WHERE project_id=?",
             proj["id"])
@@ -663,8 +664,16 @@ class ImportMixin:
                     matched += bool(self.attempt(agent, name, source, slug)["matched"])
             except NetworkError as error:
                 log(f"{name}: {error}")
-            if self.project_store(pid).one("SELECT status FROM functions WHERE project_id=? AND name=?",
-                                           pid, name)["status"] != "matched":
+            row = self.project_store(pid).one("SELECT status FROM functions WHERE project_id=? AND name=?", pid, name)
+            if row is None:
+                # An automatic boundary repair or concurrent rename can remove an entry before its recheck.
+                # Keep its source as a project note even when there is no function row left to attach it to.
+                with self.project_store(pid).tx() as db:
+                    db.execute('INSERT INTO notes(project_id,function_id,text,created_at) VALUES(?,NULL,?,?)',
+                               (pid, f"[{name} before reimport: saved C]\n{source}", time.time()))
+                log(f"{name}: the entry is no longer present; its saved C is kept in project notes")
+                continue
+            if row["status"] != "matched":
                 with self.project_store(pid).tx() as db:  # kept as the closest attempt, for whoever goes on
                     db.execute("UPDATE functions SET best_source=?,best_score=MAX(1,COALESCE(n_insns,1))*100 "
                                "WHERE project_id=? AND name=? AND best_source IS NULL", (source, pid, name))
