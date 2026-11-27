@@ -47,7 +47,7 @@ def _source(net, proj):
     from ..rom import config_images
     # The images the project's own config declares (its textures, where it has worked them out).
     images=(config_images.images(config) if config else [])+config_images.asset_list_images(fp.root,cfg.get('version'))
-    return dict(path=image,segments=segments,gp=gp,arch=console.arch,big_endian=console.big_endian,fork=True,images=images,
+    return dict(path=image,segments=segments,gp=gp,arch=console.arch,big_endian=console.big_endian,fork=True,images=images,runtime_hashes=sorted(known),
                 sheets=config_images.sheets(config) if config else [])
 
 
@@ -141,9 +141,13 @@ def _run(net, slug, log):
     source_record = assets.read_text('direct_url.json')
     asset_revision = hashlib.sha256(f'{assets.version}\n{source_record or ""}'.encode()).hexdigest()
     previous=_read(net,proj)['report']
+    emulator = getattr(net.console(proj), 'emulator', None)
+    runtime_available = bool(emulator and emulator.installed())
     if (previous and previous.get('revision')==revision and 'loader_flow' in previous
             and previous.get('worker_revision') == worker_revision
-            and previous.get('asset_revision') == asset_revision):
+            and previous.get('asset_revision') == asset_revision
+            and previous.get('runtime_available', False) == runtime_available
+            and previous.get('runtime_observation') != 'failed'):
         log.check_cancel();log('ROM image and analysis inputs are unchanged; using the current saved map.')
         log.progress(dict(phase='ROM map is current',done=1,total=1))
         return dict(regions=len(previous['regions']),size=previous['size'],cached=True)
@@ -165,7 +169,7 @@ def _run(net, slug, log):
     if current['id'] != proj['id'] or revision != _revision(net,current):
         raise NetworkError('The project layout changed during the scan. Scan again to use the current mappings.')
     report.update(revision=revision,worker_revision=worker_revision,asset_revision=asset_revision,
-                  scanned_at=time.time(),image_name=path.name,
+                  scanned_at=time.time(),image_name=path.name,runtime_available=runtime_available,
                   derived=bool(not source['fork'] and cfg['rom'].get('program') and cfg['rom']['program']!=cfg['rom']['file']))
     if report['derived']:report['note']='This is a derived analysis image (for example a flattened executable or expanded code), not physical-media offsets. Its hash freezes this scan; it does not certify a reconstruction of the original file. '+report['note']
     # Merge notes only at publication, so edits made during a rescan survive.

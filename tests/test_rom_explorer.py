@@ -697,3 +697,16 @@ def test_indexed_preview_reads_palette_from_a_separate_compressed_block(tmp_path
         rom_explorer.asset_preview(net, 'game', request | {'options': options | {'palette_offset': 512}})
     with pytest.raises(NetworkError, match='decompressed indexed image'):
         rom_explorer.asset_preview(net, 'game', request | {'options': options | {'source': 'rom'}})
+
+
+def test_rescan_after_runtime_emulator_becomes_available(project, monkeypatch):
+    from decompnet.consoles.n64 import emulator
+
+    net, _, root = project
+    available = [False]
+    monkeypatch.setattr(emulator, 'installed', lambda: root if available[0] else None)
+    assert not rom_explorer.run(net, 'game', Log()).get('cached')
+    assert rom_explorer.run(net, 'game', Log())['cached']
+    available[0] = True
+    assert not rom_explorer.run(net, 'game', Log()).get('cached')
+    assert rom_explorer.run(net, 'game', Log())['cached']

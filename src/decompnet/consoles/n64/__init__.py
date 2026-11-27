@@ -11,6 +11,7 @@
 - indexed_overlays.py: shared RAM slots and DMA bounds recovered from loader arrays and cache calls.
 - indexed_runtime_code.py: executable archive members mapped at their declared runtime addresses.
 - runtime_zlib.py: compressed programs corroborated by runtime call targets and their loaded bytes.
+- runtime_textures.py: bounded emulator snapshots for texture loads whose pixels match the cartridge.
 - level_overlay_table.py: shared-slot level banks and adjacent helpers verified from loader instructions.
 - inferred_overlays.py: overlapping code-bank mappings supported by independently called local entries.
 - reloc_fragments.py: text and linked addresses from consecutive relocation-section fragments.
@@ -36,7 +37,7 @@ from pathlib import Path
 
 from ...rom import Picked, RomError
 from .. import EXPORT, RECOMMENDED, ROM, Compiler, Console
-from . import emulator, profile_probes, recomp, sdk_assembly, sdk_linked, sdk_shapes
+from . import emulator, profile_probes, recomp, runtime_textures, sdk_assembly, sdk_linked, sdk_shapes
 from .port import KIT as PORT_KIT
 from .port import SCHEDULER
 
@@ -106,7 +107,14 @@ class Nintendo64(Console):
         from ...arch.mips_assets import read
         # Sound banks find their sample tables from the constant arguments of the game's alBnkfNew calls,
         # read with the app's MIPS reader (decomp-assets has none of its own).
-        return n64.regions(image, context={'read_code': read, **(context or {})}, **kwargs)
+        evidence = context or {}
+        assets = n64.regions(image, context={'read_code': read, **evidence}, **kwargs)
+        if evidence.get('runtime_rom'):
+            assets += runtime_textures.observe(image, evidence['runtime_rom'], evidence.get('runtime_sha1'),
+                                               log=evidence.get('log', lambda _: None),
+                                               status=evidence.get('runtime_observation'),
+                                               progress=kwargs.get('progress', lambda _: None))
+        return assets
 
     def asset_preview(self, data, asset, selection):
         from decompassets import n64

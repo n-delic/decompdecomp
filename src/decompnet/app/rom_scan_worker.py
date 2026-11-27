@@ -24,6 +24,9 @@ def scan(request, log, progress):
     console = consoles.get(request["console"])
     segments, gp = source["segments"], source["gp"]
     big_endian = source["big_endian"]
+    observation = {}
+    rom = request.get("rom") or {}
+    runtime_rom = path if source["fork"] else Path(request["root"]) / rom.get("program", rom.get("file", ""))
     if not path.stat().st_size:
         raise NetworkError("The analysis image is empty. Restore it or reimport before exploring.")
     with path.open("rb") as stream, mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_READ) as image:
@@ -39,9 +42,13 @@ def scan(request, log, progress):
                   + config_images.regions(image, source.get("images", []), "splat config")
                   + config_images.sheet_regions(image, source.get("sheets", []), "splat config")
                   + console.asset_regions(image, context=dict(functions=functions, symbols=symbols,
-                                                              segments=segments, gp=gp), progress=progress))
+                                                              segments=segments, gp=gp, runtime_rom=str(runtime_rom),
+                                                              runtime_sha1=source.get("runtime_hashes") if source["fork"] else rom.get("sha1"),
+                                                              log=log, runtime_observation=observation), progress=progress))
         report = analyse(image, segments, functions, symbols, big_endian=big_endian, progress=progress,
                          ranges=[chain["source"] for chain in flow["chains"]], assets=assets)
+        if observation:
+            report["runtime_observation"] = observation.get("state")
         resource_catalog.attach(report)
         asset_flow.attach(report, flow)
     return report
