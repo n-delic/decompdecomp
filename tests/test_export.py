@@ -86,6 +86,29 @@ def matched(platform: str, skip: tuple[str, ...] = ()) -> list[str]:
     return [f for f in FUNCTIONS if f not in NEAR_MISSES.get(platform, ()) and f not in skip]
 
 
+def test_export_rejudges_a_saved_match_with_an_extra_function(tmp_path):
+    if not _ready('n64'):
+        pytest.skip('needs the N64 compiler and binutils')
+    net, slug = _decompile(tmp_path, 'n64', skip=('abs_s32',))
+    agent, _ = net.local_agent('extra-function-test')
+    body = csource.get((GAME / 'game.c').read_text(), 'abs_s32')
+    source = body + '\ns32 unrelated_export_helper(s32 x) { return x + 7; }\n'
+    assert net.attempt(agent, 'abs_s32', source, slug)['matched']
+    out = net.export_rom(slug, log=lambda *_: None)
+    assert out['identical'] and out['matched'] == len(matched('n64')) and not out['fallback']
+    tree = Path(out['path'])
+    manifest = json.loads((tree / 'build.json').read_text())
+    fn = next(f for f in manifest['functions'] if f['name'] == 'abs_s32')
+    assert fn['entry_only'] and 'unrelated_export_helper' in (tree / fn['c']).read_text()
+    # An edited candidate must be recompiled and compared again; the stored target is never a fallback.
+    src = tree / fn['c']
+    text = src.read_text()
+    assert '-v : v' in text
+    src.write_text(text.replace('-v : v', '-v : v + 1'))
+    result = subprocess.run([sys.executable, 'build.py', 'check', 'abs_s32'], cwd=tree, capture_output=True, text=True)
+    assert result.returncode != 0
+
+
 @pytest.mark.parametrize("platform", ["n64", "ps2", "psp"])
 def test_export_rebuilds_the_game(tmp_path, platform):
     if not _ready(platform):

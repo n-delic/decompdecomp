@@ -499,15 +499,9 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
                 as_fallback.append((f["name"], "doesn't compile any more"))
                 f["kind"] = "asm"
                 continue
-            from ..app.compiler_context import verified
             from ..app.donor_unit import is_unit
             donor_unit = is_unit(hdr, proj)
             single = _single_definition(compiled.obj, row["name"])
-            predecessor = None if single or donor_unit else verified(net, proj, row, compiled.obj)
-            if not single and not predecessor and not donor_unit:
-                as_fallback.append((f["name"], "its C also defines other functions; split their bodies into separate source files"))
-                f["kind"] = "asm"
-                continue
             reader = net.reader(proj, row)
             reads = []
             def record_read(addr, size, reader=reader, reads=reads):
@@ -520,17 +514,17 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
                 f["kind"] = "asm"
                 continue
             bases, problem = _section_bases(linked.placements)
-            if problem or predecessor or donor_unit:
+            if problem or not single or donor_unit:
                 # Recompile and judge this entry every build; the builder can retain
-                # scattered original pools without pretending they share one base.
+                # scattered original pools and other function bodies without placing them in this entry's slot.
                 if not _entry_reads_available(reads, image, entry_segments, entry_mappings):
                     as_fallback.append((f['name'], 'its constant data cannot be verified in the exported image'))
                     f['kind'] = 'asm'
                     continue
                 from .export_entry import object_for
                 try:object_for(compiled.obj,row['name'],linked.linked_code)
-                except (ValueError,TypeError):
-                    as_fallback.append((f['name'],problem));f['kind']='asm';continue
+                except (ValueError,TypeError) as error:
+                    as_fallback.append((f['name'],problem or str(error)));f['kind']='asm';continue
                 f['entry_only']=True
                 bases={}
             src = out / "src" / f["seg"] / f"{f['name']}.{'cpp' if compiled.language == 'c++' else 'c'}"  # as it compiled
