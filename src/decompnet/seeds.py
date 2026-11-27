@@ -785,7 +785,7 @@ def _mips_table_aliases(asm: str, data: str) -> str:
         offset = int(offset, 16)
         spelled = re.compile(r"(%(?:hi|lo)\()\s*" + symbol + r"\s*\+\s*(?:0x0*" + f"{offset:X}" + rf"|{offset})\s*(\))",
                              re.I)
-        asm = spelled.sub(lambda match: match[1] + table + match[2], asm)
+        asm = spelled.sub(rf"\g<1>{table}\g<2>", asm)
     aliases = {}
     for match in _MIPS_TABLE_LABEL.finditer(data):
         name, prefix, address = match[1], match[2], match[3].lower()
