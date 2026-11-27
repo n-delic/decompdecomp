@@ -37,7 +37,7 @@ def _has_handwritten_annotations(assembly: Path) -> bool:
 
 
 def _has_included_text(assembly: Path) -> bool:
-    """A binary-only executable section may be data or code for another processor."""
+    """Binary-only executable sections may be data or code for another processor."""
     text = re.sub(r'/\*.*?\*/', '', assembly.read_text(encoding='utf-8', errors='replace'), flags=re.S)
     in_text = False
     included = False
@@ -47,10 +47,10 @@ def _has_included_text(assembly: Path) -> bool:
             in_text = True
         elif re.match(r'^\.(?:section|data|rodata|bss)\b', line):
             in_text = False
-        elif in_text and re.match(r'^\.incbin(?:\s|$)', line):
+        elif in_text and re.match(r'^\.(?:incbin|word|4byte|long|byte|short|half|dword|8byte)(?:\s|$)', line):
             included = True
         elif (in_text and line and not line.startswith(('.', '#', '//'))
-              and not line.endswith(':') and not re.match(r'^(?:glabel\s+|(?:LEAF|NESTED|END|EXPORT)\s*\()', line)):
+              and not line.endswith(':') and not re.match(r'^(?:(?:glabel|endlabel)\s+|(?:LEAF|NESTED|END|EXPORT)\s*\()', line)):
             return False  # Mixed code can contain ordinary functions needing C.
     return included
 
@@ -186,7 +186,7 @@ def prepare(project, log=print, *, limit: int = 32, units: set[str] | None = Non
                 log(f'Deferred {entry.get("name")}: its assembly marks functions as handwritten; review them first.')
                 continue
             if _has_included_text(assembly):
-                log(f'Deferred {entry.get("name")}: its executable section includes a binary; review it first.')
+                log(f'Deferred {entry.get("name")}: its executable section contains only binary data; review it first.')
                 continue
             from .assembly_evidence import padding_only
             if project.root.resolve() in target.parents and padding_only(target):
