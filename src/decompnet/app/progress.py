@@ -47,7 +47,7 @@ from .function_names import rename_identifiers
 log = logging.getLogger("decompdecomp")
 
 # spimdisasm can name a function piece by the numeric label at its first instruction.
-LOCAL_PIECE = re.compile(r"\.L[0-9A-F]+")
+LOCAL_PIECE = re.compile(r"\.L[0-9A-F]+(?:_code_[0-9A-F]+)?")
 from . import folder_owner, saves
 from .project_lock import ProjectLock
 

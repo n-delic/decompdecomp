@@ -286,3 +286,17 @@ def test_resident_bss_can_share_a_single_overlapping_overlay_scope():
     ambiguous['segments'][0].pop('exclusive_ram_id')
     assert not inferred_overlays.scope_resident_bss(ambiguous)
     assert 'exclusive_ram_id' not in ambiguous['segments'][0]
+
+
+def test_extend_tail_wrapper_requires_separated_entry_and_mapped_tail():
+    image = bytearray(0x100)
+    words = [0x03e00008, 0, 0x2483ff20, 0x000310c0, 0x00431023,
+             0x08000420, 0x00432021]
+    for i, word in enumerate(words):
+        struct.pack_into('>I', image, 0x20 + 4*i, word)
+    bank = [(0x10, 0x30, 0x80001000)]
+    target = [(0x80, 0x90, 0x80001080)]
+    assert inferred_overlays.extend_tail_wrapper(image, bank, target) == [(0x10, 0x3c, 0x80001000)]
+    assert inferred_overlays.extend_tail_wrapper(image, bank, []) == bank
+    struct.pack_into('>I', image, 0x30, 0x10000001)
+    assert inferred_overlays.extend_tail_wrapper(image, bank, target) == bank

@@ -88,8 +88,13 @@ def remove_foreign_bank_labels(root: Path, functions) -> None:
     locations = {row['name']: row['rom_offset'] for row in functions if row['rom_offset'] is not None}
     for path in (root / 'asm' / 'nonmatchings').rglob('*.s'):
         text = path.read_text(encoding='utf-8')
-        def keep(match, source=text):
+        def keep(match, source=text, directory=path.parent.name):
             name = match[2]
+            # Splat can place another bank's local jump label on raw words at
+            # the same RAM address. It belongs only to its named code bank.
+            scoped = re.fullmatch(r'\.L[0-9A-Fa-f]{8}_(code_[0-9A-Fa-f]+)', name)
+            if scoped and not (directory == scoped[1] or directory.startswith(scoped[1] + '_')):
+                return ''
             if name not in locations:
                 return match[0]
             next_word = _ADDR_COMMENT.search(source, match.end())

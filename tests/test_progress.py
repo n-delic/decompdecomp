@@ -1596,15 +1596,16 @@ def test_non_numeric_assembly_labels_are_not_allowed_as_c_layout_names(project):
         net.progress.sync('game',force=True)
 
 
-def test_numeric_assembly_label_piece_saves_and_opens_again(project):
+@pytest.mark.parametrize('name', ['.L00001004', '.L00001004_code_80001000'])
+def test_numeric_assembly_label_piece_saves_and_opens_again(project, name):
     net, folder, _ = project
     with net.store.tx() as db:
-        db.execute("UPDATE functions SET name='.L00001004' WHERE name='g'")
+        db.execute("UPDATE functions SET name=? WHERE name='g'", (name,))
     net.progress.sync('game', force=True)
     manifest(folder, instructions='edited in the folder')
     net.progress.sync('game', force=True)
     names = [row['name'] for row in json.loads((folder / saves.MANIFEST).read_text())['layout']]
-    assert '.L00001004' in names
+    assert name in names
 
 
 def test_verification_counters_reach_import_job_logger(project):

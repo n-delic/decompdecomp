@@ -662,6 +662,7 @@ def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_rep
     found = sorted(found + overlaps)
     found, runtime = inferred_overlays.runtime_mappings(rom, found, loaded.get('moved_ranges', ()), taken)
     found = inferred_overlays.extend_adjacent_frame(rom, found)
+    found = inferred_overlays.extend_tail_wrapper(rom, found, taken)
     found, banks = inferred_overlays.split_concatenated(rom, found, getattr(log, 'check_cancel', lambda: None),
                                                        taken=taken)
     found, scoped = inferred_overlays.recover(rom, found, taken, getattr(log, 'check_cancel', lambda: None),

@@ -496,3 +496,37 @@ def extend_adjacent_frame(image, found):
         if len(candidates) == 1:
             result[index] = (lo, next_start, vram)
     return result
+
+
+def extend_tail_wrapper(image, found, taken=()):
+    """Keep a closed, straight-line tail wrapper split by an inferred bank end."""
+    result = list(sorted(found))
+    mapped = (*taken, *found)
+    for index, (lo, hi, vram) in enumerate(result):
+        following = [start for start, _, _ in (*taken, *result) if start >= hi]
+        limit = min(len(image), min(following, default=len(image)), hi+64)
+        start = hi-8
+        if start < lo+8 or limit < hi+8 or (hi | limit) % 4:
+            continue
+        # A return and its delay slot separate this entry from its predecessor.
+        if int.from_bytes(image[start-8:start-4], 'big') != JR_RA:
+            continue
+        first = int.from_bytes(image[start:start+4], 'big')
+        second = int.from_bytes(image[start+4:start+8], 'big')
+        # This wrapper begins by adjusting an argument and scaling the result.
+        if first >> 26 != 9 or not 4 <= (first >> 21) & 31 <= 7 or second >> 26 or second & 63 != 0:
+            continue
+        for at in range(hi, limit-4, 4):
+            word = int.from_bytes(image[at:at+4], 'big')
+            op = word >> 26
+            if op == 2:
+                target = ((vram+at-lo+4) & 0xf0000000) | ((word & 0x03ffffff) << 2)
+                delay = int.from_bytes(image[at+4:at+8], 'big')
+                if any(base <= target < base+end-begin for begin, end, base in mapped) and delay >> 26 not in (1,2,3,4,5,6,7):
+                    result[index] = (lo, at+8, vram)
+                break
+            if op not in (0, 8, 9, 10, 11, 12, 13, 14, 15, 32, 33, 35, 36, 37, 40, 41, 43):
+                break
+            if op == 0 and word & 63 not in (0, 2, 3, 4, 6, 7, 32, 33, 34, 35, 36, 37, 38, 39, 42, 43):
+                break
+    return result

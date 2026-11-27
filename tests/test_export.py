@@ -735,3 +735,19 @@ def test_export_keeps_backward_delay_slot_address_high(platform):
     assert console.export_asm(text.replace('0x67104 &', '0x67105 &')) == text.replace('0x67104 &', '0x67105 &')
     forward = text.replace(words[1].to_bytes(4, order).hex(), (0x14400001).to_bytes(4, order).hex())
     assert console.export_asm(forward) == forward
+
+
+def test_foreign_scoped_local_labels_are_not_exported_twice(tmp_path):
+    from decompnet.rom.export import remove_foreign_bank_labels
+
+    root = tmp_path / 'asm' / 'nonmatchings'
+    foreign = root / 'code_80002000' / 'foreign.s'
+    foreign.parent.mkdir(parents=True)
+    foreign.write_text('nonmatching .L80001010_code_80001000\nalabel .L80001010_code_80001000\n/* 200 80001010 00000000 */ .word 0\n')
+    own = root / 'code_80001000' / 'own.s'
+    own.parent.mkdir(parents=True)
+    own.write_text('nonmatching .L80001010_code_80001000\nalabel .L80001010_code_80001000\n/* 100 80001010 00000000 */ .word 0\n')
+    remove_foreign_bank_labels(tmp_path, [])
+    assert '.L80001010_code_80001000' not in foreign.read_text()
+    assert 'alabel .L80001010_code_80001000' in own.read_text()
+    assert '.word 0' in foreign.read_text()
