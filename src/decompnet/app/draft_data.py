@@ -10,6 +10,28 @@ MAX_TABLES = 64
 MAX_CASES = 256
 # `lw $v0, %lo(D_80183198)($at)` followed by `jr $v0`: a dispatch through a table the symbol list calls data.
 _DISPATCH = re.compile(r'\blw\s+(\$\w+),\s*%lo\((D_[0-9A-Fa-f]{8})\)\(\$\w+\)[^\n]*\n(?:[^\n]*\n){0,2}?[^\n]*\bjr\s+\1(?!\w)')
+# A table the disassembler spelled from a symbol it lies inside (`%lo(func_80001500 + 0x20)`): the splitter filed
+# the data holding it as part of that symbol.
+_OFFSET_REF = re.compile(r'%(?:hi|lo)\(\s*([A-Za-z_]\w*)\s*\+\s*(0x[0-9A-Fa-f]+|\d+)\s*\)')
+_TABLE_JUMP = re.compile(r'\bjr\s+\$(?!ra\b|31\b)\w+')
+_RANGE_CHECK = re.compile(r'\bsltiu\s+\$\w+,\s*\$\w+,\s*(0x[0-9A-Fa-f]+|\d+)')
+DISPATCH_WINDOW = 10  # lines before a `jr` that load its table's address and check its index
+
+
+def offset_dispatches(asm):
+    """[(symbol, offset, range-check bound or None)] of each table spelled `symbol + offset` before a `jr`. A lead
+    only: `read` takes it for a table when the words there are this function's own instruction addresses."""
+    lines, found = asm.splitlines(), {}
+    for number, line in enumerate(lines):
+        if not _TABLE_JUMP.search(line):
+            continue
+        window = '\n'.join(lines[max(0, number - DISPATCH_WINDOW):number])
+        refs = _OFFSET_REF.findall(window)
+        if not refs:
+            continue
+        checks = _RANGE_CHECK.findall(window)
+        found[(refs[-1][0], int(refs[-1][1], 0))] = int(checks[-1], 0) if checks else None
+    return [(symbol, offset, bound) for (symbol, offset), bound in found.items()]
 
 
 def case_target(word, instruction_addresses):
@@ -126,6 +148,32 @@ def delta_readers(net, proj, fn):
     return [reader(delta) for delta in deltas]
 
 
+def offset_tables(net, proj, fn, syms, asm, instruction_addresses, endian):
+    """The tables `offset_dispatches` names, each as `jtbl_<address>` data with a comment saying which spelling in
+    the assembly it stands for (seeds renames those references, and m2c then drafts the whole switch). Without this
+    m2c cut the switch: a sound library's three functions whose tables sat inside the symbol before them."""
+    out, reader, beside = [], None, None
+    for symbol, offset, bound in offset_dispatches(asm)[:MAX_TABLES]:
+        known = syms.by_name.get(symbol)
+        spelled = re.fullmatch(r'(?:func|D|jtbl)_([0-9A-Fa-f]{8})', symbol)
+        base = known.address if known else int(spelled[1], 16) if spelled else None
+        if base is None:
+            continue
+        name = 'jtbl_%08X' % (base + offset)
+        if reader is None:
+            reader = net.reader(proj, fn)
+            beside = beside_code_reader(lambda: net._rom(proj)[0], fn, reader)
+        limit = bound if bound and 2 <= bound <= MAX_CASES else MAX_CASES
+        for candidate in (beside, *delta_readers(net, proj, fn)):
+            if extent := jump_table_extent(name, candidate, instruction_addresses, endian, limit):
+                data = candidate(*extent)
+                words = [w for (w,) in struct.iter_unpack(endian + 'I', data)]
+                out.extend(['/* table-alias %s+0x%X %s */' % (symbol, offset, name), 'dlabel ' + name,
+                            *('.word .L%08X' % case_target(w, instruction_addresses) for w in words)])
+                break
+    return out
+
+
 def read(net, proj, fn):
     """Supply known-size tables/constants and terminated strings; never invent missing bytes or case targets."""
     syms = net.symbols(proj['id'])
@@ -204,4 +252,5 @@ def read(net, proj, fn):
             tables += 1
         else:
             count += 1; used += len(data)
+    out.extend(offset_tables(net, proj, fn, syms, asm, instruction_addresses, endian))
     return out

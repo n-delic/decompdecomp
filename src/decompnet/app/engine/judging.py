@@ -124,7 +124,12 @@ class JudgeMixin:
             console = self.console(proj)
 
             def local_link():
-                read = self.reader(proj, fn)
+                from ...rom.verifier_link import PackReader, project_inputs
+
+                if project_inputs.get() and type(target) is match.RomTarget and "rom_offset" in fn.keys():
+                    read = PackReader(self, proj, fn)
+                else:
+                    read = self.reader(proj, fn)
                 session = compile_sessions.current()
                 if not (_search_evaluation.get() and link_scope is not None and session is not None):
                     return console.link_function(obj, fn["name"], target, symbols, read)

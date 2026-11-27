@@ -775,8 +775,17 @@ _MIPS_TABLE_LABEL = re.compile(r"^[ \t]*dlabel[ \t]+((jtbl_|D_)([0-9A-Fa-f]{8}))
 _MIPS_DATA_RELOC = re.compile(r"(%(?:hi|lo)\()D_([0-9A-Fa-f]{8})(\))")
 
 
+_MIPS_OFFSET_ALIAS = re.compile(r"^/\* table-alias ([A-Za-z_]\w*)\+0x([0-9A-Fa-f]+) (jtbl_[0-9A-Fa-f]{8}) \*/$", re.M)
+
+
 def _mips_table_aliases(asm: str, data: str) -> str:
-    """Use the supplied table's name when the draft's relocation uses its address alias."""
+    """Use the supplied table's name when the draft's relocation uses its address alias, or spells the table as an
+    offset from the symbol it lies inside (draft_data.offset_tables records those)."""
+    for symbol, offset, table in _MIPS_OFFSET_ALIAS.findall(data):
+        offset = int(offset, 16)
+        spelled = re.compile(r"(%(?:hi|lo)\()\s*" + symbol + r"\s*\+\s*(?:0x0*" + f"{offset:X}" + rf"|{offset})\s*(\))",
+                             re.I)
+        asm = spelled.sub(rf"\g<1>{table}\g<2>", asm)
     aliases = {}
     for match in _MIPS_TABLE_LABEL.finditer(data):
         name, prefix, address = match[1], match[2], match[3].lower()

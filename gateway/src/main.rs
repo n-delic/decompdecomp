@@ -23,6 +23,7 @@ mod rom_judge;
 mod mips_link;
 mod mips_elf;
 mod mips_rom;
+mod rom_project;
 mod verifier;
 mod window;
 

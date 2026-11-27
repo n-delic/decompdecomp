@@ -307,9 +307,13 @@ For MIPS trials, the verifier reads ELF32 function bytes, symbol tables and
 relocations in Rust. It pairs HI16 and LO16 in relocation table order, binds
 references to ROM addresses, applies instruction and data relocations, and
 places and checks candidate-defined data. A code match still requires the
-candidate's data to agree with the ROM. The Python adapter supplies
-overlay-aware ROM reads and project symbol lookups. It also supplies
-jump-table extent and private ECOFF symbol evidence where needed. Unsupported
-object formats and older workers can use the existing Python linker. The
+candidate's data to agree with the ROM. Each verifier slot caches a Rust
+ROM reader and symbol table for the pinned pack revision. It selects the
+caller's overlay, validates supplied overlay payloads, rejects ambiguous
+mappings and preserves project symbol aliases. Python still prepares the
+scratch pack and supplies jump-table extent and private ECOFF symbol
+evidence where needed. The jump-table analyser reads through the same Rust
+overlay view. Unsupported object formats and older workers can use the
+existing Python linker. The
 adapter and verifier negotiate this on their private connection and use the
 same hosted queue protocol.

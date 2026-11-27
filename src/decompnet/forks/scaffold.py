@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
 from pathlib import Path
 
 from .. import seeds
@@ -22,6 +23,17 @@ typedef unsigned long long u64;
 typedef float f32;
 typedef double f64;
 ''' + seeds.M2C_MACROS + '\n'
+
+
+def _has_handwritten_annotations(assembly: Path) -> bool:
+    """Defer mixed units that the upstream disassembler flags as handwritten.
+
+    The annotation is not proof of SDK identity. It is a reason to leave the
+    whole source-less unit for review until its functions can be classified;
+    assigning a C file to the unit would otherwise open every function in it.
+    """
+    text = assembly.read_text(encoding='utf-8', errors='replace')
+    return bool(re.search(r'(?m)^\s*/\*\s*Handwritten function\s*\*/\s*\n\s*glabel\s+\S+', text))
 
 
 def _object_layout(config: dict) -> tuple[Path, bool]:
@@ -150,6 +162,13 @@ def prepare(project, log=print, *, limit: int = 32, units: set[str] | None = Non
                 relative = target.relative_to(layout).with_suffix('')
                 assembly = refs / 'asm' / relative.with_suffix('.s')
             if not assembly.is_file():
+                continue
+            if _has_handwritten_annotations(assembly):
+                log(f'Deferred {entry.get("name")}: its assembly marks functions as handwritten; review them first.')
+                continue
+            from .assembly_evidence import padding_only
+            if padding_only(target):
+                log(f'Deferred {entry.get("name")}: its only function is a nop; review its boundary first.')
                 continue
             candidate = relative.with_suffix('.c')
             if set(candidate.parts) & FORBIDDEN_PARTS:

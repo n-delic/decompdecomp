@@ -1,10 +1,10 @@
-"""Identify short, independently called prefixes that share a following entry."""
+"""Identify independently called prefixes that share a following entry."""
 
 from collections import Counter, defaultdict
 
 # These instructions have no control transfer or delay slot. More complex
 # prefixes remain visible to boundary review until they can be proven safe.
-_STRAIGHT = frozenset(('addiu', 'lui', 'lwc1', 'add.s'))
+_STRAIGHT = frozenset(('addiu', 'lui', 'lwc1', 'add.s', 'lw', 'sw', 'sll', 'addu', 'subu', 'sh', 'ori'))
 
 
 def _straight(line):
@@ -22,7 +22,7 @@ def intentional(functions, console, segments):
     """Return evidence for unambiguous calls to both adjacent MIPS entries.
 
     This does not classify code as handwritten assembly or make a C match: it
-    records that the short extent is an intentional entry into a shared tail.
+    records that the extent is an intentional entry into a shared tail.
     """
     if console.arch != 'mips':
         return {}
@@ -42,7 +42,7 @@ def intentional(functions, console, segments):
                 transfers.add(line.vram + 4 + (delta - 0x10000 if delta & 0x8000 else delta) * 4)
     result = {}
     for fn in functions:
-        if fn.piece or not 0 < fn.size <= 16 or counts[fn.vram] != 1 or fn.vram not in calls:
+        if fn.piece or not 0 < fn.size <= 256 or counts[fn.vram] != 1 or fn.vram not in calls:
             continue
         owners = [segment for segment in segments if segment.contains(fn.vram, fn.size + 4)]
         if (len(owners) != 1 or owners[0].name != fn.segment

@@ -149,3 +149,16 @@ def test_non_mips_import_does_not_assume_mips_function_shapes(monkeypatch):
     monkeypatch.setattr(boundary_review, 'refresh', lambda *args: 7)
     console = SimpleNamespace(arch='arm')
     assert boundary_review.refresh_shared_entries(None, {}, console, [], [object()]) == 7
+
+
+def test_long_straight_prefix_and_called_tail_keep_both_entries():
+    console = SimpleNamespace(arch='mips', big_endian=True, boundary_reason=lambda code: None)
+    prefix = function('prefix', 0x80001000, 0x100, [(0x8c820000, 'lw'), (0xac820000, 'sw'),
+                                                        (0x000a5880, 'sll'), (0x016a5821, 'addu'),
+                                                        (0x016a5823, 'subu'), (0x35ef0006, 'ori')])
+    tail = function('tail', 0x80001018, 0x118, [(0x03e00008, 'jr'), (0, 'nop')])
+    caller = function('caller', 0x80002000, 0x200, [(0x0c000400, 'jal'), (0x0c000406, 'jal')])
+    segments = [Segment('one', 0x100, 0x200, 0x80001000)]
+    assert intentional([prefix, tail, caller], console, segments)['prefix']['tail'] == 'tail'
+    branch = function('prefix', 0x80001000, 0x100, [(0x10000000, 'beq'), *[(0, 'nop')]*5])
+    assert not intentional([branch, tail, caller], console, segments)

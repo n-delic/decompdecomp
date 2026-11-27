@@ -81,7 +81,7 @@ struct Linker<'a, R> {
     mismatches: Vec<Value>,
 }
 
-fn hex(data: &[u8]) -> String {
+pub(crate) fn hex(data: &[u8]) -> String {
     let mut encoded = String::with_capacity(data.len() * 2);
     for byte in data {
         write!(encoded, "{byte:02x}").expect("writing to a string");
