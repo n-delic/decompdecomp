@@ -433,6 +433,12 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
             # when a caller passes its address and splat creates a function.
             recovered_data.append(DataSymbol(fn.name, fn.vram, fn.rom, fn.size, 'data'))
             continue
+        if (owner(fn)[0] >= 0 and not any(fn.vram <= address < fn.vram+fn.size
+                                          for address in explicit | transfer_targets)
+                and not any(d.rom is not None and d.rom < fn.rom+fn.size and fn.rom < d.rom+d.size for d in data)
+                and terminated_mapped_addresses(fn, image, order, segments, segments[owner(fn)[0]])):
+            recovered_data.append(DataSymbol(fn.name, fn.vram, fn.rom, fn.size, 'data'))
+            continue
         if (leading_constant_padding(fn, following, image, order, segments, direct_calls, entered-{fn.vram})
                 and fn.vram not in explicit|pointers|transfer_targets
                 and string_address_references(fn, references, lines_by_rom, reference_bodies)
@@ -892,6 +898,33 @@ def closes_with_back_edge(fn, end, mapping):
     delta = branch.word & 0xffff
     target = branch.vram+4+(delta-0x10000 if delta&0x8000 else delta)*4
     return fn.vram <= target < branch.vram
+
+
+def terminated_mapped_addresses(fn, image, order, segments, owner):
+    """Recognize a padded, ordered table of addresses into one other code bank."""
+    import rabbitizer
+
+    if not 16 <= fn.size <= 128 or fn.size % 4 or fn.rom+fn.size+8 > len(image):
+        return False
+    words = [line.word for line in fn.lines]
+    if (len(words)*4 != fn.size or words != sorted(words) or len(set(words)) < 3
+            or any(word % 4 or not 0x80000400 <= word < 0x80800000 for word in words)
+            or image[fn.rom:fn.rom+fn.size] != b''.join(word.to_bytes(4, order) for word in words)
+            or any(image[fn.rom+fn.size:fn.rom+fn.size+8])):
+        return False
+    returned = any(image[at:at+4] == JR_RA.to_bytes(4, order)
+                   and (slot := rabbitizer.Instruction(int.from_bytes(image[at+4:at+8], order))).isValid()
+                   and not slot.hasDelaySlot() and not any(image[at+8:fn.rom])
+                   for at in range(max(owner.rom_start, fn.rom-64), fn.rom-7, 4))
+    if not returned:
+        return False
+    targets = [[segment for segment in segments if segment is not owner and segment.contains(word, 4)]
+               for word in words]
+    if any(len(matches) != 1 for matches in targets) or len({id(matches[0]) for matches in targets}) != 1:
+        return False
+    segment = targets[0][0]
+    return sum(bool(any(image[segment.rom_start+word-segment.vram:segment.rom_start+word-segment.vram+4]))
+               for word in set(words)) >= 3
 
 
 def raw_return_before(fn, segment, segments, image, order):

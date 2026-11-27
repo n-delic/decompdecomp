@@ -26,6 +26,20 @@ def fixture(words=BODY,cuts=(0,12,32),order='big'):
     return image,functions,[Segment('code',0,len(image),BASE)]
 
 
+@pytest.mark.parametrize('protected', [False, True])
+def test_padded_ordered_addresses_into_another_code_bank_are_data(protected):
+    targets = [BASE+0x1000, BASE+0x1004, BASE+0x1004, BASE+0x1008, BASE+0x100c]
+    words = [0x03e00008, 0, 0, 0, *targets, 0, 0, 0, *BODY]
+    image, functions, _ = fixture(words, cuts=(0, 8, 16, 36, 48, 80))
+    image += bytes(0x100-len(image)) + bytes.fromhex('24020001')*16
+    segments = [Segment('code', 0, 80, BASE), Segment('other', 0x100, 0x140, BASE+0x1000)]
+    data = []
+    symbols = ['entry = 0x80001010; // type:func'] if protected else []
+    result = repair(functions, data, image, consoles.get('n64'), segments, symbols=symbols)
+    assert any(fn.rom == 16 for fn in result) == protected
+    assert any(item.rom == 16 and item.size == 20 for item in data) != protected
+
+
 @pytest.mark.parametrize('referenced', [False, True])
 def test_unreferenced_nop_before_called_aligned_bank_entry_is_padding(referenced):
     base = BASE + 12
