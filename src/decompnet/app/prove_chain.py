@@ -115,7 +115,7 @@ def _rename(source, name, vram):
 
 
 def generator(net, proj, fn, flags):
-    from . import draft_repairs, float_literal_words, switch_tables
+    from . import draft_repairs, float_literal_words, repair_asm, switch_tables
     ctx = net._context(proj['id'], fn['unit'])
     words = float_literal_words.read(net, proj, fn)
     header = ctx['header'] if ctx else ''
@@ -125,7 +125,8 @@ def generator(net, proj, fn, flags):
     def generate(source):
         source = _rename(source, fn['name'], fn['vram'])
         labels = {}
-        texts = draft_repairs.variants(source, fn['name'], proj['arch'], fn['asm'] or '', flags, labels, limit=None,
+        texts = draft_repairs.variants(source, fn['name'], proj['arch'],
+                                       repair_asm.current(net, proj, fn['asm'] or '', source), flags, labels, limit=None,
                                        header=header, tables=tables,
                                        callees=draft_repairs.capture_followup_repairs.callee_evidence(net, proj, fn, source),
                                        entry_scope=scope, words=words)

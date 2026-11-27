@@ -272,12 +272,13 @@ def repair_chain(search, agent, proj, fn, source, score, profile, budget, check,
     Each step judges the children (in batches of CHAIN_CHILDREN, FP families first) and keeps the best one that beats the
     current score, up to CHAIN_STEPS steps and `budget` compiles. Returns (best source, best score, compiles spent).
     The profile is only the judging profile of this search: nothing here changes the function's settings."""
-    from . import draft_repairs
+    from . import draft_repairs, repair_asm
     from .prove_chain import chain
     spent = [0]
     known = {source: score}
     pool = getattr(search, 'compile_pool', None)
-    args_for = lambda text: (text, fn['name'], proj['arch'], fn['asm'] or '', profile['flags'])  # noqa: E731
+    args_for = lambda text: (text, fn['name'], proj['arch'],  # noqa: E731
+                             repair_asm.current(search.net, proj, fn['asm'] or '', text), profile['flags'])
 
     def generate(text):
         options = proposal_options(search, proj, fn, text, header)
@@ -323,7 +324,7 @@ def climb(search, agent, proj, fn, source, profile, score, seed=0, *, require_cl
     to deep_profiles.probe; else the best score reached under the profile (its C kept in search.profile_bests)."""
     from decomprepair.permuter import mutate
 
-    from . import deep_profiles, draft_repairs
+    from . import deep_profiles, draft_repairs, repair_asm
     check = check or search.check
     if score == 0:
         # (the current C already matches under it: recheck and suggest the pair the ordinary way)
@@ -353,7 +354,8 @@ def climb(search, agent, proj, fn, source, profile, score, seed=0, *, require_cl
     while spent < budget:
         improved = False
         labels = {}
-        args = (best_source, fn['name'], proj['arch'], fn['asm'] or '', profile['flags'])
+        args = (best_source, fn['name'], proj['arch'], repair_asm.current(search.net, proj, fn['asm'] or '', best_source),
+                profile['flags'])
         pool = getattr(search, 'compile_pool', None)
         options = proposal_options(search, proj, fn, best_source, header)
         if pool is not None:

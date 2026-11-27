@@ -37,6 +37,7 @@ from . import (
     library_registry,
     permuter_focus,
     permuter_local,
+    repair_asm,
     repair_ranking,
     repair_sequence_lane,
     repair_sequences,
@@ -451,7 +452,7 @@ class Search(Permuter):
         from . import generation_calls
 
         header = self.net._context(proj['id'], fn['unit'])['header']
-        asm = dict(fn).get('asm') or ''
+        asm = repair_asm.current(self.net, proj, dict(fn).get('asm') or '', source)
         arch, name = proj['arch'], fn['name']
         L = 'decomprepair.'
         # Offer a masked phase merge and guarded sink together before the general proposal cap.
@@ -886,7 +887,8 @@ class Search(Permuter):
         def children(parent):
             labels = {}
             try:
-                found = draft_repairs.variants(parent, fn['name'], proj['arch'], dict(fn).get('asm') or '', flags,
+                found = draft_repairs.variants(parent, fn['name'], proj['arch'],
+                                               repair_asm.current(self.net, proj, dict(fn).get('asm') or '', parent), flags,
                                                labels, limit=None, header=header,
                                                words=None if fork else float_literal_words.read(self.net, proj, fn))
             except Exception:  # noqa: BLE001 - a family that fails on an edited source must not end the search
@@ -1613,7 +1615,7 @@ class Search(Permuter):
             labels = {}
             from .repair_generation import ACTIVE
             pool = getattr(self,'compile_pool',None)
-            args = (source,fn['name'],proj['arch'],fn['asm'] or '',flags)
+            args = (source,fn['name'],proj['arch'],repair_asm.current(self.net,proj,fn['asm'] or '',source),flags)
             options = dict(limit=None,header=header,tables=switch_tables.read(self.net,proj,fn),
                 callees=draft_repairs.capture_followup_repairs.callee_evidence(self.net,proj,fn,source),
                 entry_scope=draft_repairs.promoted_entry_repairs.scope(self.net,proj,fn),
@@ -1943,7 +1945,7 @@ class Search(Permuter):
                                 and residual_bursts<residual_followups.BURSTS
                                 and residual_followups.kind(parent_rows,measured_rows,proj['arch'])):
                             followup_labels = {}
-                            followup = draft_repairs.variants(candidate,fn['name'],proj['arch'],fn['asm'] or '',flags,
+                            followup = draft_repairs.variants(candidate,fn['name'],proj['arch'],repair_asm.current(self.net,proj,fn['asm'] or '',candidate),flags,
                                 followup_labels,limit=None,header=header,entry_scope=draft_repairs.promoted_entry_repairs.scope(self.net,proj,fn),
                                 words=float_literal_words.read(self.net,proj,fn))
                             selected = residual_followups.select([(followup_labels[c],c) for c in followup
