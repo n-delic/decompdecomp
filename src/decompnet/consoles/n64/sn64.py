@@ -59,9 +59,12 @@ def compile_source(cc: Path, cpp: Path, assembler: Path, converter: Path, runner
     obj = output.with_suffix('.sn.obj')
     defines = [f for f in flags if f.startswith(('-D', '-U', '-I'))]
     compiler_flags = [f for f in flags if f not in defines]
-    arguments = ['-P', '-undef', '-nostdinc', '-D_LANGUAGE_C', '-D__GNUC__=2',
+    cxx = source.suffix.lower() in ('.cpp', '.cc', '.cxx') and cc.name.lower() == 'cc1pln64.exe'
+    language = ['-D_LANGUAGE_C_PLUS_PLUS', '-D__cplusplus=1'] if cxx else ['-D_LANGUAGE_C']
+    arguments = ['-P', '-undef', '-nostdinc', *language, '-D__GNUC__=2',
                  '-I' + str(include.resolve()), *defines, source, '-o', preprocessed]
-    if (native := native_cpp(cpp, native)) is not None:
+    # The native replacement was validated on C inputs, not C++; retain the original preprocessor for C++.
+    if (native := native_cpp(cpp, None if cxx else native)) is not None:
         run([native, *arguments])
         # cc1n64 reads what cppn64.exe would have written, line ends included.
         preprocessed.write_bytes(preprocessed.read_bytes().replace(b'\n', b'\r\n'))
@@ -123,7 +126,7 @@ def compile_gcc_source(gcc: Path, assembler: Path, converter: Path, runner: Path
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--gcc', type=Path)
-    for option in ('cc', 'cpp', 'assembler'):
+    for option in ('cc', 'cxx', 'cpp', 'assembler'):
         parser.add_argument('--' + option, type=Path)
     for option in ('converter', 'runner', 'wrapper'):
         parser.add_argument('--' + option, type=Path)
@@ -151,7 +154,8 @@ def main():
         else:
             if args.converter is None or args.runner is None:
                 raise ValueError('The original SN64 profile needs its converter and runner.')
-            compile_source(args.cc, args.cpp, args.assembler, args.converter, args.runner,
+            frontend = args.cxx if args.cxx and args.source.suffix.lower() in ('.cpp', '.cc', '.cxx') else args.cc
+            compile_source(frontend, args.cpp, args.assembler, args.converter, args.runner,
                            args.source, args.output, args.include, args.flags, args.native_cpp)
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         parser.exit(1, f'SN64 compilation failed: {error}\n')
