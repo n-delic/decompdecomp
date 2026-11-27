@@ -112,3 +112,10 @@ def test_detected_code_removes_old_bin_marker_inside_its_extent(tmp_path):
     segments=yaml.safe_load(path.read_text())['segments']
     starts=[s[0] if isinstance(s,list) else s['start'] for s in segments]
     assert starts == [0,32,96,128]
+
+
+def test_shared_epilogue_may_branch_to_stack_restore_but_not_skip_it():
+    rom = image([0x10000001, 0, 0x27bd0018, 0x03e00008, 0])
+    assert complete(rom, [(0, 12, 0x80001000)]) == [(0, len(rom), 0x80001000)]
+    skips_restore = image([0x10000002, 0, 0x27bd0018, 0x03e00008, 0])
+    assert complete(skips_restore, [(0, 12, 0x80001000)]) == [(0, 12, 0x80001000)]

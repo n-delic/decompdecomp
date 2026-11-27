@@ -59,9 +59,11 @@ def complete(rom, segments, taken=(), *, called=(), allow_inferred_overlap=False
                 # The selected terminal return must pop precisely this prologue's frame.
                 pop = 0x27BD0000 | size
                 delayed = word(at+4) == pop
+                # Branches may share the stack restore as an epilogue. A jump
+                # to the return or its delay slot would skip that restore.
                 before = (at >= frame+8 and word(at-4) == pop
                           and not rabbitizer.Instruction(word(at-8)).hasDelaySlot()
-                          and not destinations.intersection((at-4, at, at+4)))
+                          and not destinations.intersection((at, at+4)))
                 if (delayed or before) and at+8>=highest:
                     recovered=at+8
                 break
