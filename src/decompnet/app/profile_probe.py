@@ -74,7 +74,8 @@ RESERVE = 3  # compiles left in a search's allowance before one more profile: it
 # v5: the draft's record arrays are judged under -O1 too (judge_record_arrays)
 # v6: -fforce-addr for targets that read offsets off a held symbol address
 # v7: the draft's address-named tables are judged as record arrays under -O1 too
-SIGNATURE = 'profile-probe-v7:'
+# v8: the draft's float-bit arguments and switch width are judged under -O1 too (draft_constants)
+SIGNATURE = 'profile-probe-v8:'
 FP_FLAGS = ('-mfp32', '-mfp64')
 # libultra's own names: osXxx, __osXxx, __rmon*, __sc*, the routines whose compiler was the library's, not the game's
 LIBRARY_NAME = re.compile(r'^_{0,2}(?:os[A-Z]|rmon|sc[A-Z])')
@@ -517,6 +518,19 @@ def run(search, agent, proj, fn, source, *, climb=True) -> bool:
     return matched
 
 
+def draft_constants(text, name, facts, flags) -> list[tuple[str, str]]:
+    """`text` with the float bit patterns m2c passed as integers written as float arguments, and its switch as wide as
+    the target's range check, as one child. Each repair alone left a call-heavy dispatcher short of exact: its machine
+    draft scored 2275 under `-O1`, 250 with the floats, and 0 with the empty `case` too."""
+    from decomprepair import float_bit_argument_repairs, switch_range_repairs
+    child = None
+    for _, repaired in float_bit_argument_repairs.variants(text, name, facts.header, facts.arch, flags)[:1]:
+        child = repaired
+    for _, repaired in switch_range_repairs.variants(child or text, name, facts.asm)[:1]:
+        child = repaired
+    return [('draft_constants', child)] if child else []
+
+
 def judge_record_arrays(search, agent, proj, fn, text, facts, item, profile) -> tuple[bool, list[dict]]:
     """`text` with its byte offsets off one global written as the record array declared there, judged under `profile`:
     (one was exact, the scores). A table initialiser matched only as that array under `-O1`, from its machine draft
@@ -526,6 +540,8 @@ def judge_record_arrays(search, agent, proj, fn, text, facts, item, profile) -> 
     (indexed_symbol_records): a machine draft at 7690 scored 550 as its record array under `-O1`, three steps from
     exact.
 
+    The draft's float constants and switch width (draft_constants) are tried first.
+
     So is a display list written through a `Gfx **` argument, as the SDK's macros with the parameters' widths
     (gbi_param_shapes): five glyph builders' drafts scored 13000 to 23500 under `-O2` either way, and 0 only as that
     source under `-O1`."""
@@ -533,10 +549,12 @@ def judge_record_arrays(search, agent, proj, fn, text, facts, item, profile) -> 
 
     from . import deep_profiles
     found = []
-    children = [*global_offset_records.variants(text, fn['name'], facts.header),
+    flags = profile['flags']
+    children = [*draft_constants(text, fn['name'], facts, flags.split() if isinstance(flags, str) else flags),
+                *global_offset_records.variants(text, fn['name'], facts.header),
                 *indexed_symbol_records.variants(text, fn['name'], facts.header, facts.asm),
                 *gbi_param_shapes.variants(text, fn['name'], facts.header)]
-    for _, child in children:
+    for family, child in children:
         if search.limit - search.tested < RESERVE:
             break
         search.check()
@@ -544,7 +562,8 @@ def judge_record_arrays(search, agent, proj, fn, text, facts, item, profile) -> 
         if score == 0:
             return True, found
         if score is not None:
-            found.append({**item, 'family': 'level_records', 'score': score, 'draft': True})
+            found.append({**item, 'family': 'level_constants' if family == 'draft_constants' else 'level_records',
+                          'score': score, 'draft': True})
     return False, found
 
 
