@@ -3951,7 +3951,13 @@ def test_reimport_uses_the_saved_original_and_reattaches_the_same_project_job(ap
         game.write_bytes(b'wrong copy')
         assert not client.get('/api/reimport?slug=retained').json()['available']
         response=client.post('/api/reimport',json={'slug':'retained','confirmed':True},headers=h)
-        assert response.status_code==400 and len(calls)==1
+        assert response.status_code==200
+        job_id=response.json()['job']
+        for _ in range(100):
+            job=client.get('/api/job?id='+job_id).json()
+            if job['state']!='running':break
+            time.sleep(.01)
+        assert job['state']=='error' and len(calls)==1
     finally:release.set()
 
 
@@ -4476,3 +4482,38 @@ def test_a_long_job_keeps_only_its_recent_log_lines():
     assert jobs.jobs[jid]["state"] == "done"
     assert len(lines) <= support.JOB_LOG_LINES * 2
     assert lines[-1] == f"line {support.JOB_LOG_LINES * 3 - 1}"
+
+
+def test_reimport_admission_returns_a_job_while_saved_source_waits(app, tmp_path, monkeypatch):
+    client, net, manager = app
+    root = tmp_path/'queued-reimport';root.mkdir()
+    with net.store.tx() as db:
+        db.execute('INSERT INTO projects(slug,name,arch,root,config) VALUES(?,?,?,?,?)',
+                   ('queued-reimport','Game','mips',str(root),json.dumps({'kind':'rom','platform':'n64'})))
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+    def stored(*_):
+        entered.set()
+        assert release.wait(5)
+        return root/'game.z64'
+    monkeypatch.setattr('decompnet.app.reimport_source.stored',stored)
+    monkeypatch.setattr(manager,'stop_project',lambda *_:calls.append('stop'))
+    headers = {'X-Decomp':'1'}
+    try:
+        response = client.post('/api/reimport',json={'slug':'queued-reimport'},headers=headers)
+        assert response.status_code == 200
+        job_id = response.json()['job']
+        assert entered.wait(5)
+        second = client.post('/api/reimport',json={'slug':'queued-reimport'},headers=headers)
+        assert second.json()['job'] == job_id
+        assert client.get('/api/reimport?slug=queued-reimport').json()['job'] == job_id
+        client.post('/api/job/cancel',json={'id':job_id},headers=headers)
+        release.set()
+        for _ in range(100):
+            job = client.get('/api/job?id='+job_id).json()
+            if job['state'] != 'running':break
+            time.sleep(.01)
+        assert job['state'] == 'cancelled'
+        assert not calls
+    finally:
+        release.set()
