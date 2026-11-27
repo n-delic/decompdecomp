@@ -14,8 +14,14 @@ The autopilot best (575) held the global as `extern void *G; base = &G; (*base)`
 the closing call, and carried search scaffolding. A typed rewrite reached 405; declaring the global
 `extern struct { T *p; } G;` then gave 0 (app judge). The target reloads the pointer after each word store through it.
 
-From the saved best, one step at a time (isolated judge): `callee_arity_trim` 575 -> 565, `scaffold_strip` -> 365,
-`entry_argument_restore` (new) -> 210, `global_pointer_base_record` (new) -> 50, `clean_rewrite` -> 0.
+From the saved best with the released modules (isolated judge): `callee_arity_trim` 575 -> 565, `scaffold_strip` ->
+365, `global_pointer_base_record` (new) -> 155, `entry_argument_restore` (new) -> 50, `clean_rewrite` -> 0.
+`prove_chain`'s greedy walk from the saved best itself takes `entry_argument_restore` first (425) and then needs a
+tying `scaffold_strip` step, which it does not take; the chain from there also reaches 0.
+
+The first release of `entry_argument_restore` never fired in the app: the stored target assembly still calls the
+renamed callee by its address (`jal func_XXXXXXXX`), while `get_assembly` prints the new name. A module that reads
+callee names from `asm` has to allow for that; prove it on the app's own assembly, not on `get_assembly` text.
 
 - The target never writes `$a0` before the call, so the argument is the function's own first parameter.
 - `global_pointer_read_record` already gave 405 -> 0 on the typed rewrite; on the draft it never fired, because the
