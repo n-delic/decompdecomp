@@ -651,7 +651,7 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
     if markers:
         log(f'Recovered {markers} overlay end markers as data.')
     if recovered_data:
-        data.extend(recovered_data)
+        data.extend(replace(item, boundary_proven=True) for item in recovered_data)
         log(f'Recovered {len(recovered_data)} referenced words as data between functions.')
     if recovered_shared:
         log(f'Recovered {recovered_shared} closed leaves with independently entered assembly tails.')

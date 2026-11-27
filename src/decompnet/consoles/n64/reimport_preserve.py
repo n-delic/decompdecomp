@@ -19,6 +19,11 @@ def preserve(net, project, result, image, rows, log=print):
                for fn in result.functions if fn.rom is not None]
     names = {fn.name for fn in result.functions}
     ranges = [(fn['rom_offset'], fn['rom_offset'] + fn['size']) for fn in current]
+    # A fresh boundary repair can prove that a former function is data. Byte
+    # equality alone cannot overturn that proof; importing records the old C
+    # in recovery notes when its function disappears.
+    proven_data = {(d.rom, d.vram, d.size) for d in getattr(result, 'data', ())
+                   if getattr(d, 'boundary_proven', False)}
     eligible = []
     for raw in rows:
         check()
@@ -26,6 +31,7 @@ def preserve(net, project, result, image, rows, log=print):
         lo, size, vram, target = (row.get(key) for key in ('rom_offset', 'size', 'vram', 'target'))
         if (row.get('name') in names or type(lo) is not int or type(size) is not int or type(vram) is not int
                 or size <= 0 or size % 4 or lo < 0 or lo + size > len(image)
+                or (lo, vram, size) in proven_data
                 or not isinstance(target, bytes) or target != image[lo:lo + size]
                 or any(a < lo + size and lo < b for a, b in ranges)
                 or not code._cut_ok(cfg, (lo, lo + size, vram))):

@@ -47,3 +47,15 @@ def test_preserve_leaves_split_alone_for_competing_or_unverified_entries(tmp_pat
     assert reimport_preserve.preserve(None, None, result, image, [row], lambda *_:None) == 0
     assert result.config_path.read_text() == before
     assert [f.name for f in result.functions] == ['current']
+
+
+def test_preserve_does_not_restore_a_proven_data_range_as_code(tmp_path, monkeypatch):
+    result, image, row = fixture(tmp_path)
+    result.data = [split.DataSymbol('old', row['vram'], row['rom_offset'], row['size'], 'data',
+                                    boundary_proven=True)]
+    monkeypatch.setattr(runtime_staging, 'verify', lambda *args, **kwargs: True)
+    assert reimport_preserve.preserve(None, None, result, image, [row], lambda *_: None) == 0
+    assert [f.name for f in result.functions] == ['current']
+    # An ordinary data label alone is weaker evidence: keep the old entry.
+    result.data[0].boundary_proven = False
+    assert reimport_preserve.preserve(None, None, result, image, [row], lambda *_: None) == 1

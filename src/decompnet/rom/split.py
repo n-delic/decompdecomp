@@ -82,6 +82,7 @@ class DataSymbol:
     size: int
     kind: str  # data | string | jtbl | bss
     preview: str = ""
+    boundary_proven: bool = False  # Reclassified as data by an evidence-backed boundary repair.
 
 
 @dataclass
