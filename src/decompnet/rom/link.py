@@ -29,6 +29,9 @@ class LinkResult:
     instructions_exact: bool | None = None
     linked_code: bytes | None = None  # fully relocated compiler instructions; diagnostics and rejudged matching-only entry exports
     data_mismatches: list[DataMismatch] = field(default_factory=list)
+    # Required reads that the image could not supply; speculative placement probes are excluded.
+    missing_data_reads: list[tuple[int, int]] = field(default_factory=list)
+    required_data_reads: list[tuple[int, int, bytes | None]] = field(default_factory=list)
 
 
 def _text(data: bytes) -> bool:
