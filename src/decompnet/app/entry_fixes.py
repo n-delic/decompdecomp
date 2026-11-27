@@ -448,6 +448,13 @@ def _start(e, words, pointed, entered, returned_before, starts, owner_words):
         leaf = not framed and _leaf_shape(words, k, stop)
         if not (framed or leaf):
             continue
+        # A one-word argument adjustment before a separately called leaf can
+        # be another callable entry (for example, a phase-shifted wrapper).
+        # A call to the shared leaf does not make that adjustment padding.
+        first = words[0]
+        if (k == 1 and leaf and first >> 26 == 9 and 4 <= (first >> 21) & 31 <= 7
+                and (first >> 21) & 31 == (first >> 16) & 31):
+            continue
         line = _straight(words, k)
         if contradiction(line, E, len(line)) is not None:
             continue  # the code from E doesn't read like an entry either

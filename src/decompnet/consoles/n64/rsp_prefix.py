@@ -16,11 +16,29 @@ def _vector(word):
 
 
 def audio_spans(image):
-    """Find audio RSP programs adjacent to the verified libultra bootstrap."""
+    """Find vector-rich audio RSP programs with a known task entry."""
     from .port import RSPBOOT
 
     variant = bytes.fromhex('342100010900041a') + RSPBOOT[4:]
     pattern = re.escape(RSPBOOT) + b'|' + re.escape(variant)
+    # Some games keep the bootstrap elsewhere. The task entry still reads SP
+    # status and the two DMEM task fields; a complete vector-rich IMEM image
+    # and several IMEM-local jumps distinguish it from CPU code.
+    entry = re.compile(rb'\x40[\x00-\x1f]\x58\x00\x8c[\x20-\x3f]\x00\x30\x8c[\x20-\x3f]\x00\x34')
+    for match in entry.finditer(image):
+        start = match.start()
+        end = start + 0x1000
+        if start % 16 or end > len(image):
+            continue
+        if start >= 0xd0 and (image[start-0xd0:start-0xd0+len(RSPBOOT)] in (RSPBOOT, variant)):
+            continue
+        if re.search(pattern, image[start:end]):
+            continue
+        words = struct.unpack_from('>1024I', image, start)
+        targets = {word & 0x03ffffff for word in words if word >> 26 in (2, 3)}
+        if (sum(map(_vector, words)) >= _MIN_VECTORS
+                and sum(0x01000400 <= target < 0x01000800 for target in targets) >= 3):
+            yield start, end
     for match in re.finditer(pattern, image):
         end = match.start()
         # Some audio tasks place the bootstrap immediately before their

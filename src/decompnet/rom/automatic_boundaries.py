@@ -486,7 +486,13 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
                                 and previous.rom+previous.size == fn.rom
                                 and previous.vram+previous.size == fn.vram and is_frame(fn.lines[0].word))
         both_called = same_owner and previous.vram in direct_calls and fn.vram in direct_calls
-        possible_shuffle = same_owner and fn.vram in direct_calls and previous.size in (8, 12)
+        # A single argument adjustment can also be an independently callable
+        # prefix to a leaf, even when only the shared entry is called here.
+        arg_adjust = (same_owner and previous.size == 4 and previous.lines
+                      and previous.lines[0].word >> 26 == 9
+                      and 4 <= (previous.lines[0].word >> 21) & 31 <= 7
+                      and (previous.lines[0].word >> 21) & 31 == (previous.lines[0].word >> 16) & 31)
+        possible_shuffle = same_owner and fn.vram in direct_calls and (previous.size in (8, 12) or arg_adjust)
         external_entries = (explicit | pointers | {address for address, sources in references.items()
             if any(not previous.rom <= src < fn.rom+fn.size for src, _ in sources)}
             if possible_fallthrough or both_called or possible_shuffle else set())

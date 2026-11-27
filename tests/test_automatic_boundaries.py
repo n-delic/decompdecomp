@@ -1107,6 +1107,17 @@ def test_uncalled_argument_shuffle_keeps_called_tail_entry():
     assert result[0].entry_aliases == {BASE+8: functions[1].name}
 
 
+@pytest.mark.parametrize('prefix, joined', [(0x24844000, True), (0x24854000, False), (0xac840000, False)])
+def test_one_word_argument_adjustment_preserves_called_leaf(prefix, joined):
+    words = [prefix, 0x00041040, 0x03e00008, 0,
+             0x0c000000 | ((BASE+4) >> 2 & 0x3ffffff), 0, 0x03e00008, 0]
+    image, functions, segments = fixture(words, cuts=(0, 4, 16, 32))
+    result = repair(functions, [], image, consoles.get('n64'), segments)
+    assert (result[0].size == 16) == joined
+    if joined:
+        assert result[0].entry_aliases == {BASE+4: functions[1].name}
+
+
 @pytest.mark.parametrize('case', ['valid', 'wrong_return', 'changed_ra', 'external_interior', 'data'])
 def test_shared_assembly_return_wrapper_preserves_entries(case):
     from decompnet.rom.automatic_boundaries import shared_return_wrapper

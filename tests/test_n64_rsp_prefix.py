@@ -74,6 +74,20 @@ def test_audio_text_before_bootstrap_accepts_pointer_first_entry(boot):
     assert not list(audio_spans(image))
 
 
+def test_standalone_audio_program_needs_entry_vectors_and_imem_jumps():
+    from decompnet.consoles.n64.rsp_prefix import audio_spans
+
+    image = bytearray(0x1100)
+    image[0x100:0x10c] = bytes.fromhex('400558008c3c00308c3b0034')
+    for i in range(64):
+        struct.pack_into('>I', image, 0x200 + i*4, 0x4a000000)
+    for i in range(3):
+        struct.pack_into('>I', image, 0x300 + i*4, 0x09000400+i)
+    assert list(audio_spans(image)) == [(0x100, 0x1100)]
+    image[0x300:0x30c] = bytes(12)
+    assert not list(audio_spans(image))
+
+
 def test_vector_graphics_overlays_stop_before_cpu_routine():
     from decompnet.consoles.n64.rsp_prefix import graphics_spans
 

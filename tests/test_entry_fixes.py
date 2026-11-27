@@ -82,6 +82,12 @@ def test_a_break_left_by_the_previous_functions_divide_check():
     assert 'starts 4 bytes late' in f.summary()
 
 
+def test_called_leaf_does_not_turn_argument_adjusting_entry_into_padding():
+    leaf = [0x00041040, JR_RA, NOP]
+    entries = game([addiu(A0, A0, 0x4000)], pointer=0x80001014, after=leaf)
+    assert 'f' not in ef.decide(entries)
+
+
 def test_a_self_loop_can_be_an_independent_no_return_function():
     loop = [j(0x80001010), NOP]
     assert 'f' not in ef.decide(game(loop))  # an unreferenced SDK panic stub can look just like a loop tail
