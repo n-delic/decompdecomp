@@ -42,7 +42,7 @@ def main():
                 started_priority()
                 background = True
             call = kwargs.pop('_call', None)
-            labels = {}
+            labels = draft_repairs.Labels()
             counts = compile_timing.Counts()
             partition=kwargs.pop('_partition',None)
             generation = kwargs.pop('_generation',None)
@@ -60,6 +60,8 @@ def main():
             thread_cpu.count('calls' if call else 'proposal_requests')
             thread_cpu.count('candidates', len(choices))
             result = {'candidates':[(source,labels.get(source,'')) for source in choices],'timings':counts.values,'cut_off':cut_off()}
+            aliases = [(source, labels.names(source)) for source in choices if source in labels]
+            result['aliases'] = [(source, families) for source, families in aliases if len(families) > 1]
             if call:
                 result['value'] = value
             if state is not None:

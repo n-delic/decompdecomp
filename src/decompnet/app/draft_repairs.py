@@ -466,6 +466,43 @@ class _ProposalDeadline(TimeoutError):
     pass
 
 
+class Labels(dict):
+    """{source: family} that also remembers every family that proposed a source.
+
+    Two families often write the same C, and a source keeps one label (the ranking and the record use it). A search
+    filtered by family name has to ask all of them: prove_chain run with only the family whose name was dropped said
+    "no child improves" while its child was there under the other name."""
+
+    def __init__(self):
+        super().__init__()
+        self._all = {}
+
+    def note(self, text, family):
+        self._all.setdefault(text, {})[family] = None
+
+    def __setitem__(self, text, family):
+        self.note(text, family)
+        super().__setitem__(text, family)
+
+    def setdefault(self, text, family=None):
+        self.note(text, family)
+        return super().setdefault(text, family)
+
+    def update(self, *args, **kwargs):
+        for text, family in dict(*args, **kwargs).items():
+            self[text] = family
+
+    def names(self, text):
+        """Every family that proposed `text`, its label first."""
+        label = self.get(text, 'unlabelled')
+        return [label] + [family for family in self._all.get(text, ()) if family != label]
+
+
+def pairs(texts, labels):
+    """[(family, source)] of `texts`, one for each family that proposed a source (its label's pair first)."""
+    return [(family, text) for text in texts for family in labels.names(text)]
+
+
 def _worker_batch(request, check, handlers=None):
     import time
 
@@ -559,6 +596,10 @@ def _in_worker(source, name, arch, asm, flags, labels, kwargs):
         choices.append(text)
         if family and labels is not None:
             labels[text] = family
+    if isinstance(labels, Labels):
+        for text, families in result.get('aliases') or ():  # a worker started before this had none
+            for family in families:
+                labels.note(text, family)
     if state:
         state.incomplete |= result['incomplete']
         for key in ('calls', 'generated_stages', 'cache_hits', 'generation_ms'):
@@ -608,13 +649,20 @@ def _variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels
         written = source
     if written == source:
         return raw
-    plain_labels = {}
+    plain_labels = Labels()
     plain = _spelled(written, name, arch, asm, flags, plain_labels, limit=limit, **kwargs)
     merged = list(raw)
-    for text in plain:
+    if isinstance(labels, Labels):
+        for text in plain:
+            if text in labels:
+                for family in plain_labels.names(text):
+                    labels.note(text, family)
         if text not in (source, written) and text not in labels:
             merged.append(text)
             labels[text] = plain_labels.get(text, 'expression_or_near_repair')
+            if isinstance(labels, Labels):
+                for family in plain_labels.names(text) if text in plain_labels else ():
+                    labels.note(text, family)
     return merged if limit is None else merged[:limit]
 
 
@@ -675,7 +723,9 @@ def _spelled(source: str, name: str, arch: str, asm: str = '', flags=(), labels=
         directive = [pair for repair in library_registry.runnable('draft', arch, unlimited=limit is None, directives=True)
                      for pair in registry.pairs(repair, _generated(repair.function(), **repair.arguments(context)))]
         choices = early + directive + _generated(macro_repairs.variants, source,name,generate,header)
-        if labels is not None:labels.update({text:family for family,text in choices})
+        if labels is not None:
+            for family, text in choices:
+                labels[text] = family
         return [text for _,text in choices][:limit] if limit is not None else [text for _,text in choices]
     body = clean[opening + 1:end].rstrip()
     if not body.endswith('}'):
