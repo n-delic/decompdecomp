@@ -259,3 +259,42 @@ def test_scaffold_uses_preserved_assembly_after_project_clean(tmp_path, monkeypa
     assert len(prepare(fp)) == 1
     from decompnet.forks.drafts import find_asm
     assert find_asm(tmp_path, 'asm/demo', 'demo', None) == saved
+
+
+def test_autopilot_prepares_every_batch_and_stop_keeps_completed_units(tmp_path, monkeypatch):
+    import threading
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from decompnet.app.forkengine import ForkEngine
+
+    fp = project(tmp_path)
+    config = json.loads((tmp_path / 'objdiff.json').read_text())
+    ref = tmp_path / '.decomp-wtf/objdiff-references'
+    for i in range(34):
+        name = f'part{i:02d}'
+        (ref / f'objects/{name}.o').write_bytes(b'reference')
+        (ref / f'asm/{name}.s').write_text(f'glabel {name}\njr $ra\nnop\n')
+        config['units'].append({'name': f'asm/{name}', 'target_path': f'.decomp-wtf/objdiff-references/objects/{name}.o'})
+    (tmp_path / 'objdiff.json').write_text(json.dumps(config))
+    def build(unit):
+        unit.base.write_bytes(b'candidate')
+        return True, ''
+    monkeypatch.setattr(fp, 'build_unit', build)
+    monkeypatch.setattr('decompnet.app.forkengine.toolchains.installed', lambda tool: {'id': tool})
+    store = SimpleNamespace(all=lambda *args: [{'id': 17}])
+    synced = []
+    fake = SimpleNamespace(get=lambda slug: ({'id': 1}, fp, {'origin': 'local', 'platform': 'n64', 'ready': True}),
+                           _tree=lambda proj: SimpleNamespace(exclusive=nullcontext), _build_locks={1: nullcontext()},
+                           net=SimpleNamespace(project_store=lambda _: store), sync=lambda slug: synced.append(slug))
+    stop = threading.Event()
+    def progress(message, count=0):
+        if count:
+            stop.set()
+    assert ForkEngine.autopilot_prepare(fake, 'demo', all_units=True, stop=stop, progress=progress) == [17]
+    assert len(synced) == 1
+    assert sum(bool(u.get('metadata', {}).get('autopilot_scaffold')) for u in fp.objdiff_config()['units']) == 32
+    stop.clear()
+    assert ForkEngine.autopilot_prepare(fake, 'demo', all_units=True, stop=stop, progress=lambda *args: None) == [17]
+    assert len(synced) == 2
+    assert sum(bool(u.get('metadata', {}).get('autopilot_scaffold')) for u in fp.objdiff_config()['units']) == 35

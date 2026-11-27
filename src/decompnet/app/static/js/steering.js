@@ -965,6 +965,12 @@ function renderAutopilot(ov) {
     $("apTitle").textContent = "Autopilot: waiting for its turn";
     $("apSub").textContent = `Other games' autopilots are running; this one starts when one of them ends. Agents can work meanwhile.${perm}`;
     $("apBtn").textContent = "Stop";
+  } else if (running && ap.phase === "preparing") {
+    $("apBar").className = "workbar";
+    $("apBar").firstElementChild.style.width = "";
+    $("apTitle").textContent = "Autopilot: preparing C candidates";
+    $("apSub").textContent = `${(ap.candidate_units || 0).toLocaleString()} units prepared${ap.candidate_current ? ` · ${ap.candidate_current}` : ""}`;
+    $("apBtn").textContent = "Stop";
   } else if (reuseRunning) {
     $("apTitle").textContent = "Autopilot: trying verified C from this game and other projects";
     const progress = tw?.progress || {phase: 'Preparing reusable-code search'};

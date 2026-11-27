@@ -93,7 +93,7 @@ def test_manual_autopilot_spawns_coordinator_and_compile_workers_while_lane_busy
     if imported:
         ids=[r['id'] for r in net.store.all('SELECT id FROM functions')]
         monkeypatch.setattr(net,'fork_slug',lambda slug:slug)
-        net.forks=SimpleNamespace(autopilot_prepare=lambda slug:ids,autopilot_one=compile_one)
+        net.forks=SimpleNamespace(autopilot_prepare=lambda slug, **kwargs:ids,autopilot_one=compile_one)
     original=net._autopilot_work
     def work(*args):
         try:return original(*args)
@@ -216,3 +216,29 @@ def test_autopilot_reuses_preparation_between_functions_and_closes_session(tmp_p
     assert state['tried']==4 and len(sessions)==4
     assert sessions[0] is not None and all(s is sessions[0] for s in sessions)
     assert compile_sessions.current() is None
+
+
+def test_imported_autopilot_returns_before_candidate_preparation_and_can_stop(tmp_path, monkeypatch):
+    net = RomNetwork(tmp_path/'app.db', tmp_path)
+    existing_game(net, tmp_path)
+    monkeypatch.setattr(net, 'fork_slug', lambda slug: slug)
+    entered, release = threading.Event(), threading.Event()
+    def prepare(slug, *, all_units, stop, progress):
+        assert all_units
+        progress('Preparing candidate')
+        entered.set()
+        release.wait(5)
+        assert stop.is_set()
+        return []
+    net.forks = SimpleNamespace(autopilot_prepare=prepare, autopilot_one=lambda *args: 'far')
+    state = net.start_autopilot('game', foreground=True)
+    try:
+        assert entered.wait(2)
+        assert state['phase'] == 'preparing'
+        assert state['candidate_current'] == 'Compiling the next candidate'
+        net.stop_autopilot('game')
+        assert state['stop'].is_set()
+    finally:
+        release.set()
+    assert state['_finished'].wait(5)
+    assert state['state'] == 'stopped'

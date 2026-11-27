@@ -3726,7 +3726,7 @@ class ForkEngine:
 
     # ------------------------------------------------------------------ autopilot
 
-    def autopilot_prepare(self, slug: str) -> list[int]:
+    def autopilot_prepare(self, slug: str, *, all_units=False, stop=None, progress=None) -> list[int]:
         """The open functions autopilot tries in a ready project, smallest first. Raises NetworkError
         when it can't run here. A console with drafts of its own (Console.own_drafts: PC) needs no m2c: its exact
         drafts come from the code, its others from Ghidra when it's installed."""
@@ -3747,13 +3747,21 @@ class ForkEngine:
                 raise NetworkError("autopilot needs m2c, the draft decompiler: install it in Setup")
             from ..forks.scaffold import prepare
 
-            with self._tree(proj).exclusive(), self._build_locks[proj["id"]]:
-                made = prepare(fp)
-            if made:
-                self.sync(slug)
+            while stop is None or not stop.is_set():
+                with self._tree(proj).exclusive(), self._build_locks[proj["id"]]:
+                    if all_units:
+                        made = prepare(fp, log=progress or (lambda *_: None), stop=stop)
+                    else:
+                        made = prepare(fp)
+                if made:
+                    self.sync(slug)
+                    if progress is not None:
+                        progress(None, len(made))
+                if not all_units or len(made) < 32:
+                    break
             rows = self.net.project_store(slug).all("SELECT id FROM functions WHERE project_id=? AND status='open' ORDER BY n_insns, id",
                                       proj["id"])
-            if not rows:
+            if not rows and not (stop is not None and stop.is_set()):
                 raise NetworkError("No writable C candidates are available. This imported project's build needs C scaffolding before Autopilot can try drafts.")
             return [r["id"] for r in rows]
         # m2c reads the assembly a project keeps for its undecompiled functions. A ds-decomp project has none: its

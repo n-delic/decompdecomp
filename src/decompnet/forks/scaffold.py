@@ -24,7 +24,7 @@ typedef double f64;
 ''' + seeds.M2C_MACROS + '\n'
 
 
-def prepare(project, log=print, *, limit: int = 32, units: set[str] | None = None) -> list[str]:
+def prepare(project, log=print, *, limit: int = 32, units: set[str] | None = None, stop=None) -> list[str]:
     """Prepare a bounded batch of source-less units with app-verified reference objects.
 
     Probe the actual project's object rule before publishing each candidate. Never invent a compiler or alter
@@ -40,6 +40,8 @@ def prepare(project, log=print, *, limit: int = 32, units: set[str] | None = Non
     sources = []
     try:
         for entry in cfg.get('units', []):
+            if stop is not None and stop.is_set():
+                break
             if units is not None and entry.get('name') not in units:
                 continue
             source_path = (entry.get('metadata') or {}).get('source_path')

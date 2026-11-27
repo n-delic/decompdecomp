@@ -68,7 +68,9 @@ class AutopilotMixin:
         # the code and the project's headers are fit for them (ROM projects; games started from scratch)
         try:
             if fork:  # a GameCube, Wii or DS game started from scratch: its own build judges
-                ids = self.forks.autopilot_prepare(fork)
+                # Candidate preparation can build many units. It runs in the cancellable
+                # coordinator after the start request has returned.
+                ids = []
                 try_one, workers = self.forks.autopilot_one, min(workers, 2)  # each try builds a file: fewer at once
             else:
                 if not seeds.available():
@@ -85,7 +87,7 @@ class AutopilotMixin:
             ids, try_one, no_drafts = [], None, str(e)
         state = {"state": "running", "total": len(ids), "tried": 0, "matched": 0, "near": 0, "twins": 0,
                  "phase": "queued", "no_drafts": no_drafts, "started_at": time.time(), "stop": threading.Event(),
-                 "_finished": threading.Event(), "_workers": requested_workers}
+                 "_finished": threading.Event(), "_workers": requested_workers, "_fork": fork}
         state['_foreground']=threading.Event()
         if foreground:state['_foreground'].set()
         with self.twins._lock:
@@ -150,6 +152,21 @@ class AutopilotMixin:
         agent, _ = self.local_agent("autopilot")
         proj = self._project(slug)
         try_one = try_one or self._autopilot_one
+        if state.get('_fork') and not state['stop'].is_set():
+            state['phase'] = 'preparing'
+            state['candidate_units'] = 0
+            def candidate_progress(message, completed=0):
+                if message:
+                    state['candidate_current'] = 'Compiling the next candidate'
+                state['candidate_units'] += completed
+            try:
+                ids = self.forks.autopilot_prepare(state['_fork'], all_units=True, stop=state['stop'],
+                                                   progress=candidate_progress)
+            except (NetworkError, OSError, ValueError) as error:
+                if not state['stop'].is_set():
+                    state['no_drafts'] = str(error)
+                ids = [r['id'] for r in self.project_store(proj['id']).all(
+                    "SELECT id FROM functions WHERE project_id=? AND status='open' ORDER BY n_insns, id", proj['id'])]
         state["phase"] = "twins"
         try:  # identical code first: free, and it takes those functions off the drafts' list
             if slug not in self.links and not state["stop"].is_set():  # (a room member's matches come from the host)
