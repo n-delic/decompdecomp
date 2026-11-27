@@ -10,7 +10,7 @@
 - loader_mapping.py: bank mappings corroborated by constant arguments to independent loader helpers.
 - indexed_overlays.py: shared RAM slots and DMA bounds recovered from loader arrays and cache calls.
 - indexed_runtime_code.py: executable archive members mapped at their declared runtime addresses.
-- runtime_zlib.py: compressed programs corroborated by runtime call targets and their loaded bytes.
+- runtime_zlib.py, runtime_refpack.py: compressed programs corroborated by runtime call targets and loaded bytes.
 - runtime_overlays.py: overlapping code banks corroborated by runtime caller and target bytes.
 - runtime_textures.py: bounded emulator snapshots for texture loads whose pixels match the cartridge.
 - level_overlay_table.py: shared-slot level banks and adjacent helpers verified from loader instructions.

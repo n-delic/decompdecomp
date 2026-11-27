@@ -13,6 +13,24 @@ _HEADER = re.compile(rb'\x80[\x00-\x3f]..\x78[\x01\x5e\x9c\xda]', re.DOTALL)
 MANIFEST = 'runtime-zlib.json'
 
 
+def _payload(rom, row):
+    if (type(row.get('offset')) is not int or type(row.get('size')) is not int
+            or not 0 <= row['offset'] < row['offset']+row['size'] <= len(rom)):
+        return None
+    if row.get('codec', 'zlib') == 'zlib':
+        return paired_resources.unpack_zlib(rom, row['offset'], row['size'])
+    if row.get('codec') == 'refpack':
+        from decompassets import formats, refpack
+        try:
+            payload, used = refpack.unpack(memoryview(rom)[row['offset']:row['offset']+row['size']])
+        except (formats.AssetError, IndexError):
+            return None
+        if used != row['size'] or len(payload) != row.get('expanded'):
+            return None
+        return payload
+    return None
+
+
 def _contiguous_tail(image, start, end, vram):
     """Keep a run of closed bodies immediately following the last verified body."""
     from ...arch.mips_code_recovery import called_extent, leaf_extent
@@ -79,7 +97,7 @@ def verify_analysis(rom, expanded, rows):
     for row in rows:
         if not isinstance(row, dict) or type(row.get('offset')) is not int or type(row.get('size')) is not int:
             return False
-        payload = paired_resources.unpack_zlib(rom, row['offset'], row['size'])
+        payload = _payload(rom, row)
         if not payload:
             return False
         aligned = (cursor+15)&~15
@@ -97,7 +115,7 @@ def add(config, workdir, image, rom, taken, rows, log):
     expanded.extend(bytes(-len(expanded)%16+16))
     programs = []
     for row in rows:
-        payload = paired_resources.unpack_zlib(rom, row['offset'], row['size'])
+        payload = _payload(rom, row)
         if not payload:
             return None
         expanded.extend(bytes(-len(expanded)%16))
@@ -107,18 +125,21 @@ def add(config, workdir, image, rom, taken, rows, log):
         table = dict(rom_start=start,rom_end=end,vram=row['vram'])
         found = complete(expanded, [], [(start,end,row['vram'])], taken, log,
                          table_ranges=[table], entries=tuple(row['calls'])+(row['vram'],))
-        if len(found) < 4 or min(lo for lo,_,_ in found) != start:
+        if len(found) < 4:
+            return None
+        text_start = min(lo for lo,_,_ in found)
+        if not start <= text_start < end:
             return None
         last = max(hi for _,hi,_ in found)
         last = _contiguous_tail(expanded, last, end, row['vram']+last-start)
         text_end = min(end, (last+15)&~15)
-        programs.append((row,start,text_end,end))
+        programs.append((row,start,text_start,text_end,end))
     cfg = yaml.safe_load(config.read_text(encoding='utf-8'))
     segments = [segment for segment in cfg['segments'] if not isinstance(segment,list) or len(segment) != 1]
     segments.append(dict(type='bin',start=len(rom)))
-    for index,(row,start,text_end,end) in enumerate(programs):
+    for index,(row,start,text_start,text_end,end) in enumerate(programs):
         name = f'runtime_program_{index:04d}'
-        parts = [[start,'c',name]]
+        parts = ([[start,'bin',name+'_prefix']] if text_start > start else []) + [[text_start,'c',name]]
         if text_end < end:
             parts.append([text_end,'data',name])
         segments.append(dict(name=name,type='code',start=start,vram=row['vram'],subsegments=parts))
@@ -131,8 +152,16 @@ def add(config, workdir, image, rom, taken, rows, log):
     cfg['segments'] = segments
     config.write_text(yaml.safe_dump(cfg,sort_keys=False),encoding='utf-8')
     (workdir/MANIFEST).write_text(json.dumps(rows),encoding='utf-8')
-    (workdir/'analysis-coverage.json').write_text(json.dumps([
-        f'Includes {len(programs)} decompressed executable programs corroborated by runtime call targets.',
-        'Code outside detected bodies may remain. Original compressed cartridge bytes are retained.']))
+    coverage = workdir/'analysis-coverage.json'
+    try:
+        notes = json.loads(coverage.read_text(encoding='utf-8')) if coverage.is_file() else []
+    except (OSError, ValueError):
+        notes = []
+    if not isinstance(notes, list):
+        notes = []
+    notes = [note for note in notes if isinstance(note, str)]
+    notes += [f'Includes {len(programs)} decompressed executable programs corroborated by runtime call targets.',
+              'Code outside detected bodies may remain. Original compressed cartridge bytes are retained.']
+    coverage.write_text(json.dumps(list(dict.fromkeys(notes))), encoding='utf-8')
     log(f'Unpacked {len(programs)} runtime-observed compressed programs for analysis')
     return filename
