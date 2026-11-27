@@ -790,3 +790,27 @@ def test_one_offset_or_a_redefined_register_is_no_force_addr_evidence():
     reloaded = [*HELD_ADDRESS[:4], 0x8C860000, *HELD_ADDRESS[4:]]  # lw $a2,0($a0) before the offsets
     assert not evidence.reads_through_held_address(one)
     assert not evidence.reads_through_held_address(reloaded)
+
+
+def test_the_drafts_float_arguments_and_switch_width_are_one_child():
+    draft = '''M2C_UNK g(s32, M2C_UNK);
+
+void f(s32 arg0) {
+    u32 temp = arg0 & 0xFFFF;
+    switch (temp) {
+    case 1:
+        g(0, 0x42B40000);
+        return;
+    case 2:
+        g(1, 0x43870000);
+        /* fallthrough */
+    default:
+        return;
+    }
+}
+'''
+    asm = 'andi $a0, $a0, 0xFFFF\nsltiu $v0, $a0, 0x3\n'
+    [(family, child)] = profile_probe.draft_constants(draft, 'f', facts(asm=asm), ['-mgp32', '-O1'])
+    assert family == 'draft_constants'
+    assert 'g(0, 90.0f)' in child and 'g(1, 270.0f)' in child and 'case 0:' in child
+    assert profile_probe.draft_constants('void f(void) {}', 'f', facts(asm=asm), ['-mgp32']) == []
