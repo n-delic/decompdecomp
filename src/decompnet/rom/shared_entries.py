@@ -7,6 +7,17 @@ from collections import Counter, defaultdict
 _STRAIGHT = frozenset(('addiu', 'lui', 'lwc1', 'add.s'))
 
 
+def _straight(line):
+    if line.mnemonic.lower() in _STRAIGHT:
+        return True
+    # A move between argument registers (OR with zero) is a common entry
+    # shim into an independently called vector routine's shared tail.
+    word = line.word
+    return (line.mnemonic.lower() == 'or' and word >> 26 == 0 and word & 0x7ff == 0x25
+            and (word >> 16) & 31 == 0 and 4 <= (word >> 21) & 31 <= 7
+            and 4 <= (word >> 11) & 31 <= 7)
+
+
 def intentional(functions, console, segments):
     """Return evidence for unambiguous calls to both adjacent MIPS entries.
 
@@ -37,7 +48,7 @@ def intentional(functions, console, segments):
         if (len(owners) != 1 or owners[0].name != fn.segment
                 or owners[0].vram - owners[0].rom_start != fn.vram - fn.rom):
             continue
-        if any(line.mnemonic.lower() not in _STRAIGHT for line in fn.lines) or any(
+        if any(not _straight(line) for line in fn.lines) or any(
                 at in transfers for at in range(fn.vram + 4, fn.vram + fn.size, 4)):
             continue
         tail = by_address.get(fn.vram + fn.size)

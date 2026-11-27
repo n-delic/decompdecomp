@@ -606,6 +606,10 @@ class ImportMixin:
             apply_entry_fixes(self, slug, log)
         except NetworkError as e:
             log(f"function boundaries were not fixed automatically: {e}")
+        # Automatic boundary fixes invalidate earlier shared-entry evidence.
+        # Reprove it against the final stored split before a helper can claim it.
+        from ..boundary_review import refresh_shared_entries
+        refresh_shared_entries(self, self.project_row(slug), console, res.segments)
         console.after_import(self, slug, chosen=chosen, log=log)
         if reimport is not None and backup is not None:
             try:
