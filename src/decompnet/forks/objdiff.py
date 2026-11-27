@@ -330,6 +330,9 @@ def subtract_conflicts(project: Path, rep: dict) -> dict:
     bases = {u.get("name"): project / u["base_path"] for u in cfg.get("units", []) if u.get("base_path")}
     lost_fns, lost_code = 0, 0
     for unit in rep.get("units", []):
+        # A data-only unit cannot have a function whose match a sidecar changes.
+        if not unit.get("functions"):
+            continue
         base = bases.get(unit.get("name"))
         if base is None or not base.with_suffix(".ltcg.json").is_file():
             continue

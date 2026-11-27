@@ -137,3 +137,27 @@ def test_a_function_its_unit_also_calls_keeps_its_score(monkeypatch, tmp_path):
     monkeypatch.setattr(objdiff, "_run", lambda *args, **kwargs: json.dumps(data))
     result = objdiff.diff(None, None, None, cwd=tmp_path)
     assert result.unit_scores == {"demo_function": 100.0} and result.order == ["demo_function"]
+
+
+def test_ltcg_sidecars_are_checked_only_for_units_with_functions(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    cfg = {'units': [{'name': 'code', 'base_path': 'code.o'}, {'name': 'asset', 'base_path': 'asset.o'}]}
+    (tmp_path / 'objdiff.json').write_text(json.dumps(cfg))
+    (tmp_path / 'code.ltcg.json').write_text(json.dumps({'functions': {'demo': {'conflicts': ['bad mapping']}}}))
+    (tmp_path / 'asset.ltcg.json').write_text('{}')
+    measures = {'total_functions': 1, 'matched_functions': 1, 'total_code': '4', 'matched_code': '4'}
+    report = {'measures': dict(measures), 'units': [
+        {'name': 'code', 'measures': dict(measures), 'functions': [
+            {'name': 'demo', 'size': '4', 'fuzzy_match_percent': 100.0}]},
+        {'name': 'asset', 'functions': []}]}
+    calls = []
+    is_file = Path.is_file
+    def tracked(path):
+        calls.append(path)
+        return is_file(path)
+    monkeypatch.setattr(Path, 'is_file', tracked)
+    result = objdiff.subtract_conflicts(tmp_path, report)
+    assert calls == [tmp_path / 'code.ltcg.json']
+    assert result['measures']['matched_functions'] == 0
+    assert result['units'][0]['functions'][0]['fuzzy_match_percent'] == 99.99
