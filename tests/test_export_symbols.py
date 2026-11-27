@@ -11,8 +11,9 @@ from decompnet import consoles, toolchains
 from decompnet.rom import export
 
 
+@pytest.mark.parametrize('branch_relocation', [False, True])
 @pytest.mark.parametrize('platform', ['n64', 'ps1', 'ps2', 'psp'])
-def test_startup_bss_relocations_keep_original_addresses(tmp_path, platform):
+def test_startup_bss_relocations_keep_original_addresses(tmp_path, platform, branch_relocation):
     import subprocess
 
     if toolchains.installed('binutils-mips') is None:
@@ -27,12 +28,13 @@ def test_startup_bss_relocations_keep_original_addresses(tmp_path, platform):
     words = [0x3C080000 | ((start + 0x10 + 0x8000) >> 16),
              0x25080000 | ((start + 0x10) & 0xFFFF),
              0x3C090000 | ((end + 0x8000) >> 16), 0x25290000 | (end & 0xFFFF),
-             0x03E00008, 0]
+             *([0x10000003] if branch_relocation else []), 0x03E00008, 0]
     target = b''.join(word.to_bytes(4, order) for word in words)
     (tmp_path/'image.bin').write_bytes(target + bytes(8))
     (tmp_path/'entry.s').write_text('.text\n.set noreorder\n.globl entry\n.type entry,@function\nentry:\n'
                                   'lui $8,%hi(main_BSS_START+0x10)\naddiu $8,$8,%lo(main_BSS_START+0x10)\n'
-                                  'lui $9,%hi(main_BSS_END)\naddiu $9,$9,%lo(main_BSS_END)\njr $31\nnop\n'
+                                  'lui $9,%hi(main_BSS_END)\naddiu $9,$9,%lo(main_BSS_END)\n'
+                                  + ('beq $0,$0,external\n' if branch_relocation else '') + 'jr $31\nnop\n'
                                   '.size entry,.-entry\n')
     subprocess.run([str(tools/'mips-ps2-decompals-as'), endian, '-mips2', '-no-pad-sections',
                     '-o', 'entry.o', 'entry.s'], cwd=tmp_path, check=True, capture_output=True)
@@ -43,7 +45,7 @@ def test_startup_bss_relocations_keep_original_addresses(tmp_path, platform):
     shutil.copyfile(Path(export.__file__).with_name('export_build.py'), tmp_path/'build.py')
     script = runpy.run_path(str(tmp_path/'build.py'))
     assert script['segment_addresses']() == {'main_BSS_START':start, 'main_BSS_END':end}
-    (tmp_path/'game.ld').write_text(script['linker_script']({}, [], []))
+    (tmp_path/'game.ld').write_text(script['linker_script']({}, [], []) + '\nexternal = 0x80001020;\n')
     subprocess.run([str(tools/'mips-ps2-decompals-ld'), endian, '-T', 'game.ld', '-o', 'game.elf', 'entry.o'],
                    cwd=tmp_path, check=True, capture_output=True)
     with (tmp_path/'game.elf').open('rb') as stream:
@@ -54,7 +56,7 @@ def test_startup_bss_relocations_keep_original_addresses(tmp_path, platform):
     # A register mismatch supplies no evidence; a known absolute symbol is retained.
     (tmp_path/'image.bin').write_bytes((words[0] ^ (1 << 16)).to_bytes(4, order) + target[4:])
     assert script['segment_addresses']() == {}
-    assert 'main_BSS_START = 0x80001018;' in script['linker_script']({}, [], [])
+    assert f'main_BSS_START = 0x{0x80001000 + len(target):X};' in script['linker_script']({}, [], [])
     script['B']['symbols']['main_BSS_START'] = start
     assert script['segment_addresses']() == {'main_BSS_START':start}
     # Explicit addresses are emitted once rather than overwritten by inferred bounds.
@@ -69,7 +71,7 @@ def test_startup_bss_relocations_keep_original_addresses(tmp_path, platform):
     # Two startup references to one generated name must agree on its original address.
     different = bytearray(target)
     different[4:8] = (words[1] + 0x100).to_bytes(4, order)
-    (tmp_path/'image.bin').write_bytes(target + bytes(8) + different)
+    (tmp_path/'image.bin').write_bytes(target + bytes(0x20 - len(target)) + different)
     script['B']['segments'][0]['pieces'].append({'vram':0x80001020, 'obj':'entry.o'})
     with pytest.raises(SystemExit, match='Conflicting original startup addresses'):
         script['segment_addresses']()
