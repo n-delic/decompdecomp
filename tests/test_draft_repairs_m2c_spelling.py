@@ -26,4 +26,6 @@ def test_raw_proposals_come_first_and_written_out_ones_follow():
     extra = both[len(raw):]
     assert extra and all('M2C_FIELD(arg0' not in text for text in extra)
     assert all(text in labels for text in both)
-    assert draft_repairs.variants(DRAFT, 'func_80001000', 'mips', limit=len(raw)) == raw
+    # a limited pass fills with the raw spelling's own limited proposals first
+    limited = draft_repairs._spelled(DRAFT, 'func_80001000', 'mips', '', (), {}, limit=len(raw))
+    assert draft_repairs.variants(DRAFT, 'func_80001000', 'mips', limit=len(raw))[:len(limited)] == limited

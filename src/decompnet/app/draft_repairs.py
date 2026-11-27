@@ -654,9 +654,10 @@ def _variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels
     merged = list(raw)
     if isinstance(labels, Labels):
         for text in plain:
-            if text in labels:
+            if text in labels:  # the raw spelling wrote it too: both families are its authors
                 for family in plain_labels.names(text):
                     labels.note(text, family)
+    for text in plain:
         if text not in (source, written) and text not in labels:
             merged.append(text)
             labels[text] = plain_labels.get(text, 'expression_or_near_repair')
