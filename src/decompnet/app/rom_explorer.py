@@ -323,6 +323,11 @@ def _asset_read(net,slug,data,read, *, detect=False):
         if detected.get('provider')=='splat-config':
             from ..rom import config_images
             read=lambda image,settings:config_images.preview(image,detected,selection)
+        elif (not detected.get('provider') and not detected.get('layout')
+              and detected.get('format') in ('PNG', 'JPEG')):
+            # Generic image signatures use the shared decoder on every console.
+            # Console-specific previews expect their own asset metadata.
+            read=original_read
         elif detected.get('provider') in ('portable-font','portable-records'):
             from ..rom import resource_catalog
             source=_source(net,proj)

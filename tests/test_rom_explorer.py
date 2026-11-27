@@ -755,7 +755,9 @@ def test_detected_image_preview_survives_region_boundaries(tmp_path, monkeypatch
     report = analyse(image, [], [], [])
     row = next(row for row in report['regions'] if row['start'] == PAGE_BYTES)
     assert row['detected_asset']['offset'] == offset
-    console = SimpleNamespace(asset_scene=lambda *_: None, asset_preview=lambda *_: None)
+    def console_preview(*_):
+        raise AssertionError('Generic images must use the shared decoder')
+    console = SimpleNamespace(asset_scene=lambda *_: None, asset_preview=console_preview)
     net = SimpleNamespace(console=lambda _: console)
     monkeypatch.setattr(rom_explorer, '_current', lambda *_: ({}, dict(report=report), row))
     monkeypatch.setattr(rom_explorer, '_source', lambda *_: dict(path=path))
