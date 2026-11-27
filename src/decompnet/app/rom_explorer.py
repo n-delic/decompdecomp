@@ -271,12 +271,13 @@ def loader_contracts(net,slug,data=None):
 def _preview_settings(options):
     from ..rom.asset_formats import FORMATS, PALETTES
     if not isinstance(options,dict):raise NetworkError('Preview settings must be named fields.')
-    allowed={'format','offset','source','block_offset','width','height','palette_offset','palette_block_offset','palette_format','channels','rate','length','frame','palette','mip','sample','mesh','texture','record_page','record_component','assembly','animation','dialogue_scene','dialogue_speaker'}
+    allowed={'format','offset','source','block_offset','width','height','palette_offset','palette_block_offset','palette_rom_offset','palette_format','flip_y','channels','rate','length','frame','palette','mip','sample','mesh','texture','record_page','record_component','assembly','animation','dialogue_scene','dialogue_speaker'}
     if set(options)-allowed:raise NetworkError('Use only the listed preview controls.')
     if options.get('format','auto') not in FORMATS or options.get('palette_format','rgba5551-be') not in PALETTES:
         raise NetworkError('Choose a listed preview format and palette format.')
     if options.get('source','rom') not in ('rom','decoded','archive'):raise NetworkError('Choose ROM bytes, a decompressed block or a validated archive member.')
-    if any(isinstance(v,(dict,list,bool)) or len(str(v))>40 for v in options.values()):raise NetworkError('Preview controls must contain short text or numeric values.')
+    if 'flip_y' in options and not isinstance(options['flip_y'],bool):raise NetworkError('Choose a valid vertical orientation.')
+    if any(isinstance(v,(dict,list)) or isinstance(v,bool) and k!='flip_y' or len(str(v))>40 for k,v in options.items()):raise NetworkError('Preview controls must contain short text or numeric values.')
     return options
 
 
@@ -299,6 +300,8 @@ def _asset_read(net,slug,data,read, *, detect=False):
     options=_preview_settings(data.get('options',{}))
     if options.get('palette_block_offset') not in (None, '') and (options.get('source') != 'decoded' or options.get('format') not in ('ci4', 'ci8')):
         raise NetworkError('Choose a decompressed indexed image before selecting a separate palette block.')
+    if options.get('palette_rom_offset') not in (None, '') and (options.get('source') != 'decoded' or options.get('format') not in ('ci4', 'ci8')):
+        raise NetworkError('Choose a decompressed indexed image before selecting a ROM palette.')
     detected=row.get('detected_asset')
     view = data.get('asset_view')
     if detect and view is not None and options.get('format', 'auto') == 'auto' and options.get('source', 'rom') == 'rom':
@@ -346,7 +349,10 @@ def _asset_read(net,slug,data,read, *, detect=False):
             raw,codec=net.console(proj).asset_decode(block_data) or asset_formats.unpack(block_data)
             selected={**options,'offset':0 if auto_decode else options.get('offset',0)}
             palette_block = options.get('palette_block_offset')
+            palette_rom = options.get('palette_rom_offset')
             palette_info = None
+            if palette_block not in (None, '') and palette_rom not in (None, ''):
+                raise NetworkError('Choose either a compressed palette block or a ROM palette offset.')
             if palette_block not in (None, ''):
                 if auto_decode or options.get('format') not in ('ci4', 'ci8'):
                     raise NetworkError('Choose a decompressed indexed image before selecting a separate palette block.')
@@ -356,6 +362,18 @@ def _asset_read(net,slug,data,read, *, detect=False):
                 relative = asset_formats.integer(options.get('palette_offset', 0), 'Palette offset', 0, len(palette)-1)
                 selected['palette_offset'] = len(raw)+relative
                 palette_info = dict(codec=palette_codec, bytes=len(palette), block_offset=palette_block)
+                raw += palette
+            elif palette_rom not in (None, ''):
+                if auto_decode or options.get('format') not in ('ci4', 'ci8'):
+                    raise NetworkError('Choose a decompressed indexed image before selecting a ROM palette.')
+                palette_format = options.get('palette_format','rgba5551-be')
+                if palette_format not in asset_formats.PALETTES:
+                    raise NetworkError('Choose a supported palette format.')
+                palette_rom = asset_formats.integer(palette_rom, 'Palette ROM offset', 0, len(image)-1)
+                entries = 16 if options['format'] == 'ci4' else 256
+                palette = asset_formats._take(image,palette_rom,entries * (4 if palette_format == 'rgba8888' else 2))
+                selected['palette_offset'] = len(raw)
+                palette_info = dict(codec='ROM bytes', bytes=len(palette), block_offset=palette_rom)
                 raw += palette
             result=read(raw,selected)
             result['decoded']=dict(codec=codec,bytes=len(raw)-(len(palette) if palette_info else 0),block_offset=block)
