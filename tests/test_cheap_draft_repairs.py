@@ -23,6 +23,16 @@ def test_an_absolute_value_rule_runs_when_the_target_negates():
     assert 'abs_idiom' not in [family for family, _ in cheap_draft_repairs.variants(source, 'f', 'mips', adds)]
 
 
+def test_an_empty_leaf_draft_gets_the_unused_local_its_frame_shows():
+    draft = "void f(void) {\n\n}\n"
+    opens = 'addiu      $sp, $sp, -0x10\naddiu      $sp, $sp, 0x10\njr         $ra\nnop\n'
+    assert ('unused_frame_local', "void f(void) {\n    u8 __repair_frame[16];\n\n}\n") in cheap_draft_repairs.variants(
+        draft, 'f', 'mips', opens)
+    # (a frame the target stores to, or one a call needs, is not an unused local)
+    for asm in (opens + 'sw         $a0, 0x4($sp)\n', opens + 'jal        func_80000000\n', 'jr         $ra\nnop\n'):
+        assert 'unused_frame_local' not in [family for family, _ in cheap_draft_repairs.variants(draft, 'f', 'mips', asm)]
+
+
 def test_a_draft_that_shows_no_shape_costs_no_candidate():
     assert cheap_draft_repairs.variants(PLAIN, 'f', 'mips') == []
 
