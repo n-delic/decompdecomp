@@ -247,8 +247,6 @@ def chunk(search, agent, proj, fn, sources, fork):
             or len(getattr(search, 'compiler_profiles', [])) > 1):
         yield;return
     from . import random_safety, search_history
-    store = search.net.project_store(proj['id'])
-    primed = getattr(search, '_primed_trials', {})
     header = search.net._context(proj['id'], fn['unit'])['header']
     tickets = {}
     def check():
@@ -274,7 +272,7 @@ def chunk(search, agent, proj, fn, sources, fork):
                 if scope is not None:
                     import json
                     signature = search_history.signature(scope, source)
-                    feedback = search_history.miss_feedback(store, fn['id'], signature, primed)
+                    feedback = search._miss_feedback(proj, fn, signature)
                     if feedback:
                         value = json.loads(feedback)
                         score = value.get('score') if isinstance(value, dict) else value

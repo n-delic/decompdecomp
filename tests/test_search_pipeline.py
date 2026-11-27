@@ -6,7 +6,7 @@ from dataclasses import replace
 import pytest
 
 from decompnet import compile_sessions, scoring
-from decompnet.app import deep_permuter, permute, trial_bookkeeping
+from decompnet.app import deep_permuter, permute, search_history, trial_bookkeeping
 from decompnet.elfobj import FunctionObj, Reloc
 from decompnet.repair_feedback import trial
 from tests.test_deep_permuter import Log
@@ -175,6 +175,42 @@ def test_local_proposal_pages_batch_reads_in_order(monkeypatch):
             assert search._score_current(AGENT, proj, fn, source, 40, None) == 40
     assert judged == [source for _, source in proposals]
     assert batches == [8, 8]
+
+
+def test_active_function_never_queries_miss_history_during_candidates(monkeypatch):
+    net = FakeNet()
+    fn, proj = net.function(), net.project_row('game')
+    log = Log()
+    original_read = net.store._read
+    original_tx = net.store.tx
+    queries = []
+
+    def read(sql, *args, **kwargs):
+        if 'reuse_trials' in sql:
+            queries.append(sql)
+        return original_read(sql, *args, **kwargs)
+
+    monkeypatch.setattr(net.store, '_read', read)
+    monkeypatch.setattr(permute.Permuter, '_score', lambda *args: 40)
+    sources = [f'int f(void){{return {value};}}' for value in range(6)]
+    with search_history.function_turn(log, net.store, fn['id']) as misses:
+        search = deep_permuter.Search(net, 1, 100, log, fn)
+        search._prime_trials(AGENT, proj, fn, sources, None)
+        with trial_bookkeeping.scope():
+            for source in sources:
+                assert search._score_current(AGENT, proj, fn, source, 40, None) == 40
+            search._recent_candidates.clear()
+            assert search._score_current(AGENT, proj, fn, sources[0], 40, None) == 40
+            assert search._trial_reused
+        assert len(misses.pending) == len(sources)
+        assert len(queries) == 1
+        # Final miss records share the last advisory transaction for this store.
+        writes = []
+        def tx():
+            writes.append(1)
+            return original_tx()
+        monkeypatch.setattr(net.store, 'tx', tx)
+    assert writes == [1]
 
 
 def test_stream_primes_each_chunk_and_closes_on_discard():

@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from decompnet import compile_sessions, compiler, elfobj, toolchains
-from decompnet.app import deep_compilation, deep_permuter, deep_throughput, trial_bookkeeping
+from decompnet.app import deep_compilation, deep_permuter, deep_throughput, search_history, trial_bookkeeping
 from decompnet.app.engine import RomNetwork
 from decompnet.project import compiler_config
 from decompnet.repair_feedback import trial
@@ -100,7 +100,6 @@ def benchmark(root, functions, variants, workers, slots, declarations, full_sear
     proj = net.store.one('SELECT * FROM projects WHERE id=1')
     rows = net.store.all('SELECT * FROM functions ORDER BY id')
     pool = deep_compilation.Pool(slots, maximum=not balanced)
-    log = Log();log.compile_pool = pool
     syncs = {'forced':0,'ordinary':0};lock = threading.Lock();sync = net.progress.sync
     def observed(slug, **kwargs):
         with lock:syncs['forced' if kwargs.get('force') else 'ordinary'] += 1
@@ -118,13 +117,16 @@ def benchmark(root, functions, variants, workers, slots, declarations, full_sear
             finally:
                 if profiler:
                     profiler.disable();profiler.dump_stats(str(root.parent/("deep-profile-"+str(fn["id"])+".prof")))
-        search = deep_permuter.Search(net, 10, variants*2, log, fn);search.compile_pool = pool
+        log = Log();log.compile_pool = pool
         name = fn['name']
         constants = proposals[fn['id']] if replay_order else range(2, variants+2)
         sources = [source(name, constant) for constant in constants]
         scores = []
         entered = time.monotonic()
-        with deep_throughput.scope(pool), compile_sessions.session(), trial_bookkeeping.scope(maximum=True):
+        with (deep_throughput.scope(pool), compile_sessions.session(), trial_bookkeeping.scope(maximum=True),
+              search_history.function_turn(log, net.store, fn['id'])):
+            search = deep_permuter.Search(net, 10, variants*2, log, fn)
+            search.compile_pool = pool
             chunks = (sources[i:i+slots*2] for i in range(0,len(sources),slots*2))
             stream = search._stream_variants(chunks, agent, proj, fn, None)
             try:

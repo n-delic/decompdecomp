@@ -89,6 +89,7 @@ def run(net, slug, name, minutes, variants, log, profiles, count, *, rank_candid
             with lock:
                 log(f'Thread {index+1}/{count}: {line}')
         output.compile_pool = getattr(log, "compile_pool", None)
+        output.miss_cache = getattr(log, 'miss_cache', None)
         output.check_cancel = check
         output.progress = lambda update: publish(index, update)
         output.maximum_seconds = max(0, shared['deadline']-time.monotonic())

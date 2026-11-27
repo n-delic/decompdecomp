@@ -21,11 +21,12 @@ def library_calls_in_this_process(monkeypatch):
 def test_paths_overlap_share_budget_deadline_and_aggregate(monkeypatch, imported):
     net = setup(monkeypatch, imported)
     barrier = threading.Barrier(3)
-    seen = []
+    seen, caches = [], []
     def path(net, slug, name, minutes, allowance, log, profiles, *, lane):
         lane.prepared()
         barrier.wait(timeout=5)
         seen.append((lane.index, allowance, lane.deadline))
+        caches.append(log.miss_cache)
         log.progress({'tested': allowance, 'best_score': 40-lane.index, 'best_percent': 50+lane.index})
         return {'tested': allowance, 'best_score': 40-lane.index, 'skipped': lane.index}
     monkeypatch.setattr(deep_permuter, '_run', path)
@@ -33,6 +34,7 @@ def test_paths_overlap_share_budget_deadline_and_aggregate(monkeypatch, imported
     result = deep_permuter.run(net, 'game', 'f', 1, 11, log, threads_per_function=3)
     assert sorted((i, n) for i,n,_ in seen) == [(0,4), (1,4), (2,3)]
     assert len({d for _,_,d in seen}) == 1
+    assert caches[0] is not None and all(cache is caches[0] for cache in caches)
     assert result['tested'] == 11 and result['skipped'] == 3
     assert result['threads_per_function'] == 3
     assert result['reason'] == 'Variant limit reached'
