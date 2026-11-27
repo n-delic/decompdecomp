@@ -36,6 +36,25 @@ def _has_handwritten_annotations(assembly: Path) -> bool:
     return bool(re.search(r'(?m)^\s*/\*\s*Handwritten function\s*\*/\s*\n\s*glabel\s+\S+', text))
 
 
+def _has_included_text(assembly: Path) -> bool:
+    """A binary-only executable section may be data or code for another processor."""
+    text = re.sub(r'/\*.*?\*/', '', assembly.read_text(encoding='utf-8', errors='replace'), flags=re.S)
+    in_text = False
+    included = False
+    for line in text.splitlines():
+        line = line.strip()
+        if re.match(r'^\.text(?:\s|$)', line) or re.match(r'^\.section\s+\.text(?:[\s,]|$)', line):
+            in_text = True
+        elif re.match(r'^\.(?:section|data|rodata|bss)\b', line):
+            in_text = False
+        elif in_text and re.match(r'^\.incbin(?:\s|$)', line):
+            included = True
+        elif (in_text and line and not line.startswith(('.', '#', '//'))
+              and not line.endswith(':') and not re.match(r'^(?:glabel\s+|(?:LEAF|NESTED|END|EXPORT)\s*\()', line)):
+            return False  # Mixed code can contain ordinary functions needing C.
+    return included
+
+
 def _object_layout(config: dict) -> tuple[Path, bool]:
     """Infer the C object directory and whether the build retains the source suffix."""
     layouts = set()
@@ -165,6 +184,9 @@ def prepare(project, log=print, *, limit: int = 32, units: set[str] | None = Non
                 continue
             if _has_handwritten_annotations(assembly):
                 log(f'Deferred {entry.get("name")}: its assembly marks functions as handwritten; review them first.')
+                continue
+            if _has_included_text(assembly):
+                log(f'Deferred {entry.get("name")}: its executable section includes a binary; review it first.')
                 continue
             from .assembly_evidence import padding_only
             if project.root.resolve() in target.parents and padding_only(target):

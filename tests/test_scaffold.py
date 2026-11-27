@@ -74,6 +74,32 @@ def test_scaffold_defers_single_mips_nop(tmp_path, monkeypatch):
     assert not (tmp_path / 'src/decompdecomp/demo.c').exists()
 
 
+@pytest.mark.parametrize('section, deferred', [('.section .text, "ax"', True), ('.text', True), ('.data', False)])
+def test_scaffold_defers_binary_in_executable_section(tmp_path, monkeypatch, section, deferred):
+    fp = project(tmp_path)
+    assembly = tmp_path / '.decomp-wtf/objdiff-references/asm/demo.s'
+    assembly.write_text(f'{section}\nglabel demo\n.incbin "blob.bin"\n')
+    def build(unit):
+        unit.base.write_bytes(b'candidate')
+        return True, ''
+    monkeypatch.setattr(fp, 'build_unit', build)
+    messages = []
+    result = prepare(fp, log=messages.append)
+    assert bool(result) is not deferred
+    assert any('includes a binary' in message for message in messages) is deferred
+
+
+def test_scaffold_does_not_defer_mixed_code_and_binary(tmp_path, monkeypatch):
+    fp = project(tmp_path)
+    assembly = tmp_path / '.decomp-wtf/objdiff-references/asm/demo.s'
+    assembly.write_text('.text\nglabel demo\njr $ra\nnop\n.incbin "blob.bin"\n')
+    def build(unit):
+        unit.base.write_bytes(b'candidate')
+        return True, ''
+    monkeypatch.setattr(fp, 'build_unit', build)
+    assert prepare(fp) == ['src/decompdecomp/demo.c']
+
+
 @pytest.mark.parametrize('failure', ['failed', 'missing_object'])
 def test_failed_probe_rolls_back_sources_and_config(tmp_path, monkeypatch, failure):
     fp = project(tmp_path)
