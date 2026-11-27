@@ -19,43 +19,8 @@ def decode(rom, row):
     if ((first, last, size) != (start, end, expected) or next_start != end
             or not end < next_end <= len(rom) or not 0 < next_size <= _MAX_OUTPUT):
         return None
-    output = bytearray()
-    for pos in range(start, end, _CHUNK):
-        chunk = memoryview(rom)[pos:min(pos + _CHUNK, end)]
-        if len(chunk) < 8:
-            return None
-        size, links, literals = struct.unpack_from('>HHH', chunk, 2)
-        limit = len(output) + size
-        if not size or limit > expected or not 8 <= links <= literals < len(chunk):
-            return None
-        link_end = literals
-        mask = 8
-        bits = 0
-        while len(output) < limit:
-            if not bits:
-                if mask + 4 > links:
-                    return None
-                control = int.from_bytes(chunk[mask:mask + 4], 'big')
-                mask += 4
-                bits = 32
-            if control & 0x80000000:
-                if literals >= len(chunk):
-                    return None
-                output.append(chunk[literals])
-                literals += 1
-            else:
-                if links + 2 > link_end:
-                    return None
-                pair = int.from_bytes(chunk[links:links + 2], 'big')
-                links += 2
-                distance, length = (pair & 0xfff) + 1, (pair >> 12) + 3
-                if distance > len(output) or len(output) + length > limit:
-                    return None
-                for _ in range(length):
-                    output.append(output[-distance])
-            control = (control << 1) & 0xffffffff
-            bits -= 1
-    return bytes(output) if len(output) == expected else None
+    from .boot_compact_mio import unpack
+    return unpack(rom, start, end, expected)
 
 
 def find(rom, dumps, targets, occupied=(), check=lambda: None):
