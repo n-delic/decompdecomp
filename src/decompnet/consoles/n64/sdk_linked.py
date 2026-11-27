@@ -39,6 +39,12 @@ _LIBULTRA = {
     '47ae795a2b12783a13e2b8d03439ce9a39fc826c': {
         '8081d37a7463efd172c8f0b006ee7ce4fddb12826faab65073fafe16ce990dab':
             ('__osExceptionPreamble', 16, False, 'os/exceptasm.s'),
+        # Both exception entries match a second SDK build instruction by
+        # instruction after resolving their linked addresses; their 32-byte cause table matches.
+        'ffd9b4ef7ede2edbbad8f193da4f14f841318f70e870c0e4e54b992273702a1f':
+            ('__ptExceptionPreamble', 32, False, 'os/exceptasm.s'),
+        'bbf04453bd2414ee9dfe1663dd5f74f625126b8d485f2995bc644b438a8f6a71':
+            ('__ptException', 160, False, 'os/exceptasm.s'),
         '54687027e918662c0f4fad3b0c02369bcb54450afefab18763aeb2a130f15c15':
             ('__osDisableInt', 112, False, 'os/interrupt.s'),
         '56d0980fd0dbff05336c1bf6863ee9d7df5b5e914ed6bfa1e67cbb51531cc0d6':
