@@ -83,6 +83,15 @@ def _composed(moves: list[tuple[int, str, int, list[str]]]) -> set[int]:
     return found
 
 
+def _zero_pairs(moves: list[tuple[int, str, int, list[str]]]) -> set[int]:
+    """Even registers a double 0.0 was built in under -mfp32: `mtc1 $zero, $f0; mtc1 $zero, $f1`. Both come from the
+    same register, so `_composed`'s adjacent pair of registers never saw them."""
+    return {number for index, op, number, operands in moves
+            if op == 'mtc1' and not number % 2 and operands == ['$zero']
+            and any(other_op == op and other == number + 1 and others == ['$zero'] and abs(other_index - index) <= 1
+                    for other_index, other_op, other, others in moves)}
+
+
 def _is_save(op: str, number: int, operands: list[str]) -> bool:
     """A callee-saved register stored to or loaded from the stack frame in the prologue or epilogue (`sdc1 $f20,
     0x20($sp)`): the whole register is kept, whatever the function holds in it, so it says nothing about a double
@@ -113,7 +122,11 @@ def _scan(asm: str):
             if match['op'] in _SINGLE_MOVES:
                 moves.append((index, match['op'], number, [o for o in operands if o != register]))
         uses.append(index)
-    return uses, doubles, singles, _composed(moves)
+    composed = _composed(moves)
+    # only in a game that never puts a double in an odd register: there the two zeros are one double, not two floats
+    if not any(number % 2 for number in doubles):
+        composed |= _zero_pairs(moves) & doubles
+    return uses, doubles, singles, composed
 
 
 def pair_free(asm: str) -> str:
