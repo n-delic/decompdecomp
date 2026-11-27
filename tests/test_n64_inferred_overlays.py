@@ -3,6 +3,8 @@
 import random
 import struct
 
+import pytest
+
 from decompnet.consoles.n64 import inferred_overlays
 
 
@@ -221,7 +223,8 @@ def test_tiny_observed_fragments_join_the_corroborated_runtime_bank():
     assert mapped[0] == (0, 4, 0x80040000)
 
 
-def test_separate_called_banks_leave_intervening_data_unmapped():
+@pytest.mark.parametrize('second_start', [0x1860, 0x1a00])
+def test_separate_called_banks_leave_intervening_data_unmapped(second_start):
     image = bytearray(0x4000)
     rng = random.Random(491)
     def group(first, last):
@@ -231,7 +234,7 @@ def test_separate_called_banks_leave_intervening_data_unmapped():
             if all(abs(at-other) >= 48 for other in selected):
                 selected.append(at)
         return sorted(selected)
-    groups = [group(0, 0x1800), group(0x1a00, 0x3f00)]
+    groups = [group(0, 0x1800), group(second_start, 0x3f00)]
     mappings = (0x80010000, 0x80022000)
     for group, mapping in zip(groups, mappings):
         for i, at in enumerate(group):
@@ -251,6 +254,10 @@ def test_separate_called_banks_leave_intervening_data_unmapped():
     target = mappings[0] + end
     image.extend(struct.pack('>I', 0x0c000000 | ((target >> 2) & 0x3ffffff)))
     assert inferred_overlays.split_concatenated(image, found, taken=[(0x4000, 0x4004, 0x80000400)]) == (found, set())
+    # A call into its own independently mapped bank does not establish an
+    # entry in a different bank that shares the runtime address.
+    result, _ = inferred_overlays.split_concatenated(image, found, taken=[(0x4000, 0x4004, target)])
+    assert result == [(0, end, mappings[0]), (start, 0x4000, start+mappings[1])]
     # A frame hidden in the gap makes its ownership uncertain.
     struct.pack_into('>I', image, end+4, 0x27bdffe8)
     assert inferred_overlays.split_concatenated(image, found) == (found, set())

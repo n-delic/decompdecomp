@@ -360,13 +360,15 @@ def split_concatenated(image, found, check=lambda: None, *, taken=()):
                 left, right = separate
                 gap_start, gap_end = left[1], right[0]
                 shifts = (left[2]-left[0], right[2]-right[0])
-                for start, end, _ in (*taken, *found):
+                for start, end, base in (*taken, *found):
                     check()
                     if start < 0 or end > len(image) or start >= end or (start | end) % 4:
                         continue
                     words = struct.unpack_from(f'>{(end-start)//4}I', image, start)
                     calls = (0x80000000 | ((word & 0x3ffffff) << 2) for word in words if word >> 26 == 3)
-                    if any(gap_start <= target-shift < gap_end for target in calls for shift in shifts):
+                    if any(not (base <= target < base+end-start
+                                and not gap_start <= start+target-base < gap_end)
+                           and any(gap_start <= target-shift < gap_end for shift in shifts) for target in calls):
                         separate = None
                         break
             if separate is None:
@@ -412,7 +414,8 @@ def _separated_banks(image, lo, hi, targets, entries, check):
             if not called_extent(image, start, hi, start+second, cpu='vr4300'):
                 continue
             for end in ends:
-                if not 128 <= start-end <= 8192 or any(end <= at < start for at in frames):
+                if (not 32 <= start-end <= 8192 or not any(image[end:start])
+                        or any(end <= at < start for at in frames)):
                     continue
                 if (any(int.from_bytes(image[at:at+4], 'big') == JR_RA for at in range(end, start, 4))
                         or any(end <= target-mapping < start for target in targets for mapping in mappings)):
