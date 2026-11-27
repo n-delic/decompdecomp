@@ -60,6 +60,26 @@ def test_paired_legacy_mesh_reaches_console_preview():
     assert result['surfaces'][0]['indices'] == (0, 1, 2)
 
 
+def test_paired_mesh_preview_uses_its_corroborated_segment():
+    import struct
+
+    from decompassets.n64 import paired_resource_models
+    from decompnet.consoles import get
+
+    vertices = b''.join(struct.pack('>3hH2h4B', x, y, 0, 0, 0, 0, 255, 255, 255, 255)
+                        for x, y in ((0, 0), (8, 0), (0, 8)))
+    mesh = struct.pack('>6I', 0x01003006, 0x03000000, 0x05000204, 0, 0xdf000000, 0)
+    data = vertices + mesh
+    chunks = [data[i:i+31] for i in range(0, len(data), 31)]
+    payload = b''.join(bytes([0x80|len(chunk)])+chunk for chunk in chunks)
+    image = struct.pack('>I', len(payload)+4)+payload
+    entry = dict(label='Mesh',model_offset=len(vertices),model_size=len(mesh),segment=3)
+    asset = paired_resource_models.asset(0, len(image), None, [entry])
+    result = get('n64').asset_preview(image, asset, {})
+    assert result['triangles'] == 1
+    assert result['surfaces'][0]['indices'] == (0, 1, 2)
+
+
 def test_the_n64_console_gives_the_library_its_mips_reader(monkeypatch):
     """Audio banks find their sample tables from loader calls, which only the app can read."""
     from decompassets import n64
