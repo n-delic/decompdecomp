@@ -29,6 +29,15 @@ function setup(){
 (async()=>{
   {
     const t=setup();
+    vm.runInContext(fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/js/rom-textures.js'),'utf8'),t.context);
+    t.context.region={start:128,size:1024,detected_asset:{kind:'image',format:'i8',width:32,height:32,preview_settings:{format:'auto',source:'rom',offset:128}},annotation:{}};
+    const html=t.run('romAssetHTML(region)');
+    assert.ok(!html.includes('undefined'));
+    assert.equal(t.run('romTextureControlsHTML(region)'), '');
+    t.run('setupRomTextureControls(document.createElement(),region,()=>true)');
+  }
+  {
+    const t=setup();
     const html=t.run("romAssetHTML({start:128,size:96,detected_asset:{frames:2,palettes:1,preview_settings:{format:'ci4',width:32,height:16}}})");
     assert.match(html,/Detected CI4 texture bank/);
     assert.match(html,/32 × 16/);
