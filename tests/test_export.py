@@ -220,7 +220,7 @@ def test_generated_address_references_link_across_objects(tmp_path):
     from decompnet.rom import export
 
     shutil.copyfile(Path(export.__file__).with_name("export_build.py"), tmp_path / "build.py")
-    config = {"image": "baserom.z64", "symbols": {}, "functions": [
+    config = {"image": "baserom.z64", "symbols": {}, "assembly": [{"obj": "first.o"}], "functions": [
         {"name": "first", "rom": 0, "vram": 0x80000000},
         {"name": "second", "rom": 16, "vram": 0x80000010}], "segments": [
         {"name": "code", "kind": "code", "start": 0, "end": 24, "vram": 0x80000000,
@@ -238,7 +238,7 @@ def test_generated_address_references_link_across_objects(tmp_path):
         subprocess.run([assembler, "-EB", "-mips2", "-no-pad-sections", "-o", f"{name}.o", f"{name}.s"],
                        cwd=tmp_path, check=True, capture_output=True)
     script = runpy.run_path(str(tmp_path / "build.py"))
-    text = script["linker_script"]({"first": "first.o", "second": "second.o"},
+    text = script["linker_script"]({"second": "second.o"},
                                       [(0x80000000, 0, "first.o"), (0x80000010, 16, "second.o")], [])
     (tmp_path / "game.ld").write_text(text)
     linked = subprocess.run([linker, "-EB", "-T", "game.ld", "-o", "game.elf", "first.o", "second.o"],
@@ -251,7 +251,7 @@ def test_generated_address_references_link_across_objects(tmp_path):
     (tmp_path / "first.s").write_text(sources["first"].replace("D_80001000", "unknown_data"))
     subprocess.run([assembler, "-EB", "-mips2", "-no-pad-sections", "-o", "first.o", "first.s"],
                    cwd=tmp_path, check=True, capture_output=True)
-    text = script["linker_script"]({"first": "first.o", "second": "second.o"},
+    text = script["linker_script"]({"second": "second.o"},
                                       [(0x80000000, 0, "first.o"), (0x80000010, 16, "second.o")], [])
     (tmp_path / "game.ld").write_text(text)
     linked = subprocess.run([linker, "-EB", "-T", "game.ld", "-o", "game.elf", "first.o", "second.o"],
