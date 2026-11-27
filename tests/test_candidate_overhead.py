@@ -62,6 +62,13 @@ def test_rom_target_config_reads_once_until_another_connection_changes_it(tmp_pa
                 db.execute("UPDATE projects SET config=? WHERE id=1", ('{"gp":2}',))
             assert net._rom_target(fn) == 2
             assert reads == [(1,), (1,)]
+            with pytest.raises(RuntimeError, match='rollback'), net.store.tx() as db:
+                db.execute("UPDATE projects SET config=? WHERE id=1", ('{"gp":3}',))
+                assert net._rom_target(fn) == 3
+                raise RuntimeError('rollback')
+            with other.tx() as db:
+                db.execute("UPDATE projects SET config=? WHERE id=1", ('{"gp":4}',))
+            assert net._rom_target(fn) == 4
     finally:
         other.conn.close()
         net.store.conn.close()
