@@ -7,7 +7,8 @@ current score, until 0, no improvement, or the step cap. A whole-path audit matc
 the library alone that way; app helpers could only try one family at a time (try_local_repairs), each try a compile.
 
 This is the same chain inside the app: judged by a small judge_pool (the app's judge, attach-only, recording
-nothing), bounded in steps, children per step and seconds. Only a final source that beats the saved best goes
+nothing), bounded in steps, in variants judged by the whole call (max_judged) and in seconds; `children` is only the
+size of a batch. A call the cap stopped says how many children it left unjudged. Only a final source that beats the saved best goes
 through the ordinary compile path (judged again, recorded, saved), so a chain that finds nothing records nothing and
 spends no move-on count, and one that improves resets it like any better compile.
 
@@ -23,13 +24,21 @@ STEPS = 4
 MAX_STEPS = 8
 CHILDREN = 40
 MAX_CHILDREN = 80
+# A whole call's judged variants, as the skill script's --max-judged: without it only the clock ended a call, since
+# `children` is a batch size and a batch with no improving child is followed by the next one.
+MAX_JUDGED = 400
+MAX_JUDGED_LIMIT = 2000
 SECONDS = 120
 WORKERS = 2
 
 
-def chain(source, generate, score, families=None, steps=STEPS, children=CHILDREN, check=lambda: None):
+def chain(source, generate, score, families=None, steps=STEPS, children=CHILDREN, check=lambda: None,
+          max_judged=None):
     """The greedy chain. `generate(source) -> [(family, child)]`, `score([sources]) -> [int | None]` (None: didn't
-    compile). Returns (final source, final score or None, [(family, score, scored, offered)], notes)."""
+    compile). At most `max_judged` children are judged in all (not the start; None: the caller's `check` or `score`
+    bounds it); at the cap an improving child already found is still taken. Returns (final source, final score or None,
+    [(family, score, scored, offered)], notes)."""
+    left = float('inf') if max_judged is None else max_judged
     current = source
     best = score([source])[0]
     taken, notes = [], []
@@ -50,24 +59,33 @@ def chain(source, generate, score, families=None, steps=STEPS, children=CHILDREN
                 options.append((family, child))
         scores = []
         offset = 0
+        out_of_time = False
         try:
             # The cap is the size of a batch, not the end of the search: a batch with no improving child is not a stall
             # while children are left out (a 528-child step whose only improving child was number 131 stalled at 215 under
             # children=40, the 488 others never judged: the cap's order is one child per family, so a family's later
             # children come only after every family's earlier ones). Further batches are judged until one improves,
             # the children run out or the time does.
-            while options and offset < len(options):
+            while offset < len(options) and left > 0:
                 check()
-                batch = options[offset:offset + children]
-                scores += score([child for _, child in batch]) if batch else []
+                batch = options[offset:offset + int(min(children, left))]
+                left -= len(batch)
+                scores += score([child for _, child in batch])
                 offset += len(batch)
                 if any(s is not None and s < best for s in scores):
                     break
         except TimeoutError:
+            out_of_time = True
             notes.append(f"stopped at step {step}: out of time (judged {offset} of {len(options)} children)")
             if not any(s is not None and s < best for s in scores):
                 break
-        if 0 < offset < len(options) and any(s is not None and s < best for s in scores):
+        improved = any(s is not None and s < best for s in scores)
+        if offset < len(options) and left <= 0 and not out_of_time:
+            notes.append(f"step {step}: stopped at the cap of {max_judged} judged variants (max_judged): "
+                         f"{len(options) - offset} of {len(options)} children left unjudged")
+            if not improved:
+                break
+        elif 0 < offset < len(options) and improved:
             notes.append(f"step {step}: {len(options) - offset} of {len(options)} children left out: a batch of "
                          f"children={children} already improved; name families to narrow it")
         elif offset > children:
@@ -123,7 +141,7 @@ def _families(families):
     return {str(f).strip() for f in families if str(f).strip()} or None
 
 
-def run(net, agent, slug, function, revision, families=None, steps=STEPS, children=CHILDREN):
+def run(net, agent, slug, function, revision, families=None, steps=STEPS, children=CHILDREN, max_judged=MAX_JUDGED):
     fn = net._function(function, slug)
     if net.fork_slug(slug):
         raise NetworkError('prove_chain works in ROM projects only for now: this project is judged by its own build. '
@@ -133,6 +151,7 @@ def run(net, agent, slug, function, revision, families=None, steps=STEPS, childr
         raise agent_tokens.stale(net, agent, fn, revision, source, actual)
     steps = max(1, min(MAX_STEPS, int(steps or STEPS)))
     children = max(1, min(MAX_CHILDREN, int(children or CHILDREN)))
+    max_judged = max(1, min(MAX_JUDGED_LIMIT, int(max_judged or MAX_JUDGED)))
     proj = net._project(slug)
     own = compiler_for(net.cfg(proj), fn['vram'], fn)
     flags = own['flags'].split() if isinstance(own.get('flags'), str) else own.get('flags') or []
@@ -146,7 +165,7 @@ def run(net, agent, slug, function, revision, families=None, steps=STEPS, childr
     with judge_pool.JudgePool(slug, fn, own['toolchain'], flags, size=WORKERS) as pool:
         final, best, taken, notes = chain(source, generator(net, proj, fn, flags),
                                           lambda sources: pool.judge_many(sources, check=check, chunk=WORKERS * 4),
-                                          _families(families), steps, children, check)
+                                          _families(families), steps, children, check, max_judged)
         errors = list(pool.errors)
     return report(net, agent, slug, function, final, best, taken, notes, errors)
 

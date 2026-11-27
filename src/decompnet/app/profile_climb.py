@@ -257,8 +257,8 @@ def level_variant(search, proj, fn, profile) -> bool:
 
 
 def _fp_first(options):
-    """[(family, child)] with the FP-constant and operand families first (stable otherwise): a step judges at most
-    CHAIN_CHILDREN of them, and the literal inlining that matches under the flipped profile is one child among hundreds."""
+    """[(family, child)] with the FP-constant and operand families first (stable otherwise): a step judges them in
+    batches of CHAIN_CHILDREN until one improves, and the literal inlining that matches under the flipped profile is one child among hundreds."""
     return sorted(options, key=lambda item: not any(word in item[0] for word in FP_FIRST))
 
 
@@ -269,7 +269,7 @@ def repair_chain(search, agent, proj, fn, source, score, profile, budget, check,
     written inline, a commutative swap) which neither the profile nor the repair reaches alone: four N64 functions
     of one game were 70, 75 and 60 under -mfp64, 45, 40 and 30 under -mfp32 and exact under -mfp32 with the repair.
 
-    Each step judges the children (at most CHAIN_CHILDREN, FP families first) and keeps the best one that beats the
+    Each step judges the children (in batches of CHAIN_CHILDREN, FP families first) and keeps the best one that beats the
     current score, up to CHAIN_STEPS steps and `budget` compiles. Returns (best source, best score, compiles spent).
     The profile is only the judging profile of this search: nothing here changes the function's settings."""
     from . import draft_repairs

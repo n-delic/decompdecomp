@@ -728,8 +728,8 @@ HANDLERS: dict[str, Callable[..., str]] = {
         compiler_passes.run(net, agent, slug, function, revision, passes),
     "score_permutations": lambda net, agent, slug, function, revision, statements=None, patches=None, max=64, marked='':
         score_permutations.run(net, agent, slug, function, revision, statements, patches, max, marked),
-    "prove_chain": lambda net, agent, slug, function, revision, families=None, steps=4, children=40:
-        prove_chain.run(net, agent, slug, function, revision, families, steps, children),
+    "prove_chain": lambda net, agent, slug, function, revision, families=None, steps=4, children=40, max_judged=400:
+        prove_chain.run(net, agent, slug, function, revision, families, steps, children, max_judged),
     "compiler_source": lambda net, agent, slug, compiler, function_name: compiler_source.run(net, agent, slug, compiler,
                                                                                              function_name),
     "get_compiler_trial": compiler_experiments.retrieve,
@@ -1428,12 +1428,14 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
 
     @tool
     async def prove_chain(ctx: Context, function: str, revision: str, families: list[str] | None = None,
-                          steps: int = 4, children: int = 40) -> str:
+                          steps: int = 4, children: int = 40, max_judged: int = 400) -> str:
         """Would the repair library reach the match from here? Applies the best child of the named families (default
-        all) step by step, judged with the exact judge (at most 8 steps, 80 children a step, 2 minutes). Only a final
-        source beating the saved best is recorded; otherwise nothing, and no move-on count. ROM projects."""
+        all) step by step, judged with the exact judge (at most 8 steps and 2 minutes). max_judged caps the variants
+        judged in the whole call (default 400, at most 2000); the output says when it stopped there and how many
+        children were left. children is only a step's batch size (at most 80). Only a final source beating the saved
+        best is recorded; otherwise nothing, and no move-on count. ROM projects."""
         return await run(ctx, 'prove_chain', function=function, revision=revision, families=families, steps=steps,
-                         children=children)
+                         children=children, max_judged=max_judged)
 
     @tool
     async def compiler_source(ctx: Context, compiler: str, function_name: str) -> str:
