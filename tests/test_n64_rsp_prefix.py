@@ -52,7 +52,7 @@ def test_audio_text_after_bootstrap_requires_vector_program(entry):
         struct.pack_into('>I', image, 0x100 + 4 * i, 0x4a000000)
     for i in range(3):
         struct.pack_into('>I', image, 0x200 + 4 * i, 0x09000400 + i)
-    assert list(audio_spans(image)) == [(0xd0, 0x10d0)]
+    assert list(audio_spans(image)) == [(0, 0x10d0)]
     image[0x100:0x200] = bytes(0x100)
     assert not list(audio_spans(image))
 

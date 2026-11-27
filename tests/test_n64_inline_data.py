@@ -62,6 +62,32 @@ def test_sine_cycle_is_split_out_of_mapped_text(tmp_path):
     assert not list(inline_data.spans(image[:1024] + b'\0\0' + image[1026:]))
 
 
+def test_audio_bootstrap_is_not_cpu_code_when_followed_by_verified_audio(tmp_path):
+    import struct
+
+    from decompnet.consoles.n64.port import RSPBOOT
+
+    boot = 0x20
+    image = bytearray(boot + 0xd0 + 0x1000)
+    image[boot:boot + len(RSPBOOT)] = RSPBOOT
+    image[boot + 0xd0:boot + 0xe0] = bytes.fromhex('2018036020170f908c3c00308c3b0034')
+    for i in range(64):
+        struct.pack_into('>I', image, boot + 0x100 + i * 4, 0x4a000000)
+    for i in range(3):
+        struct.pack_into('>I', image, boot + 0x200 + i * 4, 0x09000400 + i)
+    config = tmp_path / 'game.yaml'
+    end = boot + 0x180  # the guessed CPU range ends in the verified RSP program
+    config.write_text(yaml.safe_dump(dict(segments=[
+        dict(type='code', start=0, vram=0x80000000, subsegments=[[0, 'c', 'program']]),
+        dict(type='bin', start=end), [len(image)],
+    ])))
+    inline_data.apply(config, image, lambda _: None)
+    assert code_ranges(config) == [(0, boot, 0x80000000)]
+    assert yaml.safe_load(config.read_text())['segments'][0]['subsegments'] == [
+        [0, 'c', 'program'], [boot, 'rodata', 'program_data_20'],
+    ]
+
+
 def test_audio_coprocessor_suffix_is_data_even_if_the_text_mapping_ends_inside_it(tmp_path):
     import struct
 

@@ -162,3 +162,31 @@ def test_startup_trap_and_printable_descriptor_precede_called_frame(tmp_path, re
     assert extend_startup_trap(path, rom, log=lambda _: None) != referenced
     entry, main, *_ = segments_from_config(path)
     assert entry.rom_end == main.rom_start == (0x1080 if referenced else 0x1088)
+
+
+@pytest.mark.parametrize('verified_audio', [True, False])
+def test_startup_trap_before_rsp_boot_is_kept_with_entry(tmp_path, verified_audio):
+    from decompnet.consoles.n64.boot_mapping import extend_startup_trap
+    from decompnet.consoles.n64.port import RSPBOOT
+
+    at, boot = 0x1088, 0x1090
+    image = bytearray(boot + 0xd0 + 0x1000)
+    struct.pack_into('>4I', image, at - 8, 0x0c001400, 0, 0x0001008d, 0)
+    image[boot:boot + len(RSPBOOT)] = RSPBOOT
+    image[boot + 0xd0:boot + 0xe0] = bytes.fromhex('2018036020170f908c3c00308c3b0034')
+    if verified_audio:
+        for i in range(64):
+            struct.pack_into('>I', image, boot + 0x100 + 4 * i, 0x4a000000)
+        for i in range(3):
+            struct.pack_into('>I', image, boot + 0x200 + 4 * i, 0x09000400 + i)
+    path = tmp_path / 'game.yaml'
+    path.write_text(yaml.safe_dump({'segments': [
+        {'name': 'entry', 'type': 'code', 'start': 0x1000, 'vram': 0x80000400,
+         'subsegments': [[0x1000, 'hasm']]},
+        {'name': 'main', 'type': 'code', 'start': at, 'vram': 0x80000488,
+         'follows_vram': 'entry', 'subsegments': [[at, 'c', 'main']]},
+        {'type': 'bin', 'start': boot + 0x180}, [len(image)],
+    ]}, sort_keys=False))
+    assert extend_startup_trap(path, image, log=lambda _: None) == verified_audio
+    entry, main, *_ = segments_from_config(path)
+    assert entry.rom_end == main.rom_start == (boot if verified_audio else at)
