@@ -77,6 +77,9 @@ def packet(net, agent, slug, name):
              recovery(rows, recent, measured, fn['best_score'], proj['arch'])]
     if handoff := deep_handoff.brief(net, proj, fn, source):
         lines.append(handoff)
+    from .profile_attempts import hint as profile_hint
+    if other := profile_hint(net, proj, fn):
+        lines.append(other)
     if rows:
         lines.append(efficiency_feedback.mismatch(rows))
     if proj['arch'] == 'mips' and residual_trials.shared_fp_return_evidence(rows):

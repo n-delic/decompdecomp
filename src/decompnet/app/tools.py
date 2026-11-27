@@ -1888,8 +1888,9 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
 
     @tool
     async def try_compiler(ctx: Context, function: str, compiler: str, flags: str = "", source: str = "") -> str:
-        """Compile a function's C with another compiler and flags and see the diff, recording nothing: to find out
-        which compiler built a part of the game before you suggest it. Cheap: try several.
+        """Compile a function's C with another compiler and flags and see the diff: to find out which compiler built a
+        part of the game before you suggest it. No attempt or match is recorded (the closest C under another profile is
+        kept and shown to whoever works on the function next). Cheap: try several.
 
         Args:
             function: the function to judge it against

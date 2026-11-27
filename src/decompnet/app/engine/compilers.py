@@ -18,6 +18,7 @@ from ... import arch, compiler, compilermap, consoles, toolchains
 from ...compile_sessions import batched
 from ...network import Agent, NetworkError
 from ...project import compiler_for
+from .. import profile_attempts
 from .common import parse_ranges
 
 
@@ -1002,6 +1003,8 @@ class CompilerMixin:
         if not source:
             return f"not checked: {fn['name']} has no attempt yet"
         ok, d, _ = self._judge_with(proj, fn, toolchain, flags, source)
+        if d is not None and not ok:  # (refused as a suggestion, yet maybe the closest attempt there is)
+            profile_attempts.keep(self, proj, fn, toolchain, flags, max(1, d.score), source)
         if d is None:
             return f"checked: {fn['name']}'s C doesn't compile with it"
         return f"checked: {fn['name']}'s C {'matches the game byte for byte' if ok else 'does not match'} with it"
@@ -1011,7 +1014,7 @@ class CompilerMixin:
     def try_compiler(self, agent: Agent, slug: str, function: str, compiler: str, flags: str = "",
                      source: str = "", keep_match: bool = True, structured: bool = False) -> str | dict:
         """A function's C (`source`, else its best attempt) built with another compiler and flags, judged like an
-        attempt but recorded nowhere: to work out which compiler built a part of the game before suggesting it (on GTA
+        attempt but recorded as none (only the closest under another profile is kept, app/profile_attempts.py): to work out which compiler built a part of the game before suggesting it (on GTA
         San Andreas an agent tried compilers by suggesting them: 128 of its 149 suggestions were disproved)."""
         def outcome(text, exact=False, score=None):
             return {'text':text,'exact':bool(exact),'score':score} if structured else text
@@ -1028,6 +1031,8 @@ class CompilerMixin:
         if not source:
             raise NetworkError(f"{fn['name']} has no attempt yet: pass the C as source")
         ok, d, problem = self._judge_with(proj, fn, tc, flag_list, source)
+        if d is not None:
+            profile_attempts.keep(self, proj, fn, tc, flag_list, 0 if ok else max(1, d.score), source)
         what = f"{consoles.compiler_name(tc)} {' '.join(flag_list)}"
         if d is None:
             return outcome(f"{what}: doesn't compile:\n{problem.strip()[-1500:]}")
@@ -1098,6 +1103,9 @@ class CompilerMixin:
         if not results:
             return f"{consoles.compiler_name(tc)}: the C doesn't compile with any of its flag variants"
         results.sort(key=lambda r: r[0])
+        own_profile = (own["toolchain"], list(own["flags"]))
+        if other := next((r for r in results if (tc, r[1]) != own_profile), None):
+            profile_attempts.keep(self, proj, fn, tc, other[1], other[0], source)
         lines = [f"- score {score:>5}  {' '.join(flags)}" + ("   ← the project's flags" if flags == base else "")
                  for score, flags in results[:FLAGS_SHOWN]]
         best_score, best = results[0]

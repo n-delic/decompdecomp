@@ -16,7 +16,7 @@ notes polish_failures polish_patterns progress_dirty progress_dirty_file progres
 repair_analysis_queue repair_coverage_verdicts repair_attempt_provenance repair_attempt_settings repair_attempt_mismatches repair_cursors repair_examples repair_example_votes
 repair_frontiers repair_input_effects repair_origins repair_outcome_analysis repair_profile_evidence
 repair_proposal_progress repaired_pairs reuse_cursors reuse_runs reuse_trials reviewed_search_seeds
-saved_progress score_commit_baselines symbols twin_misses verification_regressions verified_matches waits'''.split())
+profile_attempts saved_progress score_commit_baselines symbols twin_misses verification_regressions verified_matches waits'''.split())
 TRANSCRIPTS = {'helper_messages','helper_score_events'}
 COUNTERS = {'read_revisions','layout_revision','map_clock','repair_capture_groups'}
 DERIVED = {'read_snapshots','payload_links','payload_sizes'}

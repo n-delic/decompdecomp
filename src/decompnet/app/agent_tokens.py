@@ -610,8 +610,10 @@ def function_view(net, agent, slug, function, section='summary', start=0, limit=
         fn=net._function(function,slug)
         from .stub_candidates import hint as stub_hint
         stub_note=stub_hint(net,fn,fn['best_source'] or '')
+        from .profile_attempts import hint as profile_hint
+        other=profile_hint(net,net.project_row(slug,sync=False),fn)
         return (f"{fn['name']}: {fn['status']}; {fn['n_insns']} instructions; saved historical score {fn['best_score'] if fn['best_score'] is not None else 'unavailable'}.\n"
-                +(stub_note+'\n' if stub_note else '')+
+                +(stub_note+'\n' if stub_note else '')+(other+'\n' if other else '')+
                 'Use section=brief for a working packet, candidate for complete editable C, history/quality/notes for evidence, or get_assembly for instruction pages. Supporting sections accept character offsets start/limit.')
     text=_function_view(net,agent,slug,function,section)
     # Never silently truncate editable C. A matched function's C is paged only when asked to (start > 0) or when it is
