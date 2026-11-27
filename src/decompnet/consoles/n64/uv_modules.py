@@ -144,7 +144,7 @@ def text_regions(image, *, check=lambda: None):
         valid_entries = tuple(sorted(at for at in entries if at%4 == 0 and at < len(code)))
         relocation_rows = None if ambiguous else tuple((at, *fields) for at, fields in sorted(relocs.items()))
         yield Text(module.name, start, code, 'mio0' if module.compressed else False, valid_entries,
-                   module.stored_size, relocation_rows)
+                   module.stored_size if module.compressed else len(code), relocation_rows)
 
 
 def bodies(region, log):

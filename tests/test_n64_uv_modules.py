@@ -32,6 +32,23 @@ def test_reads_cartridge_module_without_altering_its_code():
     assert module.relocations == (uv_modules.Relocation(offset=4, section=0, target=0, kind=2),)
 
 
+def test_replacing_uncompressed_text_preserves_following_module_data():
+    text = bytes.fromhex('03e00008 00000000')
+    data = bytes.fromhex('12345678 90abcdef')
+    common = struct.pack('>7I4s2I', 16, 0, len(text), 4, 4, 16, 0, b'CODE', 0, 0)
+    chunks = [(b'COMM', common), (b'CODE', text+data), (b'MDBG', bytes(32)), (b'RELA', b'')]
+    original = _chunk(b'FORM', b'MODU'+b''.join(_chunk(tag, content) for tag, content in chunks))
+    region, = uv_modules.text_regions(original)
+    assert region.stored_size == len(text)
+    cartridge = bytearray(original)
+    uso.replace_text(cartridge, region, text)
+    assert cartridge == original
+    replacement = bytes.fromhex('03e00008 24020001')
+    uso.replace_text(cartridge, region, replacement)
+    assert cartridge[region.offset:region.offset+len(text)] == replacement
+    assert cartridge[region.offset+len(text):region.offset+len(text)+len(data)] == data
+
+
 @pytest.mark.parametrize('kwargs', [dict(kind=7), dict(offset=32), dict(offset=2), dict(section=3)])
 def test_rejects_unrecognised_or_out_of_bounds_relocations(kwargs):
     assert uv_modules.read(_module(**kwargs)) == []
