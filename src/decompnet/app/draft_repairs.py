@@ -35,6 +35,7 @@ from decomprepair import (
     block_accumulator_repairs,
     branch_layout_repairs,
     branch_pointer_repairs,
+    branch_polarity_repairs,
     branch_scalar_repairs,
     branch_tail_distribution,
     buffer_address_repairs,
@@ -437,6 +438,7 @@ AGENT_FAMILIES = temporary_hoist_repairs.FAMILIES + reassociation_repairs.FAMILI
 AGENT_FAMILIES += (guarded_pointer_copy.FAMILY,) + shifted_byte_lifetime.FAMILIES + float_constant_loop_pin.FAMILIES + dead_local_constant_compare.FAMILIES
 AGENT_FAMILIES += loop_weight_set_repairs.FAMILIES
 AGENT_FAMILIES += caller_save_slot_drop.FAMILIES
+AGENT_FAMILIES += branch_polarity_repairs.FAMILIES
 AGENT_FAMILIES += ('m2c_spelling',)
 AGENT_FAMILIES += library_registry.families()  # every declared module's families, with no list to extend
 AGENT_FAMILIES += lockstep_pointer_fold.FAMILIES + hoisted_constant_loop_scope.FAMILIES
@@ -949,7 +951,11 @@ def _spelled(source: str, name: str, arch: str, asm: str = '', flags=(), labels=
                    # global-allocator pseudo and takes $v1, 10 -> 0 on a KMC predicate; decomprepair 0.5.628)
                    dead_local_constant_compare,
                    outer_cursor_entry_copy_repairs, loaded_pointer_reuse_repairs, entry_base_init_repairs,
-                   live_range_retarget_repairs, pointer_local_merge_repairs, identical_arm_collapse_repairs):
+                   live_range_retarget_repairs, pointer_local_merge_repairs, identical_arm_collapse_repairs,
+                   # (the other polarity of a branch gcc 2.7.2 lays out by the C's spelling, an `else if` chain's arms
+                   # swapped among them: 365 -> 0 on a 169-instruction N64 state function; the Deep Permuter's local lane
+                   # had it, the draft pass and prove_chain did not)
+                   branch_polarity_repairs):
         for family, text in _generated(module.variants, source, name):
             proposals.append(text)
             labels[text] = family
