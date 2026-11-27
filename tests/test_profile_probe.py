@@ -754,6 +754,25 @@ def test_the_drafts_indexed_tables_are_judged_as_records_under_the_old_level(mon
     assert sources[:3] == ['C', 'DRAFT', 'INDEXED']
 
 
+def test_the_drafts_display_list_shapes_are_judged_under_the_old_level(monkeypatch):
+    from decompnet.app import deep_profiles
+    from decomprepair import gbi_param_shapes, global_offset_records, indexed_symbol_records
+    plan = [{'toolchain': 't', 'flags': ['-O1'], 'family': 'level', 'why': 'w'}]
+    search, seen = arrange(monkeypatch, {'-O1': 50}, plan)
+    sources = []
+
+    def judged(search_, agent, proj, fn, source, profile, **kw):
+        sources.append(source)
+        search_.tested += 1
+        return 0 if source == 'SHAPES' else 300
+    monkeypatch.setattr(deep_profiles, 'probe', judged)
+    monkeypatch.setattr(global_offset_records, 'variants', lambda source, name, header: [])
+    monkeypatch.setattr(indexed_symbol_records, 'variants', lambda source, name, header, asm: [])
+    monkeypatch.setattr(gbi_param_shapes, 'variants', lambda source, name, header: [('f', 'SHAPES')])
+    assert profile_probe.run(search, None, PROJ, {**FN, 'seed': 'DRAFT'}, 'C', climb=False) is True
+    assert sources[:3] == ['C', 'DRAFT', 'SHAPES']
+
+
 # lw $a3,0($a0); lui $a2,0x800E; addiu $a2,$a2,-0x2D10; lhu $v1,0($a2); lhu $v0,4($a2); lhu $v0,2($a2); jr $ra; nop
 HELD_ADDRESS = [0x8C870000, 0x3C06800E, 0x24C6D2F0, 0x94C30000, 0x94C20004, 0x94C20002, 0x03E00008, 0]
 

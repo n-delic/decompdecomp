@@ -524,13 +524,18 @@ def judge_record_arrays(search, agent, proj, fn, text, facts, item, profile) -> 
 
     Address-named parallel tables indexed by `i * STRIDE` (m2c's usual draft) are tried the same way
     (indexed_symbol_records): a machine draft at 7690 scored 550 as its record array under `-O1`, three steps from
-    exact."""
-    from decomprepair import global_offset_records, indexed_symbol_records
+    exact.
+
+    So is a display list written through a `Gfx **` argument, as the SDK's macros with the parameters' widths
+    (gbi_param_shapes): five glyph builders' drafts scored 13000 to 23500 under `-O2` either way, and 0 only as that
+    source under `-O1`."""
+    from decomprepair import gbi_param_shapes, global_offset_records, indexed_symbol_records
 
     from . import deep_profiles
     found = []
     children = [*global_offset_records.variants(text, fn['name'], facts.header),
-                *indexed_symbol_records.variants(text, fn['name'], facts.header, facts.asm)]
+                *indexed_symbol_records.variants(text, fn['name'], facts.header, facts.asm),
+                *gbi_param_shapes.variants(text, fn['name'], facts.header)]
     for _, child in children:
         if search.limit - search.tested < RESERVE:
             break
