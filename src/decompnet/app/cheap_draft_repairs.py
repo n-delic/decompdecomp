@@ -16,6 +16,7 @@ from decomprepair import (
     frame_padding_repairs,
     global_array_repairs,
     guard_shape_repairs,
+    leaf_frame_repairs,
     mmio_repairs,
     stack_object_size_repairs,
     stack_run_array_repairs,
@@ -36,6 +37,10 @@ DECLARED = ('rule:abs_idiom', 'loop_argument_inline')  # a JSON rule's module is
 def _stages(source, name, arch, asm, header):
     """(family, call) in the order of how often they matched per second of search."""
     yield 'mmio_address', lambda: mmio_repairs.variants(source, name, arch)
+    # A leaf whose frame is never stored to had an unused local, which m2c drops. A function whose compiler changed was
+    # redrafted, judged as an empty body (200) and left open, with this one child exact.
+    yield leaf_frame_repairs.FRAME, lambda: [child for child in leaf_frame_repairs.variants(source, name, asm)
+                                             if child[0] == leaf_frame_repairs.FRAME]
     yield 'inferred_frame_reservation', lambda: frame_padding_repairs.variants(source, name, asm)
     yield 'symbol_access_width', lambda: symbol_width_repairs.variants(source, name, asm)
     yield 'stack_run_array', lambda: stack_run_array_repairs.variants(source, name, asm)
