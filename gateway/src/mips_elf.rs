@@ -12,42 +12,42 @@ const REL: u32 = 9;
 
 type Parsed<T> = Option<T>;
 
-struct Elf<'a> {
-    bytes: &'a [u8],
-    big_endian: bool,
-    sections: Vec<Section>,
-    names: usize,
+pub(crate) struct Elf<'a> {
+    pub(crate) bytes: &'a [u8],
+    pub(crate) big_endian: bool,
+    pub(crate) sections: Vec<Section>,
+    pub(crate) names: usize,
 }
 
-struct Section {
-    name: usize,
-    kind: u32,
-    flags: u32,
-    offset: usize,
-    size: usize,
-    link: usize,
-    info: usize,
-    stride: usize,
+pub(crate) struct Section {
+    pub(crate) name: usize,
+    pub(crate) kind: u32,
+    pub(crate) flags: u32,
+    pub(crate) offset: usize,
+    pub(crate) size: usize,
+    pub(crate) link: usize,
+    pub(crate) info: usize,
+    pub(crate) stride: usize,
 }
 
 #[derive(Clone, Copy)]
-struct Symbol<'a> {
-    name: &'a str,
-    value: i64,
-    size: i64,
-    section: u16,
-    kind: u8,
-    bind: u8,
+pub(crate) struct Symbol<'a> {
+    pub(crate) name: &'a str,
+    pub(crate) value: i64,
+    pub(crate) size: i64,
+    pub(crate) section: u16,
+    pub(crate) kind: u8,
+    pub(crate) bind: u8,
 }
 
-struct Reloc {
-    offset: usize,
-    kind: u8,
-    table: usize,
-    group: usize,
-    symbol: usize,
-    value: i64,
-    rela: bool,
+pub(crate) struct Reloc {
+    pub(crate) offset: usize,
+    pub(crate) kind: u8,
+    pub(crate) table: usize,
+    pub(crate) group: usize,
+    pub(crate) symbol: usize,
+    pub(crate) value: i64,
+    pub(crate) rela: bool,
 }
 
 fn string(bytes: &[u8], at: usize) -> Parsed<&str> {
@@ -56,7 +56,7 @@ fn string(bytes: &[u8], at: usize) -> Parsed<&str> {
 }
 
 impl<'a> Elf<'a> {
-    fn read(bytes: &'a [u8]) -> Parsed<Self> {
+    pub(crate) fn read(bytes: &'a [u8]) -> Parsed<Self> {
         if !bytes.starts_with(b"\x7fELF\x01") || !matches!(bytes.get(5), Some(1 | 2)) {
             return None;
         }
@@ -99,7 +99,7 @@ impl<'a> Elf<'a> {
         Some(self.word(self.bytes.get(at..at.checked_add(size)?)?))
     }
 
-    fn word(&self, raw: &[u8]) -> u32 {
+    pub(crate) fn word(&self, raw: &[u8]) -> u32 {
         let append = |value, &byte| (value << 8) | u32::from(byte);
         if self.big_endian {
             raw.iter().fold(0, append)
@@ -108,7 +108,7 @@ impl<'a> Elf<'a> {
         }
     }
 
-    fn data(&self, section: &Section) -> Parsed<&'a [u8]> {
+    pub(crate) fn data(&self, section: &Section) -> Parsed<&'a [u8]> {
         if section.kind == NOBITS {
             return Some(&[]);
         }
@@ -116,14 +116,19 @@ impl<'a> Elf<'a> {
             .get(section.offset..section.offset.checked_add(section.size)?)
     }
 
-    fn section(&self, name: &str) -> Parsed<usize> {
+    pub(crate) fn section_name(&self, index: usize) -> Parsed<&'a str> {
+        let strings = self.data(self.sections.get(self.names)?)?;
+        string(strings, self.sections.get(index)?.name)
+    }
+
+    pub(crate) fn section(&self, name: &str) -> Parsed<usize> {
         let strings = self.data(self.sections.get(self.names)?)?;
         self.sections
             .iter()
             .position(|s| string(strings, s.name) == Some(name))
     }
 
-    fn symbols(&self, index: usize) -> Parsed<Vec<Symbol<'a>>> {
+    pub(crate) fn symbols(&self, index: usize) -> Parsed<Vec<Symbol<'a>>> {
         let section = self.sections.get(index)?;
         if section.kind != SYMTAB || section.stride != 16 || section.size % 16 != 0 {
             return None;
@@ -213,7 +218,7 @@ impl<'a> Elf<'a> {
         None
     }
 
-    fn relocations(
+    pub(crate) fn relocations(
         &self,
         index: usize,
         start: usize,
@@ -278,7 +283,7 @@ fn ordinary_section(section: u16) -> bool {
     !matches!(section, 0 | 0xfff1 | 0xfff2)
 }
 
-fn canonical(symbol: Symbol<'_>) -> &str {
+pub(crate) fn canonical(symbol: Symbol<'_>) -> &str {
     if symbol.bind == 0 {
         if let Some((base, suffix)) = symbol.name.rsplit_once('.') {
             if !base.is_empty() && !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit())
@@ -290,7 +295,7 @@ fn canonical(symbol: Symbol<'_>) -> &str {
     symbol.name
 }
 
-fn named_symbol<'a>(symbols: &[Symbol<'a>], section: u16, offset: i64) -> Option<(&'a str, i64)> {
+pub(crate) fn named_symbol<'a>(symbols: &[Symbol<'a>], section: u16, offset: i64) -> Option<(&'a str, i64)> {
     let available = || {
         symbols.iter().filter(|s| {
             s.section == section
@@ -344,7 +349,7 @@ fn addend(row: &Reloc, partner: i64) -> Parsed<i64> {
     }
 }
 
-fn evidence(elf: &Elf, name: &str) -> Parsed<Value> {
+pub(crate) fn evidence(elf: &Elf, name: &str) -> Parsed<Value> {
     let symtab = elf.section(".symtab")?;
     let symbols = elf.symbols(symtab)?;
     let (index, start, size) = elf.function(&symbols, name)?;

@@ -304,12 +304,12 @@ the final score. Older judge workers can still return a complete verdict through
 the same verifier protocol.
 
 For MIPS trials, the verifier reads ELF32 function bytes, symbol tables and
-instruction relocations in Rust. It pairs HI16 and LO16 in relocation table
-order, resolves references to ELF symbols and offsets, and applies the
-resolved instruction relocations. The Python adapter maps the references to
-the project's ROM addresses, places candidate-defined data and verifies its
-bytes. Those data checks still decide whether exact instruction bytes qualify
-as a match. Objects requiring unported metadata, such as IDO private
-procedures found only in ECOFF debug records, can use the Python ELF reader.
-The adapter and verifier negotiate these stages on their private connection
-and use the same hosted queue protocol.
+relocations in Rust. It pairs HI16 and LO16 in relocation table order, binds
+references to ROM addresses, applies instruction and data relocations, and
+places and checks candidate-defined data. A code match still requires the
+candidate's data to agree with the ROM. The Python adapter supplies
+overlay-aware ROM reads and project symbol lookups. It also supplies
+jump-table extent and private ECOFF symbol evidence where needed. Unsupported
+object formats and older workers can use the existing Python linker. The
+adapter and verifier negotiate this on their private connection and use the
+same hosted queue protocol.

@@ -134,7 +134,12 @@ impl Judge {
                 let line = self.output.next_line().await.map_err(|error| error.to_string())?
                     .ok_or("the judge ended")?;
                 let reply: Value = serde_json::from_str(&line).map_err(|error| format!("the judge said {line:?}: {error}"))?;
-                let result = if let Some(plan) = reply.get("parse_mips") {
+                let result = if let Some(plan) = reply.get("rom_mips") {
+                    if request["rom_mips"].as_u64() != Some(crate::mips_rom::VERSION) {
+                        return Err("unexpected MIPS ROM link request from the judge".into());
+                    }
+                    crate::mips_rom::link(plan, self).await
+                } else if let Some(plan) = reply.get("parse_mips") {
                     if request["parse_mips"].as_u64() != Some(crate::mips_elf::VERSION) {
                         return Err("unexpected MIPS ELF request from the judge".into());
                     }
@@ -154,6 +159,21 @@ impl Judge {
             }
         };
         tokio::time::timeout(limit, exchange).await.map_err(|_| format!("the judge took over {} s", limit.as_secs()))?
+    }
+}
+
+impl crate::mips_rom::Reader for Judge {
+    async fn ask(&mut self, request: Value) -> Result<Value, String> {
+        self.input.write_all(format!("{}\n", json!({"rom_lookup": request})).as_bytes()).await
+            .map_err(|error| error.to_string())?;
+        self.input.flush().await.map_err(|error| error.to_string())?;
+        let line = self.output.next_line().await.map_err(|error| error.to_string())?
+            .ok_or("the judge ended during a ROM lookup")?;
+        let reply: Value = serde_json::from_str(&line).map_err(|error| error.to_string())?;
+        if let Some(error) = reply["error"].as_str() {
+            return Err(error.to_owned());
+        }
+        reply.get("rom_value").cloned().ok_or_else(|| "missing ROM lookup response".into())
     }
 }
 
@@ -266,6 +286,7 @@ impl Verifier {
             request["score_evidence"] = json!(crate::rom_judge::SCORE_VERSION);
             request["link_mips"] = json!(crate::mips_link::VERSION);
             request["parse_mips"] = json!(crate::mips_elf::VERSION);
+            request["rom_mips"] = json!(crate::mips_rom::VERSION);
             for (key, value) in trial {
                 request[key] = value.clone();
             }

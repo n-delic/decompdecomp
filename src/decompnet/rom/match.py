@@ -57,6 +57,7 @@ ReadFn = Callable[[int, int], "bytes | None"]
 # Only the hosted worker's per-request protocol can install this routine; ordinary attempts stay in-process.
 instruction_linker: ContextVar[Callable[..., tuple[bytes, bool]] | None] = ContextVar("instruction_linker", default=None)
 elf_preparer: ContextVar[Callable[[bytes, str], dict | None] | None] = ContextVar("elf_preparer", default=None)
+rom_linker: ContextVar[Callable[..., LinkResult | None] | None] = ContextVar("rom_linker", default=None)
 
 
 @dataclass
@@ -677,6 +678,11 @@ class _Linker:
 def link(obj: bytes, name: str, target: RomTarget, symbols: SymbolTable, read: ReadFn) -> LinkResult:
     """Link a compiled candidate at the target's address and compare it with the ROM."""
     obj = unmangle(obj, lambda n: n in symbols.by_name or bool(AUTO_NAME.match(n)))  # C++ names: the game's
+    native = rom_linker.get()
+    if native is not None:
+        result = native(obj, target, symbols, read)
+        if result is not None:
+            return result
     prepare = elf_preparer.get()
     prepared = prepare(obj, name) if prepare else None
     first = _Linker(obj, name, target, symbols, read, prepared=prepared)

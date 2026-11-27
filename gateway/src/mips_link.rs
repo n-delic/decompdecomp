@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 
 pub const VERSION: u64 = 1;
 
-fn patch(word: u32, kind: u8, address: u32, gp: u32) -> Result<u32, String> {
+pub(crate) fn patch(word: u32, kind: u8, address: u32, gp: u32) -> Result<u32, String> {
     let (mask, field) = match kind {
         2 => (u32::MAX, address),                               // R_MIPS_32
         4 => (0x03ff_ffff, address >> 2),                       // R_MIPS_26

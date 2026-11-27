@@ -439,15 +439,24 @@ class Packs:
 
 
 def _judge_with_mips_linker(packs, request, lines, out):
-    from .rom.match import elf_preparer, instruction_linker
+    from .rom.match import elf_preparer, instruction_linker, rom_linker
 
-    def exchange(operation, plan):
+    def exchange(operation, plan, lookup=None):
         out.write(json.dumps({operation: plan}) + "\n")
         out.flush()
-        reply = json.loads(next(lines))
-        if isinstance(reply, dict) and "error" in reply:
-            raise RuntimeError(reply["error"])
-        return reply
+        for line in lines:
+            reply = json.loads(line)
+            if isinstance(reply, dict) and "error" in reply:
+                raise RuntimeError(reply["error"])
+            if lookup is None or not isinstance(reply, dict) or "rom_lookup" not in reply:
+                return reply
+            try:
+                value = {"rom_value": lookup(reply["rom_lookup"])}
+            except Exception as error:
+                value = {"error": str(error)}
+            out.write(json.dumps(value) + "\n")
+            out.flush()
+        raise EOFError("verifier ended during a MIPS link request")
 
     def link(code, target, patches):
         plan = {"code": code.hex(), "target": target.code.hex(), "big_endian": target.big_endian,
@@ -458,6 +467,12 @@ def _judge_with_mips_linker(packs, request, lines, out):
     def prepare(obj, name):
         return exchange("parse_mips", {"object": obj.hex(), "name": name})
 
+    def link_rom(obj, target, symbols, read):
+        from .rom.verifier_link import link_rom as run
+
+        return run(obj, target, symbols, read, exchange)
+
+    rom_token = rom_linker.set(link_rom if request.get("rom_mips") == 1 else None)
     link_token = instruction_linker.set(link)
     prepare_token = elf_preparer.set(prepare if request.get("parse_mips") == 1 else None)
     try:
@@ -465,6 +480,7 @@ def _judge_with_mips_linker(packs, request, lines, out):
     finally:
         elf_preparer.reset(prepare_token)
         instruction_linker.reset(link_token)
+        rom_linker.reset(rom_token)
 
 
 def serve(net, lines=sys.stdin, out=sys.stdout) -> None:
