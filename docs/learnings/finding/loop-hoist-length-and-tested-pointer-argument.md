@@ -2,7 +2,7 @@
 title: Unread counters stop loop.c hoisting a guarded call's addresses, and a tested pointer left in $a1 was an argument
 kind: finding
 compiler: sn-n64-281
-evidence: one function, with controlled variants
+evidence: controlled
 date: 2026-11-27
 ---
 
