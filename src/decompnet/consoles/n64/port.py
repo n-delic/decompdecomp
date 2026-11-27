@@ -62,7 +62,8 @@ def _sdk_group(name: str) -> str | None:
     bare = name.lstrip("_")
     # The SDK's sample scheduler (sched.c: osCreateScheduler, osScAddClient, __scMain...) isn't libultra: a game
     # compiles it as its own code, so its copy runs. A packed shooter's was left out as "glue" the web host has
-    # none of, and its main loop waited for a scheduler that was never made.
+    # none of, and its main loop waited for a scheduler that was never made. This is about the port only: an
+    # unmatched copy named by library detection is still SDK code (`Console.sdk_sample_code`), run recompiled.
     if SCHEDULER.match(name):
         return None
     # (before the "other" names: library detection set the monitor aside only when this answered, and a game's
