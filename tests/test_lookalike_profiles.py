@@ -162,6 +162,24 @@ def test_a_same_game_donor_is_tried_with_its_own_profile(game, monkeypatch):
     assert len(tried) == count
 
 
+def test_a_near_miss_under_the_donor_profile_is_rewritten_as_the_target_uses_its_globals(game, monkeypatch):
+    from decomprepair import global_site_forms
+    monkeypatch.setattr(sm.toolchains, 'installed', lambda tc: True)
+    monkeypatch.setattr(game.twins, '_attempt_twin', lambda *a, **kw: ('miss', 'score 700'))
+    monkeypatch.setattr(global_site_forms, 'variants',
+                        lambda source, name, asm='': [('global_site_forms', source + '/* sites */')])
+    tried = []
+
+    def trial(net, agent, proj, fn, source, settings=None, **kw):
+        tried.append((settings, source, kw['budget']))
+        return 'miss', 'score 10 with gcc-2.7.2-kmc -O1', 1
+
+    monkeypatch.setattr(lp, 'trial', trial)
+    sm.run(game.twins, 'destination', Job())
+    rewritten = [entry for entry in tried if entry[1].endswith('/* sites */')]
+    assert [(s, b) for s, _, b in rewritten] == [({'toolchain': 'gcc-2.7.2-kmc', 'flags': ['-O1']}, 0)]
+
+
 def test_the_literal_search_starts_only_from_a_plain_transfer_wrong_in_constants_alone(game, monkeypatch):
     monkeypatch.setattr(sm.toolchains, 'installed', lambda tc: False)  # (no profile trial)
     tried = []
