@@ -9,7 +9,8 @@ union), so they stay out of this stage; the permuter still tries them later on i
 Since then (draft-start-candidates.md): m2c's byte steps on typed pointers (`pointer_byte_step`, read from the
 target's immediates: 84 of 94 drafts it touched started better, 1 worse) join the chain, and the chained copy with
 its table cursors as the counter's index (`table_cursor_index`) is a second candidate: game-wide 142 drafts start
-better instead of 69, 8 exact instead of 4, none worse than before.
+better instead of 69, 8 exact instead of 4, none worse than before. All of a draft's byte steps are then fixed in
+one copy (`pointer_byte_step_all`): on 15 drafts with two or more sites, 14 scored better than with one site, 1 worse.
 
 A cleaned draft is only a candidate: the ordinary compiler and judge score it like any other, the raw draft is
 still tried first and stays the function's stored seed, and a best is only ever replaced by a better one.
@@ -17,6 +18,7 @@ still tried first and stays the function's stored seed, and a best is only ever 
 from decomprepair import (
     field_struct_view_repairs,
     gbi_macro_commands,
+    pointer_scale_all_repairs,
     pointer_scale_repairs,
     raw_address_repairs,
     record_slot_repairs,
@@ -39,8 +41,10 @@ def _stages(name, arch, asm, header):
     yield lambda s: (field_struct_view_repairs.variants(s, name) or raw_address_repairs.variants(s, name, arch, asm, header)
                      or record_slot_repairs.variants(s, name))
     yield lambda s: gbi_macro_commands.variants(s, name, header)
-    # m2c's byte steps on typed pointers, as the target's immediates say (draft-start-candidates.md)
-    yield lambda s: pointer_scale_repairs.variants(s, name, asm) if asm else []
+    # m2c's byte steps on typed pointers, as the target's immediates say (draft-start-candidates.md); every site at once,
+    # since a draft often writes the mistake twice and one fix alone left a function one instruction off
+    yield lambda s: (pointer_scale_all_repairs.variants(s, name, asm)
+                     or pointer_scale_repairs.variants(s, name, asm)) if asm else []
 
 
 def cleaned(draft: str, name: str, arch: str, asm: str = '', header: str = '') -> list[tuple[str, str]]:

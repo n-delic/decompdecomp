@@ -91,3 +91,11 @@ def test_without_the_target_a_byte_step_is_left_alone():
     found = dict(draft_cleanup.cleaned(WALK, 'f', 'mips'))
     assert 'draft_cleanup' not in found  # no immediate says the step was bytes
     assert '(u8 *)&D_A + var_a0 * 16' in found['draft_cleanup_index']  # the index as C reads the step
+
+
+def test_every_byte_step_site_is_fixed_in_one_draft():
+    # one table slot read twice, both indexes scaled again by m2c: one fix alone left the function an instruction off
+    draft = ('extern M2C_UNK D_A;\nvoid f(s32 i, s32 j) {\n    g(*((i * 4) + &D_A));\n'
+             '    g(*((j * 4) + &D_A));\n}\n')
+    found = dict(draft_cleanup.cleaned(draft, 'f', 'mips', 'sll        $v0, $a0, 2\n'))
+    assert '(&D_A)[i]' in found['draft_cleanup'] and '(&D_A)[j]' in found['draft_cleanup']
