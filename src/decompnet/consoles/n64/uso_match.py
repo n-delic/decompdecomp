@@ -11,6 +11,7 @@ from ...candidate_work import elf as candidate_elf
 from ...elfobj import FunctionObj, Reloc, _function_symbols, unmangle
 from ...rom.link import LinkResult
 from ...rom.match import RomTarget, raw_relocs
+from ...rom.verifier_link import overlay_linker
 from .uso import POOL_LOAD_WIDTHS
 
 
@@ -316,6 +317,11 @@ def link(obj, name, target, info):
     local_calls = _local_calls(info)
     try:
         obj = unmangle(obj, lambda symbol: symbol == name)
+        native = overlay_linker.get()
+        if native is not None:
+            result = native(obj, name, target, info)
+            if result is not None:
+                return result
         elf = candidate_elf(obj, ELFFile)
         if elf.little_endian or elf['e_machine'] != 'EM_MIPS':
             return LinkResult(None, False, ['Overlay text requires a big-endian MIPS object.'])
@@ -377,7 +383,7 @@ def link(obj, name, target, info):
             wanted = alias(section, original[1]) if original else 'no relocation'
             problems.append(f'Overlay relocation at +0x{at:X} requires {wanted} with the original relocation kind.')
         seen.add(at)
-    for at in expected.keys() - seen:
+    for at in sorted(expected.keys() - seen):
         problems.append(f'Overlay relocation at +0x{at:X} requires {alias(section, expected[at][1])}.')
     linked_code = bytes(linked)
     exact_bytes = linked_code == target

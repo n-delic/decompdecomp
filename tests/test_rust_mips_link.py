@@ -184,7 +184,8 @@ def test_real_mips_objects_have_the_same_verdict_on_the_shared_queue(tmp_path, t
     assert scores[-1] is None
 
 
-def queue_parity(tmp_path, net, request, sources):
+def queue_parity(tmp_path, net, request, sources, *,
+                 worker_module="tests.test_rust_mips_link"):
     folder = tmp_path / "hosted"
     hosted_export.export(net, "game", folder / "projects" / "game.sqlite3", log=lambda _: None)
     pack = folder / "packs" / "game.sqlite3"
@@ -203,7 +204,7 @@ def queue_parity(tmp_path, net, request, sources):
     try:
         base = f"http://127.0.0.1:{int(server.stdout.readline().split()[1])}"
         queue = RemoteJudge({"server": base, "token": tokens["admin"], "pack_sha256": digest}, request)
-        entry = "from tests.test_rust_mips_link import audit_worker; raise SystemExit(audit_worker())"
+        entry = f"from {worker_module} import audit_worker; raise SystemExit(audit_worker())"
         worker = subprocess.Popen(
             [str(mcp_gateway.built()), "verifier", "--server", base, "--token", tokens["verifier"],
              "--name", "rust", "--poll", "0.1", "--slots", "2", "--packs", str(tmp_path / "worker-packs"),

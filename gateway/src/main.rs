@@ -29,6 +29,7 @@ mod mips_diff;
 #[path = "../../native/matching_blocks.rs"]
 mod matching_blocks;
 mod mips_rom;
+mod mips_uso;
 mod rom_project;
 mod verifier;
 mod window;

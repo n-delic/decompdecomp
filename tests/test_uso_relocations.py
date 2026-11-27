@@ -7,8 +7,43 @@ from decompnet import toolchains
 from decompnet.compiler import compile_source
 from decompnet.consoles.n64 import uso, uso_match
 from decompnet.project import compiler_config
+from decompnet.rom.verifier_link import link_overlay
 
 from .test_donor_reanalysis import _module
+
+_python_link = uso_match.link
+
+
+def audit_overlay(exchange, obj, name, target, info):
+    token = uso_match.overlay_linker.set(None)
+    try:
+        expected = _python_link(obj, name, target, info)
+    finally:
+        uso_match.overlay_linker.reset(token)
+    actual = link_overlay(obj, name, target, info, exchange)
+    assert actual is not None, "Rust declined the overlay compiler object"
+    assert actual == expected, (actual, expected)
+    return actual
+
+
+@pytest.fixture(autouse=True)
+def rust_overlay_parity(monkeypatch):
+    """Run the existing real compiler cases through the Rust linker whenever it is built."""
+    from decompnet.app import mcp_gateway
+    from decompnet.rom.desktop_judge import RustJudge
+    from decompnet.rom.verifier_link import overlay_linker
+
+    if not (program := mcp_gateway.built()):
+        yield
+        return
+    monkeypatch.setenv("DECOMP_MCP_GATEWAY", str(program))
+    judge = RustJudge()
+    token = overlay_linker.set(lambda *args: audit_overlay(judge._exchange, *args))
+    try:
+        yield
+    finally:
+        overlay_linker.reset(token)
+        judge.close()
 
 
 @pytest.mark.parametrize('compressed', [False, True])
@@ -28,6 +63,13 @@ def test_rebuild_uso_checks_text_and_symbol_binding(tmp_path, compressed):
     built = compile_source(cfg, '', source)
     assert built.ok, built.log
     assert uso_match.link(built.obj, 'test_entry', code, info).exact
+    unverified = uso_match.link(built.obj, 'test_entry', code, {'section': None, 'relocs': None})
+    assert unverified.instructions_exact and not unverified.exact
+    assert 'validated relocation metadata' in unverified.problems[0]
+    missing = uso_match.link(built.obj, 'test_entry', code, info | {'relocs': info['relocs'] + [[4, 6, 3], [0, 5, 4]]})
+    assert missing.instructions_exact and not missing.exact
+    assert missing.problems == [f'Overlay relocation at +0x{at:X} requires {uso_match.alias(region.offset, index)}.'
+                                for at, index in [(0, 4), (4, 3)]]
     assert uso.rebuild(cartridge, [('test_entry', info, built.obj)]) == cartridge
     wrong = compile_source(cfg, '', source.replace(binding, uso_match.alias(region.offset, 2)))
     assert wrong.ok, wrong.log
@@ -1226,3 +1268,92 @@ def test_overlay_relocates_bounded_compiler_jump_table(tmp_path):
         uso.rebuild(wrong_image, [('entry', refreshed, built.obj)])
     incomplete, = uso.read(cartridge(offsets, missing=True))
     assert not uso.function_jump_tables(incomplete, start, len(target), relocs)
+
+
+def audit_worker():
+    """Require the shared verifier to negotiate and execute the native overlay request."""
+    from decompnet.app.cli import main
+    from decompnet.rom import verifier_link
+
+    def require_native(*args):
+        assert verifier_link.overlay_linker.get() is not None, "the verifier did not negotiate the USO linker"
+        return _python_link(*args)
+
+    verifier_link.link_overlay = lambda obj, name, code, info, exchange: audit_overlay(exchange, obj, name, code, info)
+    uso_match.link = require_native
+    return main()
+
+
+@pytest.mark.parametrize("toolchain", ["gcc-2.7.2-kmc", "ido-7.1"])
+def test_uso_desktop_and_shared_queue_use_rust(tmp_path, monkeypatch, toolchain):
+    import hashlib
+    import json
+
+    from decompnet.app import attempt_workers, mcp_gateway
+    from decompnet.elfobj import extract_function
+    from tests.test_hosted_pack import game
+    from tests.test_rust_mips_link import queue_parity
+
+    if not mcp_gateway.built() or not toolchains.installed(toolchain):
+        pytest.skip("needs the Rust gateway and the pinned compiler")
+
+    net = game(tmp_path)
+    project = net.project_row("game", sync=False)
+    header = "typedef int s32;"
+    compiler = {"toolchain": toolchain, "flags": list(toolchains.get(toolchain).flags)}
+    exact = "extern int uso_40_sym_1(int); int f1(int x) { return uso_40_sym_1(x + 3); }"
+    wrong = exact.replace("uso_40_sym_1", "uso_40_sym_2")
+    built = compile_source(compiler_config(tmp_path, {"compiler": compiler}), header, exact)
+    assert built.ok, built.log
+    body = extract_function(built.obj, "f1")
+    assert body is not None and [r.type for r in body.relocs] == [4]
+    start, bank = 0x100, 0x1000
+    info = {"section": 0x40, "start": start, "size": len(body.code),
+            "relocs": [[r.offset, r.type, 1] for r in body.relocs]}
+    cfg = json.loads(project["config"])
+    cfg.pop("progress_folder", None)
+    cfg.pop("collab", None)
+    cfg.update(compiler=compiler, compiler_ranges=[], donor_overlays={"64": bank})
+    with net.store.tx() as db:
+        db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), project["id"]))
+        db.execute("UPDATE functions SET target=?, size=?, n_insns=?, vram=?, rom_offset=?, meta=? WHERE name='f1'",
+                   (body.code, len(body.code), len(body.code) // 4, start, bank + start, json.dumps({"uso": info})))
+
+    request = {"slug": "game", "function": {"name": "f1", "vram": start, "target": body.code.hex()},
+               "compiler": compiler, "header_sha256": hashlib.sha256(header.encode()).hexdigest()}
+    from decompnet.rom.verifier_link import overlay_linker
+
+    token = overlay_linker.set(None)
+    try:
+        scores = queue_parity(tmp_path, net, request, [exact, wrong], worker_module=__name__)
+    finally:
+        overlay_linker.reset(token)
+    assert scores[0] == 0 and scores[1] > 0
+
+    trace = tmp_path / "rust-uso-trace"
+    worker = tmp_path / "uso-worker.py"
+    original = attempt_workers.WORKER_SOURCE.read_text()
+    worker.write_text(original.replace("    serve()", f'''
+    from {__name__} import audit_overlay
+    def checked_link(self, *args):
+        result = audit_overlay(self._exchange, *args)
+        with Path({str(trace)!r}).open("a") as stream:
+            stream.write(str(result.exact) + "\\n")
+        return result
+    RustJudge.link_overlay = checked_link
+    serve()'''))
+    monkeypatch.setattr(attempt_workers, "WORKER_SOURCE", worker)
+    net.attempt_workers = pool = attempt_workers.Pool(tmp_path, size=1)
+    agent, _ = net.local_agent("overlay-tester")
+    try:
+        net.claim_row(agent, "game", "f1")
+        attempt = net.attempt(agent, "f1", wrong, "game")
+        assert not attempt["matched"] and attempt["score"] == scores[1]
+        interactive = net.function_diff("game", "f1")
+        assert interactive["score"] == attempt["score"] and interactive["checks"]["instructions"]["exact"]
+        assert interactive["problems"] and "uso_40_sym_1" in interactive["problems"][0]
+        attempt = net.attempt(agent, "f1", exact, "game")
+        assert attempt["matched"] and attempt["score"] == 0
+        assert trace.read_text().splitlines() == ["False", "False", "True"]
+    finally:
+        pool.close()

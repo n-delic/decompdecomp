@@ -100,6 +100,9 @@ class RustJudge:
 
         return verifier_link.link_rom(obj, target, symbols, read, exchange)
 
+    def link_overlay(self, obj, name, target, info):
+        return verifier_link.link_overlay(obj, name, target, info, self._exchange)
+
     def diff(self, target, candidate):
         if not scoring.native_mips_comparison(target, candidate):
             return None

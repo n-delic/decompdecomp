@@ -154,7 +154,7 @@ impl<'a> Elf<'a> {
             .collect()
     }
 
-    fn function(&self, symbols: &[Symbol], name: &str) -> Parsed<(usize, usize, usize)> {
+    pub(crate) fn function(&self, symbols: &[Symbol], name: &str) -> Parsed<(usize, usize, usize)> {
         let mut sized = HashMap::new();
         let mut loose = Vec::new();
         for symbol in symbols {
