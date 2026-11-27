@@ -100,3 +100,12 @@ def link_rom(obj, target, symbols, read, exchange):
                   for addr, rom, mine, pointers in reply["data_mismatches"]]
     return LinkResult(candidate, reply["exact"], reply["problems"], placements, reply["instructions_exact"],
                       bytes.fromhex(reply["linked"]), mismatches, missing, required)
+
+
+def compare_mips(target, candidate, align_branches, exchange):
+    def function(fn):
+        return {"name": fn.name, "big_endian": fn.big_endian, "code": fn.code.hex(),
+                "relocs": [reloc.to_json() for reloc in fn.relocs]}
+
+    return exchange("compare_mips", {"target": function(target), "candidate": function(candidate),
+                                     "align_branches": align_branches})

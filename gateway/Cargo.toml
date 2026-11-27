@@ -12,6 +12,9 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time",
 reqwest = { version = "0.12", default-features = false, features = ["json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+regex = "1"
+# Match the 5.0.9 decoder in the Python worker and keep the standalone gateway statically linked.
+capstone = { git = "https://github.com/capstone-rust/capstone-rs.git", rev = "58f44a4a3ef918c54ae7b123d3a7cde41d458f66", default-features = false, features = ["arch_mips", "full", "std"] }
 sha2 = "0.10"
 rusqlite = { version = "0.32", features = ["bundled"] }
 getrandom = "0.2"

@@ -145,6 +145,11 @@ impl Judge {
                         return Err("unexpected MIPS ELF request from the judge".into());
                     }
                     crate::mips_elf::prepare(plan)
+                } else if let Some(plan) = reply.get("compare_mips") {
+                    if request["compare_mips"].as_u64() != Some(crate::mips_diff::VERSION) {
+                        return Err("unexpected MIPS instruction comparison request from the judge".into());
+                    }
+                    crate::mips_diff::evidence(plan)
                 } else if let Some(plan) = reply.get("link_mips") {
                     if request["link_mips"].as_u64() != Some(crate::mips_link::VERSION) {
                         return Err("unexpected MIPS link request from the judge".into());
@@ -334,6 +339,7 @@ impl Verifier {
                                  "compiler": item.get("compiler"), "source": item.get("source")});
         if let Some(trial) = item["trial"].as_object() {
             request["score_evidence"] = json!(crate::rom_judge::SCORE_VERSION);
+            request["compare_mips"] = json!(crate::mips_diff::VERSION);
             request["link_mips"] = json!(crate::mips_link::VERSION);
             request["parse_mips"] = json!(crate::mips_elf::VERSION);
             request["rom_mips"] = json!(crate::mips_rom::VERSION);

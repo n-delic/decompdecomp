@@ -296,12 +296,14 @@ The search continues locally for unavailable scores, including when a verifier
 has yet to download an updated pack. Interactive attempts, diff-row batches,
 and PROJECT-mode builds use their existing paths.
 
-For queued search trials, the verifier scores aligned ROM instruction differences
-in Rust. The Python adapter still invokes the original compiler, links the
-candidate, and supplies the strict linked verdict and instruction differences.
-The Rust scorer applies reorder, insertion and deletion penalties and returns
-the final score. Older judge workers can still return a complete verdict through
-the same verifier protocol.
+For queued search trials, the verifier computes the final score in Rust.
+For MIPS builds using the standard Capstone decoder, Rust also disassembles the
+instructions, masks and labels relocated operands, aligns the instruction streams
+and classifies differences. The Python adapter invokes the original compiler.
+Allegrex, other decoder versions and full interactive diffs keep their Python
+comparison paths. Older judge workers can still return a complete verdict
+through the same verifier protocol. The gateway prints its bundled decoder's
+license notices with `--licenses`.
 
 For MIPS trials, the verifier reads ELF32 function bytes, symbol tables and
 relocations in Rust. It pairs HI16 and LO16 in relocation table order, binds

@@ -135,4 +135,6 @@ def test_real_gcc_dispatch_verifies_a_late_jump_table_entry(tmp_path, corrupt):
     rom = bytearray(ROM)
     rom[table - 0x80000000:table - 0x80000000 + len(data)] = data
     request = prepare_project(tmp_path, net, compiler, rom, target)
-    assert queue_parity(tmp_path, net, request, [source]) == [int(corrupt)]
+    shifted = source.replace("switch (x)", "if (x == 42) return; switch (x)")
+    scores = queue_parity(tmp_path, net, request, [source, shifted])
+    assert scores[0] == int(corrupt) and scores[1] > 1

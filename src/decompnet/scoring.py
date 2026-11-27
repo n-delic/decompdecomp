@@ -6,10 +6,15 @@ score == 0 means a byte-for-byte (relocation-normalized) match. Lower is better.
 from __future__ import annotations
 
 import math
+import os
 import re
 import threading
 from collections import Counter, OrderedDict
+from contextvars import ContextVar
 from dataclasses import dataclass
+from functools import cache
+from importlib.metadata import PackageNotFoundError, version
+from typing import Callable
 
 import capstone
 
@@ -563,7 +568,27 @@ def diff(target: FunctionObj, candidate: FunctionObj) -> DiffResult:
     return result
 
 
+mips_comparer: ContextVar[Callable[[FunctionObj, FunctionObj, bool], dict | None] | None] = ContextVar(
+    "queued_mips_comparer", default=None)
+
+
+@cache
+def _native_mips_decoder_compatible():
+    # The Python module's __version__ can lag the bundled C library in the wheel.
+    try:
+        return not os.environ.get("LIBCAPSTONE_PATH") and version("capstone") == "5.0.9"
+    except PackageNotFoundError:
+        return False
+
+
 def score_evidence(target: FunctionObj, candidate: FunctionObj) -> ScoreEvidence:
+    native = mips_comparer.get()
+    if (native is not None and target.arch == candidate.arch == "mips" and _native_mips_decoder_compatible()
+            and target.cpu not in arch.get("mips").variants
+            and all(fn.name.isascii() and all(r.symbol.isascii() for r in fn.relocs) for fn in (target, candidate))):
+        result = native(target, candidate, ALIGN_BRANCH_TARGETS)
+        if result is not None:
+            return ScoreEvidence(**result)
     return _diff(target, candidate, details=False, evidence=True)
 
 

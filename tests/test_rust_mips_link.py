@@ -7,7 +7,7 @@ import sys
 
 import pytest
 
-from decompnet import hosted_export, hosted_judge, hosted_pack, toolchains
+from decompnet import hosted_export, hosted_judge, hosted_pack, scoring, toolchains
 from decompnet.app import mcp_gateway
 from decompnet.app.remote_judge import RemoteJudge
 from decompnet.compiler import compile_source
@@ -60,6 +60,39 @@ def audit_worker():
         assert result == expected, (result, expected)
         return result
 
+    # The parity oracle uses Python's SequenceMatcher even when the optional Rust library is installed.
+    scoring.instruction_alignment._kernel = lambda: None
+    native_compare = verifier_link.compare_mips
+
+    def audit_compare(target, candidate, align_branches, exchange):
+        expected = scoring._diff(target, candidate, details=False, evidence=True)
+        result = native_compare(target, candidate, align_branches, exchange)
+        assert result is not None, "Rust MIPS comparison declined the test object"
+        assert scoring.ScoreEvidence(**result) == expected, (result, expected)
+        return result
+
+    native_evidence = scoring.score_evidence
+
+    def require_native(target, candidate):
+        original = scoring.mips_comparer.get()
+        assert original is not None, "Rust MIPS comparison was not negotiated"
+        used = False
+
+        def compare(*args):
+            nonlocal used
+            used = True
+            return original(*args)
+
+        token = scoring.mips_comparer.set(compare)
+        try:
+            evidence = native_evidence(target, candidate)
+        finally:
+            scoring.mips_comparer.reset(token)
+        assert used, "Python scoring ran instead of the Rust MIPS comparison"
+        return evidence
+
+    scoring.score_evidence = require_native
+    verifier_link.compare_mips = audit_compare
     verifier_link.link_rom = audit
     return main()
 
