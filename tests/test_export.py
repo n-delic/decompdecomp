@@ -657,6 +657,23 @@ def test_unresolved_scoped_automatic_names_keep_their_address():
     assert _auto_addresses([text], {'D_80028D68_code_80027AF0'}) == {
         'func_80123400_code_80120000': 0x80123400,
     }
+    assert _auto_addresses(['jal func_8026E0B4_\n.word func_8026A964_'], set()) == {
+        'func_8026E0B4_': 0x8026E0B4, 'func_8026A964_': 0x8026A964,
+    }
+
+
+def test_export_removes_foreign_bank_labels_only(tmp_path):
+    from decompnet.rom.export import remove_foreign_bank_labels
+
+    folder = tmp_path/'asm'/'nonmatchings'
+    folder.mkdir(parents=True)
+    source = folder/'bank.s'
+    source.write_text('nonmatching entry\nalabel entry\n/* 000200 80001000 00000000 */ .word 0\n'
+                      'nonmatching real\nglabel real\n/* 000204 80001004 03E00008 */ jr $ra\n')
+    remove_foreign_bank_labels(tmp_path, [dict(name='entry', rom_offset=0x100),
+                                          dict(name='real', rom_offset=0x204)])
+    assert source.read_text() == ('/* 000200 80001000 00000000 */ .word 0\n'
+                                  'nonmatching real\nglabel real\n/* 000204 80001004 03E00008 */ jr $ra\n')
 
 
 def test_export_removes_shadowed_data_labels_but_keeps_original_bytes(tmp_path):

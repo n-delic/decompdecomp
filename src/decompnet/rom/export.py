@@ -54,10 +54,10 @@ def _auto_addresses(texts, defined) -> dict[str, int]:
     its name carries, so the standalone link can resolve them."""
     found = {}
     for text in texts:
-        for word in set(re.findall(r"\b[A-Za-z]\w*_[0-9A-Fa-f]{1,8}(?:_code_[0-9A-Fa-f]{8})?\b", text)):
+        for word in set(re.findall(r"\b[A-Za-z]\w*_[0-9A-Fa-f]{1,8}(?:_code_[0-9A-Fa-f]{8}|_)?\b", text)):
             # Inferred overlay scopes append their segment name after the
             # address; the suffix names a scope, not a second address.
-            base = re.sub(r'_code_[0-9A-Fa-f]{8}$', '', word)
+            base = re.sub(r'_code_[0-9A-Fa-f]{8}$', '', word).removesuffix('_')
             if (m := AUTO_NAME.fullmatch(base)) and word not in defined:
                 found.setdefault(word, int(m.group(1), 16))
     return found
@@ -81,6 +81,24 @@ def exported_source(prelude: str, include: str, source: str) -> str:
 _SPLAT_LABEL = re.compile(
     r'^[ \t]*(nonmatching|glabel|dlabel|jlabel|alabel|ehlabel|enddlabel)[ \t]+'
     r'([A-Za-z_.$][\w.$]*)(?=[, \t\r\n]|$)[^\n]*(?:\n|$)', re.M)
+
+
+def remove_foreign_bank_labels(root: Path, functions) -> None:
+    """Keep each known function label only at its own ROM address, even when banks share RAM."""
+    locations = {row['name']: row['rom_offset'] for row in functions if row['rom_offset'] is not None}
+    for path in (root / 'asm' / 'nonmatchings').rglob('*.s'):
+        text = path.read_text(encoding='utf-8')
+        def keep(match, source=text):
+            name = match[2]
+            if name not in locations:
+                return match[0]
+            next_word = _ADDR_COMMENT.search(source, match.end())
+            if next_word and int(next_word[1], 16) != locations[name]:
+                return ''
+            return match[0]
+        updated = _SPLAT_LABEL.sub(keep, text)
+        if updated != text:
+            path.write_text(updated, encoding='utf-8')
 
 
 def remove_shadowed_bss(root: Path, functions) -> None:
@@ -412,6 +430,7 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
     res = run([console_python(), "-m", "splat", "split", "splat.yaml"], out, log)
     if res.returncode != 0:
         raise ExportError("splat failed:\n" + (res.stdout + res.stderr)[-1500:])
+    remove_foreign_bank_labels(out, population)
     for generated in (out / "src").glob("*.c"):
         generated.unlink()  # splat's INCLUDE_ASM files: this tree builds one object per function instead
     for ld in out.glob("*.ld"):
