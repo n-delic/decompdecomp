@@ -805,7 +805,7 @@ says the fix and the library families it names; try those families with `prove_c
   or helper idiom), with their C around that place: someone already found the C for that idiom.
 - **Call signatures: `signatures.py --slug S --function F [CAND.c]`** (`setup.py` prints it for the saved best). Each
   call is checked against the callee's matched C, the header's prototype and (MIPS) the target's call site: an
-  argument the callee never takes, a missing one, a narrow return type the header gets wrong, a result the target
+  argument the callee never takes (kept, and said so, when the target loads its register for the call), a missing one, a narrow return type the header gets wrong, a result the target
   reads that the C ignores (or the reverse), and the function's own parameters against its matched callers. Make
   those edits first: a stray m2c argument moved a display-list builder's cursor sums (55 -> 0 by dropping it) after
   twelve spellings of the code around it compiled identically.
