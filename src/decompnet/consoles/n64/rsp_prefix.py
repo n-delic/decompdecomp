@@ -131,6 +131,10 @@ def graphics_spans(image):
         branches = {word & 0x03ffffff for word in words if word >> 26 in (2, 3)}
         if (sum(map(_vector, words)) >= _MIN_VECTORS
                 and sum(0x01000400 <= target < 0x01000800 for target in branches) >= 3):
+            # A four-byte marker can precede the aligned bootstrap after a closed CPU return.
+            # It belongs to the task data, not a one-instruction CPU function.
+            if start >= 12 and image[start-12:start] == bytes.fromhex('03e00008000000006e736967'):
+                start -= 4
             yield start, end
 
     # A graphics microcode family starts with vector setup. Its linked
