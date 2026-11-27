@@ -1,4 +1,4 @@
-"""The Autopilot batch follows each project through completion."""
+"""Autopilot resumes its current project after the app restarts."""
 import importlib.util
 import sys
 from pathlib import Path
@@ -13,38 +13,20 @@ finally:
     sys.path.remove(str(TOOLS))
 
 
-def test_runs_each_autopilot_in_order(monkeypatch):
+def test_restarts_current_project_after_disconnect(monkeypatch):
     calls = []
-    replies = iter([{'autopilot': None}, {'autopilot': {'state': 'running'}},
-                    {'autopilot': {'state': 'done'}}, {'autopilot': {'state': 'running'}},
-                    {'autopilot': {'state': 'done'}}])
+    replies = iter([{'autopilot': None}, {'autopilot': {'state': 'running'}}, batch.Reconnected(),
+                    {'autopilot': {'state': 'done', 'started_at': 1}},
+                    {'autopilot': {'state': 'running'}}, {'autopilot': {'state': 'done'}}])
 
-    def call(info, path, body=None):
-        calls.append((path, body))
-        return next(replies)
+    class App:
+        def request(self, path, body=None):
+            calls.append((path, body))
+            result = next(replies)
+            if isinstance(result, Exception):
+                raise result
+            return result
 
-    monkeypatch.setattr(batch, 'call', call)
     monkeypatch.setattr(batch.time, 'sleep', lambda _: None)
-    assert batch.run({}, [{'slug': 'a'}, {'slug': 'b'}]) == []
-    assert [path for path, _ in calls] == ['/api/project?slug=a', '/api/autopilot', '/api/project?slug=a',
-                                           '/api/project?slug=b', '/api/project?slug=b']
-
-
-def test_interrupt_stops_only_own_autopilot(monkeypatch):
-    calls = []
-
-    def call(info, path, body=None):
-        calls.append((path, body))
-        if path.startswith('/api/project'):
-            if len(calls) == 1:
-                return {'autopilot': None}
-            raise KeyboardInterrupt
-        return {'autopilot': {'state': 'running'}}
-
-    monkeypatch.setattr(batch, 'call', call)
-    monkeypatch.setattr(batch.time, 'sleep', lambda _: None)
-    import pytest
-
-    with pytest.raises(KeyboardInterrupt):
-        batch.run({}, [{'slug': 'a'}])
-    assert calls[-1] == ('/api/autopilot', {'slug': 'a', 'action': 'stop'})
+    batch.run_project(App(), 'game', interval=0)
+    assert sum(path == '/api/autopilot' for path, _ in calls) == 2
