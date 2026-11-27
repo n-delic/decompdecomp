@@ -7,13 +7,22 @@ import time
 
 from decomprepair import debug_boundary_repairs
 
-from . import experiment_evidence
+from . import experiment_evidence, trial_bookkeeping
 
 SCHEMA = '''CREATE TABLE IF NOT EXISTS repair_proposal_progress(
  function_id INTEGER NOT NULL REFERENCES functions(id) ON DELETE CASCADE,
  scope TEXT NOT NULL, last_source TEXT NOT NULL, updated_at REAL NOT NULL,
  PRIMARY KEY(function_id,scope))'''
 KEEP_SCOPES = 16
+_KEEP = """INSERT INTO repair_proposal_progress VALUES(?,?,?,?)
+    ON CONFLICT(function_id,scope) DO UPDATE SET last_source=excluded.last_source, updated_at=excluded.updated_at
+    WHERE excluded.updated_at >= repair_proposal_progress.updated_at"""
+_PRUNE = """DELETE FROM repair_proposal_progress WHERE function_id=? AND scope NOT IN
+    (SELECT scope FROM repair_proposal_progress WHERE function_id=? ORDER BY updated_at DESC LIMIT ?)"""
+
+
+def _latest(old, new):
+    return new if new[-1] >= old[-1] else old
 
 
 def prepare(net, project=None):
@@ -39,12 +48,15 @@ class Cursor:
         digest = hashlib.sha256(source.encode()).hexdigest()
         if digest not in self.hashes:
             return
-        with self.store.tx() as db:
-            db.execute('INSERT OR REPLACE INTO repair_proposal_progress VALUES(?,?,?,?)',
-                       (self.function_id,self.scope,digest,time.time()))
-            db.execute('DELETE FROM repair_proposal_progress WHERE function_id=? AND scope NOT IN '
-                       '(SELECT scope FROM repair_proposal_progress WHERE function_id=? ORDER BY updated_at DESC LIMIT ?)',
-                       (self.function_id,self.function_id,KEEP_SCOPES))
+        args = (self.function_id, self.scope, digest, time.time())
+        prune = (self.function_id, self.function_id, KEEP_SCOPES)
+        if trial_bookkeeping.current_turn() is not None:
+            trial_bookkeeping.count(self.store, _KEEP, args, 2, _latest)
+            trial_bookkeeping.cleanup_final(self.store, _PRUNE, prune)
+        else:
+            with self.store.tx() as db:
+                db.execute(_KEEP, args)
+                db.execute(_PRUNE, prune)
 
 
 def order(net, proj, fn, source, tagged):
@@ -56,8 +68,16 @@ def order(net, proj, fn, source, tagged):
     store = prepare(net,fn['project_id'])
     scope = hashlib.sha256((experiment_evidence.build_scope(net,proj,fn)+source+
                            repr([hashlib.sha256(s.encode()).hexdigest() for _,s in pool])).encode()).hexdigest()
-    row = store.one('SELECT last_source FROM repair_proposal_progress WHERE function_id=? AND scope=?',fn['id'],scope)
+    if trial_bookkeeping.current_turn() is not None:
+        saved = trial_bookkeeping.stored(store, ('proposal-cursors', fn['id']), lambda: {
+            row['scope']: row['last_source'] for row in store.all(
+                'SELECT scope,last_source FROM repair_proposal_progress WHERE function_id=?', fn['id'])})
+        pending = trial_bookkeeping.pending_counters(store, _KEEP).get((fn['id'], scope))
+        last = pending[2] if pending is not None else saved.get(scope)
+    else:
+        row = store.one('SELECT last_source FROM repair_proposal_progress WHERE function_id=? AND scope=?', fn['id'], scope)
+        last = row['last_source'] if row else None
     hashes = [hashlib.sha256(s.encode()).hexdigest() for _,s in pool]
-    start = hashes.index(row['last_source'])+1 if row and row['last_source'] in hashes else 0
+    start = hashes.index(last) + 1 if last in hashes else 0
     rotated = iter(pool[start:]+pool[:start])
     return [next(rotated) if f==debug_boundary_repairs.FAMILY else (f,s) for f,s in tagged], Cursor(net,fn,scope,pool)

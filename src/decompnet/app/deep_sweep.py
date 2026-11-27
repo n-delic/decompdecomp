@@ -12,7 +12,7 @@ from time import monotonic
 
 from .. import candidate_scope, claim_stalls, scoring
 from ..network import IN_BUILD, NetworkError
-from . import deep_permuter, deep_source_recovery, deep_throughput, targeted_retry, workers
+from . import deep_permuter, deep_source_recovery, deep_throughput, targeted_retry, trial_bookkeeping, workers
 from .deep_activity import Activity
 from .purpose_work import Executor
 
@@ -211,29 +211,30 @@ class Sweeps:
         """Save counts and individual verified improvements, including searches stopped part way through."""
         store = self._store(project) if project is not None else self.net.function_store(function_id)
         if store is None:raise NetworkError('This function no longer exists.')
-        with self._prepare(store).tx() as db:
-            for family, values in totals.items():
-                db.execute("""INSERT INTO deep_permutation_recipes
-                    (function_id,family,tested,skipped,rejected,improvements,matches,score_gain)
-                    VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(function_id,family) DO UPDATE SET
-                    tested=tested+excluded.tested, skipped=skipped+excluded.skipped,
-                    rejected=rejected+excluded.rejected, improvements=improvements+excluded.improvements,
-                    matches=matches+excluded.matches, score_gain=score_gain+excluded.score_gain""",
-                    (function_id, family, *values))
-            for (family, phase), values in (measurements or {}).items():
-                db.execute("""INSERT INTO deep_permutation_measurements
-                    (function_id,family,phase,attempted,compile_failed,unscored,unchanged,worse,improved,matched,elapsed_ms,score_gain)
-                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(function_id,family,phase) DO UPDATE SET
-                    attempted=attempted+excluded.attempted, compile_failed=compile_failed+excluded.compile_failed,
-                    unscored=unscored+excluded.unscored, unchanged=unchanged+excluded.unchanged,
-                    worse=worse+excluded.worse, improved=improved+excluded.improved,
-                    matched=matched+excluded.matched, elapsed_ms=elapsed_ms+excluded.elapsed_ms,
-                    score_gain=score_gain+excluded.score_gain""",
-                    (function_id, family, phase, *values))
-            for win in wins:
-                db.execute("""INSERT INTO deep_permutation_recipe_wins
-                    (function_id,family,previous_score,new_score,provenance,created_at)
-                    VALUES(?,?,?,?,?,?)""", (function_id, *win))
+        statements = []
+        for family, values in totals.items():
+            statements.append(("""INSERT INTO deep_permutation_recipes
+                (function_id,family,tested,skipped,rejected,improvements,matches,score_gain)
+                VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(function_id,family) DO UPDATE SET
+                tested=tested+excluded.tested, skipped=skipped+excluded.skipped,
+                rejected=rejected+excluded.rejected, improvements=improvements+excluded.improvements,
+                matches=matches+excluded.matches, score_gain=score_gain+excluded.score_gain""",
+                (function_id, family, *values)))
+        for (family, phase), values in (measurements or {}).items():
+            statements.append(("""INSERT INTO deep_permutation_measurements
+                (function_id,family,phase,attempted,compile_failed,unscored,unchanged,worse,improved,matched,elapsed_ms,score_gain)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(function_id,family,phase) DO UPDATE SET
+                attempted=attempted+excluded.attempted, compile_failed=compile_failed+excluded.compile_failed,
+                unscored=unscored+excluded.unscored, unchanged=unchanged+excluded.unchanged,
+                worse=worse+excluded.worse, improved=improved+excluded.improved,
+                matched=matched+excluded.matched, elapsed_ms=elapsed_ms+excluded.elapsed_ms,
+                score_gain=score_gain+excluded.score_gain""",
+                (function_id, family, phase, *values)))
+        for win in wins:
+            statements.append(("""INSERT INTO deep_permutation_recipe_wins
+                (function_id,family,previous_score,new_score,provenance,created_at)
+                VALUES(?,?,?,?,?,?)""", (function_id, *win)))
+        trial_bookkeeping.submit_final(self._prepare(store), statements)
 
     def reset_metrics(self, slug):
         """Reset this project's counters without deleting code, pass records or rewrite evidence."""

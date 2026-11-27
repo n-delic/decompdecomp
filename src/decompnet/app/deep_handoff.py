@@ -38,19 +38,17 @@ def save(net, proj, fn, source, rows):
     if not (block := smallest_block(rows, proj['arch'])):
         return False
     store = experiment_evidence.prepare(net, fn['project_id'])
-    trial_bookkeeping.flush(store)
     scope = experiment_evidence.scope(net, proj, fn, source)
-    families = store.all(
-        'SELECT family,attempted,same_output,worse,failed FROM repair_input_effects '
-        'WHERE function_id=? AND scope=? AND improved=0 AND attempted>0 '
-        'ORDER BY attempted DESC,family LIMIT 6', fn['id'], scope)
+    effects = experiment_evidence.effect_rows(store, fn['id'], scope, fresh=True)
+    families = sorted((row for row in effects if not row['improved'] and row['attempted']),
+                      key=lambda row: (-row['attempted'], row['family']))[:6]
     if sum(row['attempted'] for row in families) < 3:
         return False
     record = dict(scope=scope, block=[[item[:120] for item in row] for row in block],
-                  families=[dict(row) for row in families])
-    with store.tx() as db:
-        db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',
-                   (PREFIX+str(fn['id']), json.dumps(record)))
+                  families=[{key: row[key] for key in ('family', 'attempted', 'same_output', 'worse', 'failed')}
+                            for row in families])
+    trial_bookkeeping.submit_final(store, [
+        ('INSERT OR REPLACE INTO settings VALUES(?,?)', (PREFIX+str(fn['id']), json.dumps(record)))])
     return True
 
 
