@@ -1149,7 +1149,10 @@ class ForkEngine:
             log("building what changed since the last build")
             failed: list[str] = []
             with self._tree(proj).exclusive(), self._build_locks[proj["id"]]:
-                fp.build_all(log=log, failed=failed)
+                ok, output = fp.build_all(log=log, failed=failed)
+                if not ok and not failed:
+                    raise NetworkError("The project build failed without identifying which objects failed, so its "
+                                       f"previous objects cannot be measured safely. Fix the build and try again:\n{_tail(output)}")
                 rep = fp.report()
             # a unit whose source doesn't build keeps its last object: what it matched then doesn't count now
             measures = self.sync(slug, log=log, rep=rep, broken=fp.failed_units(failed))
