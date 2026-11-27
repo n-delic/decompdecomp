@@ -1008,3 +1008,22 @@ def test_leading_string_references_are_kept_as_data_unless_called_indirectly(ind
     result = repair(functions, data, image, consoles.get('n64'), [Segment('code',16,len(image),BASE+16)])
     assert (16 in {fn.rom for fn in result}) == indirect
     assert [(d.rom,d.size) for d in data] == ([] if indirect else [(16,4)])
+
+
+@pytest.mark.parametrize('case', ['valid', 'interior', 'stack', 'one_store', 'unclosed', 'data'])
+def test_global_initializer_falls_through_to_a_closed_frame(case):
+    # The original bytes execute two global stores before entering a framed tail.
+    prefix = [0x3c088000, 0x24090001, 0xad090000, 0xad090004]
+    if case == 'stack':prefix[3] = 0xafa90004
+    if case == 'one_store':prefix[3] = 0
+    tail = list(BODY)
+    if case == 'unclosed':tail[-1] = 0
+    image, functions, segments = fixture(prefix+tail, cuts=(0, 16, 48))
+    symbols = [f'interior = 0x{BASE+4:08X};'] if case == 'interior' else ()
+    data = [DataSymbol('overlap', BASE+8, 8, 4, 'data')] if case == 'data' else []
+    result = repair(functions, data, image, consoles.get('n64'), segments, symbols=symbols)
+    if case == 'valid':
+        assert [(fn.rom, fn.size) for fn in result] == [(0, 48)]
+        assert result[0].entry_aliases == {BASE+16: f'func_{BASE+16:08X}'}
+    else:
+        assert any(fn.rom == 16 for fn in result)

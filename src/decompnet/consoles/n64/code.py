@@ -553,6 +553,9 @@ def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_rep
     original = image
     rom = (workdir / image).read_bytes()
     original_rom = rom
+    from .boot_jump import recover as recover_jumped_boot
+
+    recover_jumped_boot(config, rom, log)
     taken = split.code_ranges(config)
     if taken and (result := indexed_runtime_code.add(config,workdir,image,rom,taken,log)):
         return result

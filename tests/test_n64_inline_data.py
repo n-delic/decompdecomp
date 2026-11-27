@@ -197,3 +197,22 @@ def test_unentered_call_word_between_return_and_frame_is_data():
     assert not list(inline_data._unentered_call_words(image, ranges))
     struct.pack_into('>2I', image, 0, 0x3c048000, 0x24840018)
     assert not list(inline_data._unentered_call_words(image, ranges))
+
+
+def test_unentered_invalid_jump_before_closed_frame_is_data():
+    import struct
+
+    # The first word is not a viable RDRAM jump; the following framed leaf is closed.
+    image = bytearray(128)
+    struct.pack_into('>5I', image, 16, 0x0a7d2044, 0x27bdffe0, 0xafbf001c, 0x03e00008, 0x27bd0020)
+    ranges = [(16, 36, 0x80001000)]
+    assert list(inline_data._unentered_invalid_jump_prefixes(bytes(image), ranges)) == [(16, 20)]
+    # An address reference, a call, a reachable jump or an unclosed successor retains it.
+    struct.pack_into('>I', image, 0, 0x80001000)
+    assert not list(inline_data._unentered_invalid_jump_prefixes(bytes(image), ranges))
+    struct.pack_into('>I', image, 0, 0)
+    struct.pack_into('>I', image, 16, 0x08000408)
+    assert not list(inline_data._unentered_invalid_jump_prefixes(bytes(image), ranges))
+    struct.pack_into('>I', image, 16, 0x0a7d2044)
+    struct.pack_into('>I', image, 28, 0)
+    assert not list(inline_data._unentered_invalid_jump_prefixes(bytes(image), ranges))

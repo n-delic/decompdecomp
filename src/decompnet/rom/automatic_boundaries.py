@@ -379,7 +379,7 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
 
     recovered_data=[]
     predecessors={(fn.rom+fn.size,fn.vram+fn.size):fn for fn in result if fn.size>=8}
-    kept=[];dropped=markers=recovered_shared=recovered_continuations=0;ordered=sorted(result,key=lambda f:(owner(f),f.rom))
+    kept=[];dropped=markers=recovered_shared=recovered_fallthrough=recovered_continuations=0;ordered=sorted(result,key=lambda f:(owner(f),f.rom))
     for i,fn in enumerate(ordered):
         previous=kept[-1] if kept else None;following=ordered[i+1] if i+1<len(ordered) else None
         if (previous is not None and owner(fn)[0] >= 0 and owner(previous) == owner(fn)
@@ -409,19 +409,28 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
             data.append(DataSymbol(fn.name, fn.vram, fn.rom, 4, 'data'))
             markers += 1
             continue
-        if (previous is not None and owner(previous)==owner(fn)
+        same_owner = previous is not None and owner(previous) == owner(fn)
+        possible_fallthrough = (same_owner and 8 <= previous.size <= 128 and fn.lines
+                                and previous.rom+previous.size == fn.rom
+                                and previous.vram+previous.size == fn.vram and is_frame(fn.lines[0].word))
+        both_called = same_owner and previous.vram in direct_calls and fn.vram in direct_calls
+        external_entries = (explicit | pointers | {address for address, sources in references.items()
+            if any(not previous.rom <= src < fn.rom+fn.size for src, _ in sources)}
+            if possible_fallthrough or both_called else set())
+        fallthrough = (possible_fallthrough
+                       and shared_fallthrough_frame(previous,fn,image,console,order,segments,external_entries,data))
+        if (same_owner
                 and (fn.vram in (explicit | pointers)
                      and shared_entry_leaf(previous,fn,image,console,order,segments,entered)
-                     or previous.vram in direct_calls and fn.vram in direct_calls
-                     and shared_called_leaf(previous,fn,image,console,order,segments,
-                                            explicit | pointers | {address for address, sources in references.items()
-                                                if any(not previous.rom <= src < fn.rom+fn.size for src, _ in sources)},
-                                            data))):
+                     or both_called
+                     and shared_called_leaf(previous,fn,image,console,order,segments,external_entries,data)
+                     or fallthrough)):
             kept[-1] = replace(previous,lines=previous.lines+fn.lines,
                                labels=previous.labels|fn.labels,
                                entry_aliases={**previous.entry_aliases,fn.vram:fn.name})
             data.append(DataSymbol(fn.name,fn.vram,fn.rom,0,'func'))
-            recovered_shared += 1
+            if fallthrough:recovered_fallthrough += 1
+            else:recovered_shared += 1
             continue
         predecessor=predecessors.get((fn.rom,fn.vram))
         if (fn.size >= 16 and fn.size % 4 == 0 and owner(fn)[0] >= 0
@@ -524,9 +533,11 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
         log(f'Recovered {len(recovered_data)} referenced words as data between functions.')
     if recovered_shared:
         log(f'Recovered {recovered_shared} closed leaves with independently entered assembly tails.')
+    if recovered_fallthrough:
+        log(f'Recovered {recovered_fallthrough} straight initializers with preserved framed entries.')
     if recovered_continuations:
         log(f'Joined {recovered_continuations} unentered framed continuations.')
-    return kept if dropped or markers or recovered_data or recovered_shared or recovered_continuations else result if changed else functions
+    return kept if dropped or markers or recovered_data or recovered_shared or recovered_fallthrough or recovered_continuations else result if changed else functions
 
 
 
@@ -546,6 +557,45 @@ def shared_called_leaf(head, tail, image, console, order, segments, entered, dat
     options = dict(big_endian=console.big_endian, cpu=console.cpu_variant, asm_check=console.asm_reason)
     return (leaf_extent(image,head.rom,end,head.vram,**options) == head.size+tail.size
             and leaf_extent(image,tail.rom,end,tail.vram,**options) == tail.size)
+
+
+def shared_fallthrough_frame(head, tail, image, console, order, segments, entered, data):
+    """A straight global initializer falls through to a closed framed entry."""
+    import rabbitizer
+
+    from ..arch.mips import _mips_uses, rabbitizer_category
+    from ..arch.mips_assets import read
+    from ..arch.mips_gaps import extent
+
+    if (head.piece or tail.piece or not 8 <= head.size <= 128 or head.rom+head.size != tail.rom
+            or head.vram+head.size != tail.vram or head.entry_aliases or tail.entry_aliases
+            or any(head.vram < address < head.vram+head.size or tail.vram < address < tail.vram+tail.size
+                   for address in entered)
+            or sum(segment.contains(head.vram, head.size+tail.size) for segment in segments) != 1):
+        return False
+    end = tail.rom+tail.size
+    if (end > len(image) or not is_frame(tail.lines[0].word)
+            or any(d.rom is not None and d.rom < end and head.rom < d.rom+d.size for d in data)
+            or image[head.rom:end] != b''.join(line.word.to_bytes(4, order) for fn in (head, tail) for line in fn.lines)
+            or not console.boundary_reason(image[head.rom:tail.rom])):
+        return False
+    for line in head.lines:
+        ins = rabbitizer.Instruction(line.word, line.vram, rabbitizer_category(console.cpu_variant))
+        registers = _mips_uses(line.word, console.cpu_variant)
+        if (not ins.isValid() or ins.hasDelaySlot() or registers is None
+                or {29, 31} & (registers[0] | registers[1])
+                or ins.getOpcodeName() in ('eret', 'break', 'syscall', 'teq', 'tne', 'tge', 'tgeu', 'tlt', 'tltu')):
+            return False
+    facts = read(head.vram, image[head.rom:tail.rom], big_endian=console.big_endian, cpu=console.cpu_variant)
+    stores = {event['place']['value'] for event in facts['events']
+              if event.get('kind') == 'store' and event.get('place', {}).get('kind') == 'constant'
+              and 0x80000000 <= event['place']['value'] < 0x80800000}
+    if len(stores) < 2:return False
+    if called_extent(image, tail.rom, end, tail.vram, big_endian=console.big_endian,
+                     cpu=console.cpu_variant, asm_check=console.asm_reason) != tail.size:
+        return False
+    flow = extent(image, head.rom, end, head.vram, order, cpu=console.cpu_variant)
+    return flow['direct_flow_closed'] and flow['extent_bytes'] == head.size+tail.size
 
 
 def shared_entry_leaf(head, tail, image, console, order, segments, entered):
