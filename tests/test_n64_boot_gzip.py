@@ -47,6 +47,25 @@ def test_boot_loader_places_both_gzip_programs(monkeypatch):
     assert boot_gzip.find(rom, boot) is None
 
 
+def test_verification_rejoins_only_contiguous_boot_mappings(monkeypatch):
+    original = bytes(64)
+    text, data = b'text', b'data'
+    calls = []
+
+    def find(rom, ranges):
+        calls.append(ranges)
+        return [(0x80001000,text,data)] if ranges == [(0,32,0x80000000)] else None
+
+    monkeypatch.setattr(boot_gzip, 'find', find)
+    assert boot_gzip.verify_analysis(original, original+text+data,
+                                     [(16,32,0x80000010),(0,16,0x80000000)])
+    assert not boot_gzip.verify_analysis(original, original+text+data,
+                                         [(0,16,0x80000000),(16,32,0x80001010)])
+    assert calls[-1] == [(0,16,0x80000000),(16,32,0x80001010)]
+    assert not boot_gzip.verify_analysis(original, original+text+b'bad!',
+                                         [(0,16,0x80000000),(16,32,0x80000010)])
+
+
 def test_inline_tables_require_the_entire_audited_span(monkeypatch):
     import hashlib
 

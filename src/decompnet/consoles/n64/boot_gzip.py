@@ -203,7 +203,16 @@ def find(rom, boot_ranges):
 
 def verify_analysis(rom, expanded, boot_ranges):
     """Verify the original compressed members against the separately linked program bytes."""
-    programs = find(rom, boot_ranges)
+    # A later split can divide one boot loader into many adjacent source units.
+    # Rejoin only a continuous ROM-to-RAM mapping so its cross-unit loader
+    # evidence remains available when verifying an existing analysis image.
+    merged = []
+    for start, end, address in sorted(boot_ranges):
+        if merged and merged[-1][1] == start and merged[-1][2] + start - merged[-1][0] == address:
+            merged[-1] = (merged[-1][0], end, merged[-1][2])
+        else:
+            merged.append((start, end, address))
+    programs = find(rom, merged)
     if programs is None or expanded[:len(rom)] != rom:
         return False
     cursor = len(rom)
