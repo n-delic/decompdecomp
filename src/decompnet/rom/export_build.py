@@ -698,7 +698,11 @@ def check(name: str) -> bool:
         print(res.log)
         return False
     symbol = fn.get('symbol') or fn['name']
-    linked = match.link(res.obj, symbol, target, table, read)
+    from decompnet.consoles import get
+
+    console = get(B.get("platform"))
+    linker = console.link_function if console.rust_desktop_judge else match.link
+    linked = linker(res.obj, symbol, target, table, read)
     if not linked.exact:
         print(f"{name}: not identical yet")
         for p in linked.problems:

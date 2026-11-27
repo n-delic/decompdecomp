@@ -130,7 +130,9 @@ def link(net, proj, fn, obj, name):
     # truncated by an internal assembler label; judge the canonical sized entry.
     canonical=next((s.name for s in elf.get_section_by_name('.symtab').iter_symbols()
                     if s['st_info']['type']=='STT_FUNC' and (s['st_shndx'],s['st_value'],s['st_size'])==found),name)
-    result=match.link(obj,canonical,target,syms,net.reader(proj,fn))
+    console = net.console(proj)
+    linker = console.link_function if console.rust_desktop_judge else match.link
+    result=linker(obj,canonical,target,syms,net.reader(proj,fn))
     return result if result.exact and not result.problems else None
 
 

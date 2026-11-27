@@ -611,7 +611,7 @@ def _ago(ts: float | None) -> str:
 def score_candidate(target, candidate, verdict, *, compare=None):
     diff = compare(target, candidate) if compare is not None else None
     if diff is None:
-        diff = scoring.diff(target, candidate)
+        diff = scoring.diff(target, candidate) if compare is None else scoring.diff(target, candidate, native=False)
     if verdict is not None:
         return scoring.DiffResult(0 if verdict else max(1, diff.score), diff.max_score, diff.rows, verdict)
     return diff

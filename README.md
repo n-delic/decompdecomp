@@ -29,8 +29,8 @@ a tenth of a second (1.4 s before), and agents restart by themselves after a cra
   stand-in for a model that hands in the demo's own C; the app compiles and judges every function for real.</sub>
 </p>
 
-Ordinary N64 desktop attempts and interactive diffs use the same Rust ROM linker and MIPS comparison as shared
-judge workers when the compatible gateway is available. The desktop still runs the project's original compiler locally.
+N64 attempts, direct checks, interactive diffs, and cartridge rebuild verification use the Rust judge
+when a compatible gateway is available. Shared compiler trials use the same linkers. The desktop still runs the project's original compiler locally.
 The Python judge remains available for unsupported inputs and installations without a compatible gateway.
 
 Packaged builds use a Rust instruction aligner when available. Source checkouts can build it with

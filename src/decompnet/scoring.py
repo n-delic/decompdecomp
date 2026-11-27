@@ -538,10 +538,20 @@ def _comparison_key(fn):
 
 def score(target: FunctionObj, candidate: FunctionObj) -> DiffResult:
     """Identical scoring without allocating diagnostic rows for ordinary misses."""
-    return _diff(target, candidate, details=False)
+    return _candidate_diff(target, candidate, details=False)
 
 
-def diff(target: FunctionObj, candidate: FunctionObj) -> DiffResult:
+def _candidate_diff(target, candidate, *, details=True, native=True):
+    if native and getattr(target, "native_judge", False) and native_mips_comparison(target, candidate):
+        from .rom.desktop_judge import direct_diff
+
+        result = direct_diff(target, candidate, details=details)
+        if result is not None:
+            return result
+    return _diff(target, candidate, details=details)
+
+
+def diff(target: FunctionObj, candidate: FunctionObj, *, native=True) -> DiffResult:
     # Advisory instruction comparisons only. Link verdicts and source locations are
     # computed by callers for the actual object, even when two C variants emit alike.
     session = compile_sessions.current()
@@ -554,7 +564,7 @@ def diff(target: FunctionObj, candidate: FunctionObj) -> DiffResult:
             from .compile_timing import add
             add('comparison_hits', 1)
             return DiffResult(cached.score, cached.max_score, list(cached.rows), cached.bytes_match)
-    result = _diff(target, candidate)
+    result = _candidate_diff(target, candidate, native=native)
     if key is not None and result.score > 0 and not result.bytes_match:
         # Bound both retained machine bytes and potentially large diagnostic rows.
         size = len(repr((key, result)).encode())
@@ -589,6 +599,10 @@ def native_mips_comparison(target: FunctionObj, candidate: FunctionObj) -> bool:
 
 def score_evidence(target: FunctionObj, candidate: FunctionObj) -> ScoreEvidence:
     native = mips_comparer.get()
+    if native is None and getattr(target, "native_judge", False):
+        from .rom.desktop_judge import direct_evidence
+
+        native = direct_evidence
     if native is not None and native_mips_comparison(target, candidate):
         result = native(target, candidate, ALIGN_BRANCH_TARGETS)
         if result is not None:

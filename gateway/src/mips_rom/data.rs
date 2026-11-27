@@ -341,3 +341,215 @@ impl<'a, R: Reader> Linker<'a, R> {
         Ok(())
     }
 }
+
+/// Verify a data definition at its linked address, including the data its pointers bring with it.
+pub async fn link_data<R: Reader>(request: &Value, reader: &mut R) -> Result<Value, String> {
+    let object = bytes(&request["object"])?;
+    let Some(elf) = Elf::read(&object) else {
+        return Ok(Value::Null);
+    };
+    if elf
+        .sections
+        .iter()
+        .any(|section| section.flags & 0x800 != 0)
+    {
+        return Ok(Value::Null);
+    }
+    let Some(symbols) = elf.section(".symtab").and_then(|table| elf.symbols(table)) else {
+        return Ok(Value::Null);
+    };
+    let name = request["name"].as_str().ok_or("missing MIPS datum name")?;
+    let address = reader.ask(json!({"resolve": name})).await?.as_i64();
+    let label = |address| json!({"label": address});
+    let mut problems = Vec::new();
+    let mut size = 0;
+    let mut span = None;
+    let mut initialised = true;
+    macro_rules! result {
+        () => {
+            Ok(json!({"exact": problems.is_empty(), "problems": problems, "address": address,
+                      "size": size, "span": span, "initialised": initialised}))
+        };
+    }
+    let Some(address) = address else {
+        problems.push(format!(
+            "`{name}` is not a known symbol: use the name the game's code refers to it by (like D_80012340), or give that address this name first with rename_symbol."
+        ));
+        return result!();
+    };
+    if request["big_endian"].as_bool() != Some(elf.big_endian) {
+        problems.push("the compiler produced data in the wrong byte order for this game".into());
+        return result!();
+    }
+    let Some(symbol) = symbols
+        .iter()
+        .find(|s| s.name == name && s.section != 0 && s.bind != 0)
+        .filter(|s| s.kind != 2)
+    else {
+        problems.push(format!(
+            "the object defines no data named `{name}`: write its definition (`s32 {name}[4] = {{ ... }};`), not only a declaration"
+        ));
+        return result!();
+    };
+    let others: BTreeSet<_> = symbols
+        .iter()
+        .filter(|s| {
+            !s.name.is_empty()
+                && s.name != name
+                && s.section != 0
+                && s.bind != 0
+                && matches!(s.kind, 1 | 2)
+        })
+        .map(|s| s.name)
+        .collect();
+    if !others.is_empty() {
+        let verb = if others.len() == 1 {
+            "is a datum"
+        } else {
+            "are data"
+        };
+        let names = others.into_iter().collect::<Vec<_>>().join(", ");
+        problems.push(format!(
+            "define only `{name}` here; {names} {verb} of its own (static helpers are fine)"
+        ));
+    }
+    size = symbol.size;
+    if size <= 0 {
+        problems.push(format!("the compiler recorded no size for `{name}`"));
+        return result!();
+    }
+    let metadata = crate::mips_ecoff::functions(&elf, &symbols);
+    let target = Target {
+        name: name.to_owned(),
+        vram: address,
+        code: String::new(),
+        big_endian: elf.big_endian,
+        gp: 0,
+        relocs: Vec::new(),
+    };
+    let mut linker = Linker::new(
+        &elf,
+        &symbols,
+        &target,
+        &[],
+        &[],
+        usize::MAX,
+        &metadata,
+        reader,
+    );
+    let stop = request["end"].as_i64().filter(|&end| end > address);
+    let extent = address
+        .checked_add(size)
+        .ok_or("datum extent overflows the address space")?;
+    if let Some(stop) = stop.filter(|&stop| extent > stop) {
+        let next = linker.reader.ask(label(stop)).await?;
+        problems.push(format!("`{name}` is {size} bytes, but the next datum ({}) starts {} bytes after it: define less, or check the game's data there",
+                              next.as_str().ok_or("missing datum label")?, stop - address));
+    } else {
+        let ends: Vec<i64> =
+            serde_json::from_value(request["ends"].clone()).map_err(|error| error.to_string())?;
+        if let Some(after) = ends
+            .into_iter()
+            .filter(|&e| e > address && stop.is_none_or(|end| e < end))
+            .chain(stop)
+            .filter(|&e| e >= extent)
+            .min()
+        {
+            let gap = after - extent;
+            let nonzero = gap > 0
+                && linker
+                    .read(extent, gap as usize, false)
+                    .await?
+                    .is_some_and(|bytes| bytes.iter().any(|&byte| byte != 0));
+            if gap >= 8.min(after & after.wrapping_neg()) || nonzero {
+                let next = linker.reader.ask(label(after)).await?;
+                problems.push(format!("`{name}` is {size} bytes, but the game's datum runs on to {} ({} bytes): define all of it",
+                                      next.as_str().ok_or("missing datum label")?, after - address));
+            } else {
+                span = Some(after - address);
+            }
+        }
+    }
+    let section = usize::from(symbol.section);
+    let bss = symbol.section == 0xfff2
+        || elf
+            .sections
+            .get(section)
+            .is_some_and(|entry| entry.kind == 8);
+    let rom = linker.read(address, size as usize, false).await?;
+    if bss {
+        initialised = false;
+        if let Some(rom) = rom {
+            let suffix = if rom.len() > 16 { "…" } else { "" };
+            problems.push(format!("the game keeps `{name}` in initialised data ({}{suffix}): give it an initialiser, `= {{0}}` for zeros",
+                                  hex_words(&rom[..rom.len().min(16)])));
+        }
+        return result!();
+    }
+    let Some(rom) = rom else {
+        let datum = linker.reader.ask(label(address)).await?;
+        problems.push(format!("the game has no bytes at {}: it may be .bss (define it without an initialiser) or outside the ROM's code segments",
+                              datum.as_str().ok_or("missing datum label")?));
+        return result!();
+    };
+    let offset = symbol.value;
+    let key = (section, offset);
+    let mut mine = linker
+        .section_data(section)?
+        .get(offset as usize..(offset + size) as usize)
+        .ok_or("invalid datum extent")?
+        .to_vec();
+    linker.placements.insert(key, address);
+    linker.place_data(key, address, None);
+    linker.place_pointees().await?;
+    for (at, kind, reference) in linker.data_relocs(section)?.to_vec() {
+        let at = at as i64 - offset;
+        if !(0..size).contains(&at) {
+            continue;
+        }
+        if kind != 2 || at > size - 4 {
+            linker.problem(format!(
+                "`{name}` holds an address the judge can't place (relocation type {kind})"
+            ));
+            continue;
+        }
+        let word = &mut mine[at as usize..at as usize + 4];
+        let (mut dest, own) = linker.pointee(reference, i64::from(elf.word(word))).await?;
+        if let Some(own) = own {
+            dest = linker.placements.get(&own).copied();
+        }
+        if let Some(dest) = dest {
+            let linked = if elf.big_endian {
+                (dest as u32).to_be_bytes()
+            } else {
+                (dest as u32).to_le_bytes()
+            };
+            word.copy_from_slice(&linked);
+        } else {
+            linker.problem(format!("can't place the pointer at `{name}`+0x{at:X}: the game's word there points nowhere this definition brings"));
+        }
+    }
+    for other in linker
+        .data
+        .keys()
+        .copied()
+        .filter(|&other| other != key)
+        .collect::<Vec<_>>()
+    {
+        linker.verify_data(other, false).await?;
+    }
+    if mine != rom {
+        let first = mine
+            .iter()
+            .zip(&rom)
+            .position(|(a, b)| a != b)
+            .ok_or("partial ROM datum")?;
+        linker.problem(format!(
+            "`{name}` differs from the game's bytes from +0x{first:X}: yours {}, the game's {}",
+            hex_words(&mine[first..mine.len().min(first + 16)]),
+            hex_words(&rom[first..rom.len().min(first + 16)])
+        ));
+    }
+    problems.extend(linker.problems);
+    result!()
+}

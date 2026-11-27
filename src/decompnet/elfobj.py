@@ -60,6 +60,8 @@ class FunctionObj:
 
     linker_relocs: list[Reloc] = field(default_factory=list)  # fields a pre-relocation overlay linker can resolve
 
+    native_judge: bool = field(default=False, compare=False, repr=False)
+
     def normalized(self) -> bytes:
         return mask_relocs(self.code, self.relocs, self.arch, self.big_endian)
 

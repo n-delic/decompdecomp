@@ -335,14 +335,29 @@ class Nintendo64(Console):
         from .uso_match import Target, symbolic_target
 
         target = self.target_from_row(fn, cfg)
-        return symbolic_target(target) if isinstance(target, Target) else canonical_target(target, symbols)
+        obj = symbolic_target(target) if isinstance(target, Target) else canonical_target(target, symbols)
+        obj.native_judge = True
+        return obj
 
     def link_function(self, obj, name, target, symbols, read):
+        from ...rom import match
+        from ...rom.desktop_judge import direct_link
         from . import uso_match
 
         if isinstance(target, uso_match.Target):
-            return uso_match.link(obj, name, target.code, target.uso)
-        return super().link_function(obj, name, target, symbols, read)
+            return uso_match.verify(obj, name, target.code, target.uso)
+        if type(target) is not match.RomTarget or match.rom_linker.get() is not None:
+            return super().link_function(obj, name, target, symbols, read)
+        # Exported source may use a different spelling from its assembly listing.
+        if target.name != name:
+            from dataclasses import replace
+
+            target = replace(target, name=name)
+        token = match.rom_linker.set(direct_link)
+        try:
+            return super().link_function(obj, name, target, symbols, read)
+        finally:
+            match.rom_linker.reset(token)
 
     def export_overlay(self, target):
         from .uso_match import Target

@@ -352,7 +352,7 @@ def rebuild(image, entries):
     groups = defaultdict(list)
     for name, info, obj in entries:
         groups[info['section']].append((name, info, obj))
-    from .uso_match import link
+    from .uso_match import verify
     from .uv_modules import text_regions
 
     regions = {region.offset: region for region in [*read(image), *text_regions(image)]}
@@ -381,7 +381,7 @@ def rebuild(image, entries):
                 original_tables = function_jump_tables(region, start, size, info['relocs'])
                 if any(table not in original_tables for table in saved_tables):
                     raise ValueError(f'Overlay jump table metadata at 0x{offset:X}+0x{start:X} has changed')
-            verified = link(obj, name, region.data[start:end], info)
+            verified = verify(obj, name, region.data[start:end], info)
             if not verified.exact:
                 details = ', '.join(verified.problems) or 'text bytes differ'
                 raise ValueError(f'Overlay {name} no longer matches: {details}')

@@ -86,9 +86,13 @@ def matched(platform: str, skip: tuple[str, ...] = ()) -> list[str]:
     return [f for f in FUNCTIONS if f not in NEAR_MISSES.get(platform, ()) and f not in skip]
 
 
-def test_export_rejudges_a_saved_match_with_an_extra_function(tmp_path):
+def test_export_rejudges_a_saved_match_with_an_extra_function(tmp_path, monkeypatch):
     if not _ready('n64'):
         pytest.skip('needs the N64 compiler and binutils')
+    from decompnet.app import mcp_gateway
+
+    if program := mcp_gateway.built():
+        monkeypatch.setenv('DECOMP_MCP_GATEWAY', str(program))
     net, slug = _decompile(tmp_path, 'n64', skip=('abs_s32',))
     agent, _ = net.local_agent('extra-function-test')
     body = csource.get((GAME / 'game.c').read_text(), 'abs_s32')

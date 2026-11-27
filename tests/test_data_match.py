@@ -38,7 +38,29 @@ def compile_c(tmp_path_factory):
 
 
 def judge(obj, name, **kw):
-    return link_data(obj, name, SymbolTable([Symbol("g_score", SCORE, 4, "data")]), read, **kw)
+    symbols = SymbolTable([Symbol("g_score", SCORE, 4, "data")])
+    expected = link_data(obj, name, symbols, read, **kw)
+    actual = link_data(obj, name, symbols, read, native=True, **kw)
+    assert actual == expected
+    return actual
+
+
+@pytest.fixture(autouse=True)
+def require_native_data_judge(monkeypatch):
+    from decompnet.app import mcp_gateway
+    from decompnet.rom.desktop_judge import RustJudge
+
+    if not (program := mcp_gateway.built()):
+        return
+    monkeypatch.setenv("DECOMP_MCP_GATEWAY", str(program))
+    original = RustJudge.data
+
+    def check(self, plan, lookup):
+        result = original(self, plan, lookup)
+        assert result is not None, "Rust declined the compiler's data object"
+        return result
+
+    monkeypatch.setattr(RustJudge, "data", check)
 
 
 def test_a_table_of_strings_and_pointers_matches_where_the_game_keeps_it(compile_c):

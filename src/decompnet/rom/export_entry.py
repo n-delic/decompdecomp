@@ -61,7 +61,12 @@ def write(root, manifest, fn, path):
             at=offsets.pop();return image[at:at+n]
         return None
     name=fn.get('symbol') or fn['name']  # the C's name for it (export.py: splat's may be the automatic one)
-    obj=path.read_bytes();linked=match.link(obj,name,target,table,read)
+    from decompnet.consoles import get
+
+    console = get(manifest.get('platform'))
+    linker = console.link_function if console.rust_desktop_judge else match.link
+    obj = path.read_bytes()
+    linked = linker(obj, name, target, table, read)
     if not linked.exact or linked.linked_code is None:
         raise ValueError('Entry extraction requires freshly verified exact code and data: '+'; '.join(linked.problems))
     if linked.missing_data_reads:

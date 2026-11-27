@@ -50,13 +50,30 @@ def _others(elf, name: str) -> list[str]:
 
 
 def link_data(obj: bytes, name: str, symbols: SymbolTable, read: ReadFn, *, big_endian: bool = True,
-              end: int | None = None, ends: frozenset[int] = frozenset()) -> DataResult:
+              end: int | None = None, ends: frozenset[int] = frozenset(), native: bool = False) -> DataResult:
     """Place the datum `name` the object defines at its address and compare it with the game's bytes.
 
     `end` is where the next datum the game names starts (the definition mustn't run into it); `ends` are the other
     addresses the game's code refers to, any of which can end a datum (a struct's fields are referred to inside it,
     so they don't cut it short). Without either, the definition's own size is taken as the datum's."""
     obj = unmangle(obj, lambda n: n in symbols.by_name or bool(AUTO_NAME.match(n)))
+    if native:
+        from .desktop_judge import direct_judge
+
+        def lookup(request):
+            if "resolve" in request:
+                return symbols.resolve(request["resolve"])
+            if "label" in request:
+                return symbols.label(request["label"])
+            data = read(*request["read"])
+            return data.hex() if data is not None else None
+
+        with direct_judge() as judge:
+            if judge is not None:
+                plan = {"object": obj.hex(), "name": name, "big_endian": big_endian, "end": end, "ends": sorted(ends)}
+                reply = judge.data(plan, lookup)
+                if reply is not None:
+                    return DataResult(**reply)
     elf = candidate_elf(obj, ELFFile)
     address = symbols.resolve(name)
     result = DataResult(False, address=address)

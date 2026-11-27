@@ -223,3 +223,9 @@ The USO linker works from the target text and validated loader relocation metada
 against the loader's bindings, including local calls, constructor entry markers, explicit data bindings,
 constant pools and jump tables. Shared-queue workers negotiate the same linker. Cartridge parsing and export
 remain in the app.
+
+Direct N64 checks and standalone export tools also use the Rust judge. They reuse local processes and use
+the project snapshot where available. Export checks with their own reviewed image mappings supply reads
+through the private pipe. The Rust data judge checks standalone definitions and their pointers using the same
+read interface. A cartridge rebuild validates its saved placement against the original cartridge,
+then asks the Rust USO linker for the linked bytes and exact verdict before replacing the text.
