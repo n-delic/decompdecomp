@@ -196,6 +196,7 @@ def jump_table(image,start,end,vram,at,order,ranges=(),mappings=(),*,reader=None
     with no interior entry. Import data classification may also follow an early saved-register base."""
     if at+8>end:return None
     uses_ido_guard = False
+    stack_guard = False
     early_returns = False
     for scheduled in (False,True):
         if at-start<(24 if scheduled else 28):continue
@@ -235,10 +236,15 @@ def jump_table(image,start,end,vram,at,order,ranges=(),mappings=(),*,reader=None
         address=(((hi&0xffff)<<16)+signed(load))&0xffffffff
         break
     else:
-        saved = _saved_register_guard(image,start,end,vram,at,order) if allow_saved_base else None
+        saved = _stack_index_guard(image, start, at, order)
         if saved is not None:
-            guard, branch, count, address, early_returns = saved
+            stack_guard = True
+            guard, branch, count, address = saved
         else:
+            saved = _saved_register_guard(image,start,end,vram,at,order) if allow_saved_base else None
+        if saved is not None and not stack_guard:
+            guard, branch, count, address, early_returns = saved
+        elif saved is None:
             saved = _ido_register_guard(image,start,at,order)
             if saved is None:return None
             uses_ido_guard = True
@@ -256,7 +262,7 @@ def jump_table(image,start,end,vram,at,order,ranges=(),mappings=(),*,reader=None
         # then jump directly to the guard branch. Both paths run the bound.
         bound_in_slot = (p == guard-4 and target == branch_pc
                          and w >> 16 in (0x4500, 0x4501))
-        if guard<target<=at and not guard<=p<=at and not bound_in_slot:
+        if (guard<target<=at or stack_guard and target == guard) and not guard<=p<=at and not bound_in_slot:
             return {**result,'reason':'an incoming edge bypasses the guard'}
     def destinations(data, prefix=0):
         targets=[prefix|int.from_bytes(data[p:p+4],order) for p in range(0,len(data),4)]
@@ -301,6 +307,36 @@ def jump_table(image,start,end,vram,at,order,ranges=(),mappings=(),*,reader=None
     return {**result,'rom_offset':offset,'mapping_verified':verified,'targets':targets,
             'state':'validated' if verified else 'mapping_hypothesis',
             'reason':'bounded table; follow every case' if verified else 'review the raw-data mapping before following cases'}
+
+
+def _stack_index_guard(image, start, at, order):
+    """A bounded switch reloads the same frame slot after its branch, then builds the table address."""
+    if at-start < 44:
+        return None
+    words = [int.from_bytes(image[p:p+4], order) for p in range(at-44, at+8, 4)]
+    first, bound, branch, delay, reload, move, scale, hi, low, add, load, jump, slot = words
+    index = (first >> 16) & 31
+    cond = (bound >> 16) & 31
+    copied = (move >> 11) & 31
+    scaled = (scale >> 11) & 31
+    base = (hi >> 16) & 31
+    dest = (jump >> 21) & 31
+    count = bound & 0xffff
+    if (first >> 21 != 0x47e or not index or reload != first
+            or bound >> 26 != 11 or (bound >> 21) & 31 != index or not cond or cond == index
+            or not 0 < count <= MAX_ENTRIES
+            or branch >> 26 != 4 or (branch >> 21) & 31 != cond or (branch >> 16) & 31
+            or delay or slot or move >> 26 or move & 63 != 33 or (move >> 21) & 31 != index
+            or (move >> 16) & 31 or not copied or scale >> 26 or scale & 63
+            or (scale >> 6) & 31 != 2 or (scale >> 16) & 31 != copied or (scale >> 21) & 31
+            or not scaled or hi >> 26 != 15 or not base or base == scaled
+            or low >> 26 != 9 or (low >> 21) & 31 != base or (low >> 16) & 31 != base
+            or add >> 26 or add & 63 != 33 or (add >> 11) & 31 != scaled
+            or {(add >> 21) & 31, (add >> 16) & 31} != {base, scaled}
+            or load >> 26 != 35 or (load >> 21) & 31 != scaled or (load >> 16) & 31 != dest
+            or jump & 0xfc1fffff != 8 or not dest):
+        return None
+    return at-40, branch, count, (((hi & 0xffff) << 16) + signed(low) + signed(load)) & 0xffffffff
 
 
 def calls(image,functions,order):

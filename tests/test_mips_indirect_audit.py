@@ -28,6 +28,28 @@ def test_guarded_switch_follows_all_cases_only_with_explicit_mapping():
         assert not result['unresolved_transfers']
 
 
+@pytest.mark.parametrize('order', ['big', 'little'])
+def test_unoptimized_switch_reloads_the_checked_frame_slot(order):
+    words = [0x8fc20018, 0x2c430002, 0x1060000e, 0, 0x8fc20018,
+             0x00401821, 0x00031080, 0x3c038000, 0x24631100, 0x00431021,
+             0x8c430000, 0x00600008, 0, 0x03e00008, 0, 0x03e00008, 0,
+             0x03e00008, 0]
+    image = bytearray(0x1200)
+    image[0x1000:0x104c] = b''.join(w.to_bytes(4, order) for w in words)
+    image[0x1100:0x1108] = b''.join(w.to_bytes(4, order) for w in (0x80001034, 0x8000103c))
+    ranges = [dict(rom_start=0x1100, rom_end=0x1108, vram=0x80001100)]
+    result = jump_table(image, 0x1000, 0x104c, 0x80001000, 0x102c, order, ranges)
+    assert result['state'] == 'validated' and result['entry_count'] == 2
+    assert extent(image, 0x1000, 0x104c, 0x80001000, order, table_ranges=ranges)['flow_closed']
+    for offset, word in ((0x1010, 0x8fc2001c),  # different stack slot
+                         (0x100c, 0xafc00018),  # delay slot writes the checked slot
+                         (0x1044, 0x08000401)):  # branch into the guard, skipping its load
+        changed = bytearray(image)
+        changed[offset:offset+4] = word.to_bytes(4, order)
+        found = jump_table(changed, 0x1000, 0x104c, 0x80001000, 0x102c, order, ranges)
+        assert found is None or found['state'] != 'validated'
+
+
 @pytest.mark.parametrize('word,valid', [
     (0x306500F0, True),   # andi a1, v1, 0xf0
     (0x24650001, True),   # addiu a1, v1, 1
