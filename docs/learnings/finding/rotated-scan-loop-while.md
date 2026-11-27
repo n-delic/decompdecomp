@@ -12,7 +12,8 @@ routine, `sn-n64-281 -G0 -mips3 -O2 -mgas -meb -mcpu=VR4300 -mhard-float -mfp64`
 `for (;;) { i += 1; p = ...; if (x <= p->start - 1) continue; break; } while (p->end < x);`, and the found flag set twice.
 
 The source change, and the measured result before and after (scores, the judge used), judged by the app's judge-worker
-and confirmed by `compile_and_diff`:
+(the function itself was matched with a hand-written clean rewrite, submitted with `compile_and_diff`; the steps below
+are isolated judge scores):
 
 - `while (x < t[i].start || t[i].end < x) i++; found = i < N;` with the table read as records: 1060 -> 160
   (decomp-repair `scan_loop_while`).
