@@ -7,6 +7,7 @@ import yaml
 from decompnet.arch.mips_code_recovery import called_extent
 from decompnet.consoles import get
 from decompnet.rom import mixed_code
+from decompnet.rom.split import Segment
 
 BASE=0x80001000
 BODY=[0x27BDFFE8,0xAFBF0014,0x24020007,0x8FBF0014,0x03E00008,0x27BD0018]
@@ -14,6 +15,21 @@ BODY=[0x27BDFFE8,0xAFBF0014,0x24020007,0x8FBF0014,0x03E00008,0x27BD0018]
 
 def packed(words,big=True):
     return struct.pack(('>' if big else '<')+f'{len(words)}I',*words)
+
+
+def test_long_scheduled_prefix_is_kept_only_without_an_interior_entry():
+    lead = [0x24020001]*13
+    image = packed([0x03e00008, 0, *lead, *BODY])
+    frame = 8+4*len(lead)
+    segment = Segment('unit', 0, len(image), BASE)
+    row = (8, len(image), segment, {}, [0, 'c', 'unit'])
+    console = get('n64')
+    size = called_extent(image, frame, len(image), BASE+frame, cpu=console.cpu_variant)
+    assert size == len(BODY)*4
+    args = (image, frame, size, row)
+    assert mixed_code._scheduled_prefix(*args, set(), set(), called_extent, console) == (8, len(image)-8)
+    assert mixed_code._scheduled_prefix(*args, {(frame, BASE+frame, 0)}, set(), called_extent, console) == (frame, size)
+    assert mixed_code._scheduled_prefix(*args, set(), {BASE+frame}, called_extent, console) == (frame, size)
 
 
 @pytest.mark.parametrize('big', [True, False])
@@ -69,6 +85,25 @@ def project(tmp_path,*,body=BODY,call=True,pointer=False,explicit=False,overlap=
     asm(tmp_path/'asm/nonmatchings/unit/caller.s',caller,0,big=big)
     asm(tmp_path/'asm/nonmatchings/unit/dropped.s',words[8:],32,raw=True,big=big)
     return path,console
+
+
+def test_refine_keeps_a_long_scheduled_prefix_with_its_frame(tmp_path):
+    path, console = project(tmp_path)
+    image = bytearray((tmp_path/'rom.bin').read_bytes())
+    image.extend(bytes(0xa0-len(image)))
+    image[0x38:0x40] = packed([0x03e00008, 0])
+    image[0x40:0x74] = packed([0x24020001]*13)
+    body = [0x27bdffe8, 0xafbf0014, 0x0c000000 | ((BASE >> 2) & 0x3ffffff),
+            0, 0x8fbf0014, 0x03e00008, 0x27bd0018]
+    image[0x74:0x90] = packed(body)
+    (tmp_path/'rom.bin').write_bytes(image)
+    cfg = yaml.safe_load(path.read_text())
+    cfg['segments'][-1] = [len(image)]
+    path.write_text(yaml.safe_dump(cfg, sort_keys=False))
+    asm(tmp_path/'asm/nonmatchings/unit/dropped.s', list(struct.unpack('>32I', image[32:])), 32, raw=True)
+    assert mixed_code.refine(path, tmp_path, 'rom.bin', console, log=lambda _: None)
+    cuts = [part[0] for part in yaml.safe_load(path.read_text())['segments'][0]['subsegments']]
+    assert 0x40 in cuts and 0x90 in cuts and 0x74 not in cuts
 
 
 @pytest.mark.parametrize('console_id',['n64','ps','ps2','psp'])

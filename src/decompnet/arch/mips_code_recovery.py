@@ -13,7 +13,7 @@ def _closed(info, table_ranges):
 
 
 def called_extent(image, start, end, vram, *, big_endian=True, cpu='', asm_check=None, table_ranges=(),
-                  allow_loop_epilogue=False):
+                  allow_loop_epilogue=False, max_lead=None):
     """Reject incomplete, unbalanced and multi-frame bodies; this never grants a match.
 
     A call into raw disassembler output can locate code, but a frame pattern alone is
@@ -26,7 +26,7 @@ def called_extent(image, start, end, vram, *, big_endian=True, cpu='', asm_check
     if start<0 or start%4 or end>len(image) or start+8>end:
         return None
     word=lambda at:int.from_bytes(image[at:at+4],order)
-    lead=_lead(image,start,end,order,cpu)
+    lead=_lead(image,start,end,order,cpu,max_lead=max_lead)
     if lead is None:
         return None
     entry=start;start+=lead  # the frame's own address: the checks below are about the body it opens
@@ -144,7 +144,7 @@ def _loop_epilogue(word, frame, finish, limit, amount):
 LEAD = 5  # instructions the compiler may schedule ahead of the frame
 
 
-def _lead(image, start, end, order, cpu):
+def _lead(image, start, end, order, cpu, *, max_lead=None):
     """How many bytes come before the frame: GCC can schedule a load or two ahead of `addiu $sp` (an N64 game's
     overlay: `lui $v0; lbu $v0; addiu $sp, -0x20`), and those stay part of the function. Only plain loads and
     arithmetic into scratch registers or a full run of argument home stores qualify. Transfers and other
@@ -164,7 +164,7 @@ def _lead(image, start, end, order, cpu):
             and is_frame(int.from_bytes(image[start+homes:start+homes+4], order))):
         return homes
 
-    for n in range(LEAD+1):
+    for n in range((LEAD if max_lead is None else min(max_lead, 16))+1):
         at=start+4*n
         if at+4>end:return None
         w=int.from_bytes(image[at:at+4],order)
