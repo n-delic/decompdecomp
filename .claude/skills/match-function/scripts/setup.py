@@ -476,6 +476,43 @@ def matched_by_us(info, function, gateway):
     return bool(found) and found[1] == info.get("connection_name")
 
 
+def identity(home, slug, name):
+    """{address, function_id} of a claimed function, which a rename keeps; {} when the app has none or won't say."""
+    try:
+        record = judge.App(home).function(slug, name)
+    except (SystemExit, OSError, ValueError):
+        return {}
+    vram, number = record.get("vram"), record.get("id")
+    return {"address": f"0x{vram:08X}", "function_id": number} if vram and number else {}
+
+
+def look_up(root, app, info):
+    """(the app's record of the session's function, its name now). The app renames a function after matching it, and
+    asking for the old name then found nothing, which read as a lost claim: ask by the address recorded at the claim
+    and keep the new name. Overlays share addresses, so only the same function's record counts; else ask by name."""
+    name = info["function"]
+    if info.get("address"):
+        record = app.function(info["slug"], info["address"])
+        now = record.get("name")
+        if now and record.get("id") == info.get("function_id"):
+            if now != name:
+                renamed(root, info, name, now)
+            return record, now
+    return app.function(info["slug"], name), name
+
+
+def renamed(root, info, old, new):
+    """Record the claimed function's new name, in `info` and in the session's connection file."""
+    saved = read_session(root)
+    for data in (info, saved):
+        if data.get("function") == old:
+            data["function"] = new
+        if old in data.get("matched_here", []):
+            data["matched_here"] = sorted({*data["matched_here"], new})
+    write_connection(root, saved)
+    print(f"{old} is now named {new}", flush=True)
+
+
 def mark_matched(root, current, function, gateway, reason="matched"):
     ours = matched_by_us(current, function, gateway)
     claimlost.write(root, function, reason, matched=True, ours=ours)
@@ -491,7 +528,8 @@ def renew_once(root, current, app, gateway, last_good, stop=(), pause=None):
     error = None
     for attempt in range(RENEW_RETRIES):
         try:
-            if app.function(current["slug"], function).get("status") == "matched":
+            record, function = look_up(root, app, current)
+            if record.get("status") == "matched":
                 mark_matched(root, current, function, gateway)
                 print(f"{function} matched; the claim needs no renewing", flush=True)
                 return "matched"
@@ -559,6 +597,9 @@ def reclaim_session(holder, function="", strategy="nearest", max_insns=NEAREST_M
         shutil.rmtree(root / "start", ignore_errors=True)
         print(f"removed {root / 'start'} (the previous function's files)", flush=True)
     info["function"], info["started"] = claimed, time.time()
+    info.pop("address", None)
+    info.pop("function_id", None)
+    info.update(identity(info.get("home"), info.get("slug"), claimed))
     write_connection(root, info)
     claimlost.clear(root)
     # The renewal ends by itself once its function matches: a session that matched one and claimed the next had no
@@ -652,7 +693,7 @@ def check_claim(holder):
         print(f"{holder}: no function is claimed (released); `setup.py reclaim {holder}` takes the next one")
         return 1
     try:
-        status = judge.App(info["home"]).function(info["slug"], function)
+        status, function = look_up(root, judge.App(info["home"]), info)
         gateway = Gateway(info["gateway_url"], info["token"])
         gateway.start()
         held = claims(gateway)
@@ -696,7 +737,8 @@ def session_gateway(slug="", holder=""):
         sys.exit(f"no setup.py session for {slug or 'any project'}{f' ({holder})' if holder else ''}: start one with "
                  f"`setup.py SLUG [FUNC]`; the app's MCP tools need that connection")
     if len(found) > 1:
-        sys.exit("several sessions match (" + ", ".join(i.get("holder", "?") for i in found) + "): pass --holder NAME")
+        sys.exit("several sessions match (" + ", ".join(i.get("holder", "?") for i in found) + "): pass --holder NAME "
+                 "with your own session's holder name (setup.py printed it at the start; its folder is /tmp/dd-NAME)")
     info = found[0]
     gateway = Gateway(info["gateway_url"], info["token"])
     try:
@@ -888,6 +930,7 @@ def start(args):
             info["function"] = (picker(gateway, info) if picker else
                                 claim(gateway, asked["function"], strategy, asked["max_size"]))
         info.pop("claim_pending", None)
+        info.update(identity(home, args.slug, info["function"]))
         info["started"] = time.time()  # the hand-off clock's start (clock.py HOLDER)
         info["renew_interval"] = args.interval  # reclaim restarts the renewal with it after a match ended it
         write_connection(root, info)
