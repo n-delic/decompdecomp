@@ -26,7 +26,7 @@ from ..candidate_work import elf as candidate_elf
 from ..hostenv import console_python
 from ..project import compiler_for
 from ..readme_links import DECOMPDECOMP, START_YOUR_OWN
-from . import export_workers, match, split
+from . import export_workers, split
 from .symbols import AUTO_NAME
 
 _ADDR_COMMENT = re.compile(r"/\*\s*([0-9A-F]+)\s+([0-9A-F]{8})\b")
@@ -34,6 +34,19 @@ _BSS_COMMENT = re.compile(r"/\*\s*([0-9A-F]{8})\s*\*/\s*\.space")
 _DEFINES = re.compile(r"^\s*(?:glabel|dlabel|jlabel|alabel|ehlabel)\s+(\w+)|^\s*\.globl\s+(\w+)|^\s*(\w+):", re.M)
 DISCARD = ["*(.reginfo)", "*(.MIPS.abiflags)", "*(.MIPS.options)", "*(.pdr)", "*(.comment)", "*(.mdebug*)",
            "*(.gnu.attributes)", "*(.note*)", "*(.gptab.*)"]
+
+
+def _link_export(console, obj, name, target, symbols, reader):
+    """A rebuild needs per-entry call bindings, which the native fast judge does not return."""
+    from . import match
+
+    if type(target) is not match.RomTarget:
+        return console.link_function(obj, name, target, symbols, reader)
+    token = match.rom_linker.set(None)
+    try:
+        return match.link(obj, name, target, symbols, reader)
+    finally:
+        match.rom_linker.reset(token)
 
 
 def _needs_entry_only(linked, problem, single, donor_unit):
@@ -548,8 +561,8 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
             donor_unit = is_unit(hdr, proj)
             single = _single_definition(compiled.obj, row["name"])
             reader = net.reader(proj, row)
-            linker = console.link_function if console.rust_desktop_judge else match.link
-            linked = linker(compiled.obj, row["name"], net._rom_target(row), net.symbols(proj["id"]), reader)
+            linked = _link_export(console, compiled.obj, row["name"], net._rom_target(row),
+                                  net.symbols(proj["id"]), reader)
             if not linked.exact:
                 as_fallback.append((f["name"], "no longer matches"))
                 f["kind"] = "asm"

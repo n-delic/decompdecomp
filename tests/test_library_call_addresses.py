@@ -76,6 +76,23 @@ def test_a_real_candidate_calling_a_builtin_links_to_the_games_routine(tmp_path)
     exact = match.link(compiled.obj, 'f', exact_target, SymbolTable(), lambda *_: None)
     assert exact.exact and exact.inferred_library_calls == {'sqrtf': 0x80055B40}
     assert export._needs_entry_only(exact, None, True, False)
+    # A native judge can report exact bytes without returning inferred library bindings.
+    token = match.rom_linker.set(lambda *_: match.LinkResult(None, True, []))
+    try:
+        exported = export._link_export(None, compiled.obj, 'f', exact_target, SymbolTable(), lambda *_: None)
+        assert exported.exact and exported.inferred_library_calls == {'sqrtf': 0x80055B40}
+        assert export._needs_entry_only(exported, None, True, False)
+    finally:
+        match.rom_linker.reset(token)
     known = match.link(compiled.obj, 'f', exact_target,
                        SymbolTable([Symbol('sqrtf', 0x80055B40, 8, 'func')]), lambda *_: None)
     assert known.exact and not export._needs_entry_only(known, None, True, False)
+
+
+def test_export_keeps_console_specific_targets_on_the_console_linker():
+    class Console:
+        def link_function(self, obj, name, target, symbols, read):
+            return target
+
+    target = object()
+    assert export._link_export(Console(), b'', 'f', target, SymbolTable(), lambda *_: None) is target
