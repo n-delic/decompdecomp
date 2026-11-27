@@ -32,6 +32,7 @@ def audit_worker():
     from decompnet.rom import verifier_link
 
     native = verifier_link.link_rom
+    inputs_loaded = False
 
     def audit(obj, target, symbols, read, exchange):
         hooks = (match.rom_linker, match.elf_preparer, match.instruction_linker)
@@ -41,7 +42,20 @@ def audit_worker():
         finally:
             for hook, token in zip(hooks, tokens):
                 hook.reset(token)
-        result = native(obj, target, symbols, read, exchange)
+        assert isinstance(read, verifier_link.PackReader), "Rust project inputs were not negotiated"
+
+        def guarded_exchange(operation, plan, lookup=None):
+            def guard(request):
+                nonlocal inputs_loaded
+                if "project_inputs" in request:
+                    assert not inputs_loaded, "the slot reloaded the same verification pack"
+                    inputs_loaded = True
+                assert not request.keys() & {"read", "resolve", "name_at", "next_start", "label", "library_name"}, request
+                return lookup(request)
+
+            return exchange(operation, plan, guard if lookup else None)
+
+        result = native(obj, target, symbols, read, guarded_exchange)
         assert result is not None, "Rust ROM linker declined the test object"
         assert result == expected, (result, expected)
         return result
@@ -74,6 +88,8 @@ def test_real_mips_objects_have_the_same_verdict_on_the_shared_queue(tmp_path, t
                    (proj["id"], "callee", CALLEE, 4, "func"))
         db.execute("INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)",
                    (proj["id"], "D_80002020", DATA, 8, "data"))
+        db.execute("INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)",
+                   (proj["id"], "overlay_callee", CALLEE, 4, "func"))
     target = match.RomTarget("f1", VRAM, b"", [])
     rom = bytearray(ROM)
     if kind == "array":
@@ -94,14 +110,31 @@ def test_real_mips_objects_have_the_same_verdict_on_the_shared_queue(tmp_path, t
     baseline = match.link(built.obj, "f1", target, net.symbols(proj["id"]), read)
     assert baseline.linked_code and not baseline.problems
     low = next(r.addend for r in baseline.candidate.relocs if r.symbol == "D_80002020" and r.type == 6)
-    symbols = {"callee": CALLEE, "D_80002020": DATA + low}
+    symbols = {"callee": CALLEE, "overlay_callee": CALLEE, "D_80002020": DATA + low}
     relocs = [(r.offset, r.type, symbols[r.symbol]) for r in baseline.candidate.relocs]
     assert {kind for _, kind, _ in relocs} >= {4, 5, 6}
     if toolchain == "gcc-2.7.2-kmc":
         assert low == 4
     rom[VRAM - 0x80000000:VRAM - 0x80000000 + len(baseline.linked_code)] = baseline.linked_code
+    if kind == "array":
+        # The current overlay's verified bytes override both its sibling and the foreign overlay.
+        offset = DATA - 0x80000000
+        payload = bytes(16) + rom[offset:offset + 16]
+        rom[offset:offset + 16] = bytes([0xa5]) * 16
+        (tmp_path / "overlay-data.bin").write_bytes(payload)
+        (tmp_path / "memory_regions.json").write_text(json.dumps({
+            "format": 1, "file": "overlay-data.bin", "image_sha1": hashlib.sha1(rom).hexdigest(),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "regions": [{"owner": "foreign", "offset": 0, "size": 16, "vram": DATA},
+                        {"owner": "head", "offset": 16, "size": 16, "vram": DATA}],
+        }))
     (tmp_path / "rom.z64").write_bytes(rom)
     cfg = json.loads(proj["config"])
+    cfg["segments"] = [
+        {"name": "head", "rom_start": 0x1000, "rom_end": 0x1200, "vram": 0x80001000, "exclusive_ram_id": "slot"},
+        {"name": "foreign", "rom_start": 0x3000, "rom_end": 0x3300, "vram": 0x80002000, "exclusive_ram_id": "slot"},
+        {"name": "sibling", "rom_start": 0x2000, "rom_end": 0x2300, "vram": 0x80002000, "exclusive_ram_id": "slot"},
+    ]
     cfg["rom"]["sha1"] = hashlib.sha1(rom).hexdigest()
     cfg["compiler"] = compiler
     with net.store.tx() as db:

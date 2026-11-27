@@ -109,6 +109,7 @@ struct Judge {
     _child: Child,
     input: ChildStdin,
     output: Lines<BufReader<ChildStdout>>,
+    rom_project: Option<(String, Arc<crate::rom_project::Project>)>,
 }
 
 impl Judge {
@@ -123,7 +124,7 @@ impl Judge {
             .map_err(|e| format!("can't start the judge {:?}: {e}", command[0]))?;
         let input = child.stdin.take().ok_or("no judge stdin")?;
         let output = BufReader::new(child.stdout.take().ok_or("no judge stdout")?).lines();
-        Ok(Judge { _child: child, input, output })
+        Ok(Judge { _child: child, input, output, rom_project: None })
     }
 
     async fn ask(&mut self, request: &Value, limit: Duration) -> Result<Value, String> {
@@ -138,7 +139,7 @@ impl Judge {
                     if request["rom_mips"].as_u64() != Some(crate::mips_rom::VERSION) {
                         return Err("unexpected MIPS ROM link request from the judge".into());
                     }
-                    crate::mips_rom::link(plan, self).await
+                    self.link_rom(plan, request).await
                 } else if let Some(plan) = reply.get("parse_mips") {
                     if request["parse_mips"].as_u64() != Some(crate::mips_elf::VERSION) {
                         return Err("unexpected MIPS ELF request from the judge".into());
@@ -162,18 +163,67 @@ impl Judge {
     }
 }
 
-impl crate::mips_rom::Reader for Judge {
-    async fn ask(&mut self, request: Value) -> Result<Value, String> {
+impl Judge {
+    async fn link_rom(&mut self, plan: &Value, request: &Value) -> Result<Value, String> {
+        let project = if let Some(offset) = plan.get("rom_offset") {
+            if request["project_mips"].as_u64() != Some(crate::rom_project::VERSION) {
+                return Err("unexpected MIPS project snapshot".into());
+            }
+            let key = request["pack_sha256"].as_str().ok_or("missing verification pack revision")?;
+            if self.rom_project.as_ref().is_none_or(|(cached, _)| cached != key) {
+                let metadata = self.lookup(json!({"project_inputs": true}), None).await?;
+                let project = tokio::task::spawn_blocking(move || crate::rom_project::Project::load(metadata))
+                    .await.map_err(|error| error.to_string())??;
+                let project = Arc::new(project);
+                self.rom_project = Some((key.to_owned(), project));
+            }
+            self.rom_project.as_ref().map(|(_, project)| (Arc::clone(project), offset.as_i64()))
+        } else {
+            None
+        };
+        let view = project.as_ref().map(|(project, offset)| project.view(*offset)).transpose()?;
+        crate::mips_rom::link(plan, &mut ProjectReader { judge: self, view }).await
+    }
+
+    async fn lookup(&mut self, request: Value, view: Option<&crate::rom_project::View<'_>>) -> Result<Value, String> {
         self.input.write_all(format!("{}\n", json!({"rom_lookup": request})).as_bytes()).await
             .map_err(|error| error.to_string())?;
         self.input.flush().await.map_err(|error| error.to_string())?;
-        let line = self.output.next_line().await.map_err(|error| error.to_string())?
-            .ok_or("the judge ended during a ROM lookup")?;
-        let reply: Value = serde_json::from_str(&line).map_err(|error| error.to_string())?;
-        if let Some(error) = reply["error"].as_str() {
-            return Err(error.to_owned());
+        loop {
+            let line = self.output.next_line().await.map_err(|error| error.to_string())?
+                .ok_or("the judge ended during a ROM lookup")?;
+            let reply: Value = serde_json::from_str(&line).map_err(|error| error.to_string())?;
+            if let Some(error) = reply["error"].as_str() {
+                return Err(error.to_owned());
+            }
+            if let (Some(view), Some(read)) = (view, reply.get("rom_read")) {
+                // The Python dispatch analyser also reads from the Rust overlay view.
+                let result = view.lookup(&json!({"read": read}))
+                    .map(|value| json!({"rom_read_value": value}))
+                    .unwrap_or_else(|error| json!({"error": error}));
+                self.input.write_all(format!("{result}\n").as_bytes()).await
+                    .map_err(|error| error.to_string())?;
+                self.input.flush().await.map_err(|error| error.to_string())?;
+                continue;
+            }
+            return reply.get("rom_value").cloned().ok_or_else(|| "missing ROM lookup response".into());
         }
-        reply.get("rom_value").cloned().ok_or_else(|| "missing ROM lookup response".into())
+    }
+}
+
+struct ProjectReader<'a> {
+    judge: &'a mut Judge,
+    view: Option<crate::rom_project::View<'a>>,
+}
+
+impl crate::mips_rom::Reader for ProjectReader<'_> {
+    async fn ask(&mut self, request: Value) -> Result<Value, String> {
+        if let Some(view) = &self.view {
+            if let Some(value) = view.lookup(&request)? {
+                return Ok(value);
+            }
+        }
+        self.judge.lookup(request, self.view.as_ref()).await
     }
 }
 
@@ -287,6 +337,7 @@ impl Verifier {
             request["link_mips"] = json!(crate::mips_link::VERSION);
             request["parse_mips"] = json!(crate::mips_elf::VERSION);
             request["rom_mips"] = json!(crate::mips_rom::VERSION);
+            request["project_mips"] = json!(crate::rom_project::VERSION);
             for (key, value) in trial {
                 request[key] = value.clone();
             }

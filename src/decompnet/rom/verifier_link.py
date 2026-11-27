@@ -1,10 +1,43 @@
 """Pack-specific ROM reads and diagnostic decoding for the Rust MIPS verifier."""
 
+from contextvars import ContextVar
 from dataclasses import asdict
+from functools import cached_property
+from pathlib import Path
 
 from ..elfobj import FunctionObj, Reloc, symbol_at
 from .link import DataMismatch, LinkResult
 from .match import _Linker, compiler_library_name
+
+project_inputs: ContextVar[bool] = ContextVar("mips_verifier_project_inputs", default=False)
+
+
+class PackReader:
+    """Describe a pinned scratch project and keep the Python reader lazy for fallback."""
+
+    def __init__(self, net, project, function):
+        self.net, self.project, self.function = net, project, function
+
+    @cached_property
+    def fallback(self):
+        return self.net.reader(self.project, self.function)
+
+    def __call__(self, address, size):
+        return self.fallback(address, size)
+
+    def inputs(self, symbols):
+        root = Path(self.project["root"])
+        cfg = self.net.cfg(self.project)
+        images = []
+        if any(root.glob("*.yaml")):
+            from ..app.engine.core import _load_images
+
+            images = _load_images(self.net, self.project)
+        segments = [{"exclusive_ram_id": "", **segment} for segment in cfg["segments"]]
+        return {"root": str(root), "image": cfg["rom"]["file"], "image_sha1": cfg["rom"].get("sha1"),
+                "segments": segments, "images": images,
+                "names": {name: symbol.address for name, symbol in symbols.by_name.items()},
+                "addresses": {address: (symbol.name, symbol.size) for address, symbol in symbols.by_addr.items()}}
 
 
 def _encode_reads(reads):
@@ -13,9 +46,17 @@ def _encode_reads(reads):
 
 def link_rom(obj, target, symbols, read, exchange):
     """Keep overlay-aware memory reads and ECOFF/dispatch evidence with the project's reader."""
-    evidence = _Linker(obj, target.name, target, symbols, read)
+    native_inputs = isinstance(read, PackReader)
+
+    def read_dispatch(address, size):
+        value = exchange("rom_read", [address, size])["rom_read_value"]
+        return bytes.fromhex(value) if value is not None else None
+
+    evidence = _Linker(obj, target.name, target, symbols, read_dispatch if native_inputs else read)
 
     def lookup(request):
+        if "project_inputs" in request and native_inputs:
+            return read.inputs(symbols)
         if "read" in request:
             data = read(*request["read"])
             return data.hex() if data is not None else None
@@ -40,7 +81,10 @@ def link_rom(obj, target, symbols, read, exchange):
 
     plan = asdict(target)
     plan["code"] = target.code.hex()
-    reply = exchange("rom_mips", {"object": obj.hex(), "target": plan}, lookup)
+    request = {"object": obj.hex(), "target": plan}
+    if native_inputs:
+        request["rom_offset"] = read.function["rom_offset"]
+    reply = exchange("rom_mips", request, lookup)
     if reply is None:
         return None
     if "code" not in reply:
