@@ -1764,7 +1764,7 @@ def test_a_project_that_names_its_originals_by_md5_in_baseroms_folders(tmp_path)
         folder = tmp_path / "baseroms" / version
         folder.mkdir(parents=True)
         (folder / "checksum-compressed.md5").write_text(f"{digest}  build/{version}/x-compressed.z64\n")
-    (tmp_path / "Makefile").write_text("VERSION ?= gc-us-mq\nall:\n\t@true\nsetup:\n\t@true\n"
+    (tmp_path / "Makefile").write_text("VERSION ?= gc-us-mq\nREGION ?= US\nall:\n\t@true\nsetup:\n\t@true\n"
                                        "ROM := baseroms/$(VERSION)/baserom.z64\n")
     project = ForkProject(tmp_path, create_state=False)
     found = project.md5_roms()
@@ -1773,6 +1773,12 @@ def test_a_project_that_names_its_originals_by_md5_in_baseroms_folders(tmp_path)
     assert need["path"] == "baseroms/ntsc-1.2/baserom.z64" and need["sha1"] is None
     assert {v["version"] for v in need["md5_versions"]} == {"ntsc-1.2", "gc-us-mq"}
     assert project.setup_commands("ntsc-1.2")[-1][:2] == ["make", "VERSION=ntsc-1.2"]
+
+
+def test_region_and_revision_versions_still_split_for_make(tmp_path):
+    (tmp_path / "Makefile").write_text("REGION ?= us\nVERSION ?= v80\nall:\n\t@true\n")
+    project = ForkProject(tmp_path, create_state=False)
+    assert project.setup_commands("us.v80")[-1][:3] == ["make", "REGION=us", "VERSION=v80"]
 
 
 def test_md5_table_in_the_readme_names_versions_and_the_roms_file(tmp_path):

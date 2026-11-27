@@ -1278,7 +1278,7 @@ class ForkProject:
             text = (self.root / "Makefile").read_text(errors="replace", encoding="utf-8")
             chosen = [f"{var}={_makefile_version_word(text, var, version)}"] if version and (
                 var := _version_var(text)) else []
-            if version and "." in version and re.search(r"^REGION\s*[:?]?=", text, re.M):
+            if version and re.fullmatch(r"[a-z]{2,3}\.v[0-9][\w.-]*", version, re.I) and re.search(r"^REGION\s*[:?]?=", text, re.M):
                 chosen = ["REGION=" + version.split(".")[0], "VERSION=" + version.split(".", 1)[1]]  # (us.v77)
             steps = [["make", *chosen, t] for t in _setup_targets(text)]
             if not steps and re.search(r"^split\s*:", text, re.M):  # (splat's output: *_auto.txt the link reads)
