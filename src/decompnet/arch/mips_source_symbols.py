@@ -10,7 +10,7 @@ from ..candidate_work import elf as candidate_elf
 
 MAX_BYTES = 64 * 1024
 MAX_SYMBOLS = 64
-JUMP, HIGH, LOW = 4, 5, 6
+JUMP, HIGH, LOW, PC16 = 4, 5, 6, 10
 WORD_MASK = 0xffffffff
 SIGNED_LOW_OPS = {0x08, 0x09, 0x18, 0x19} | set(range(0x20,0x40))
 MASKS = {JUMP:0xfc000000, HIGH:0xffff0000, LOW:0xffff0000}
@@ -45,7 +45,7 @@ def local_call_names(obj, name, candidate):
     return found
 
 
-def bindings(obj, name, target, vram, resolve):
+def bindings(obj, name, target, vram, resolve, *, ignore_pc16=False):
     """ELF relocation order pairs pending HI16s with their LO16, including shared lows.
 
     A missing opcode, register change, unpaired relocation, conflicting occurrence,
@@ -72,15 +72,16 @@ def bindings(obj, name, target, vram, resolve):
                 at = relocation['r_offset'] - start
                 if not 0 <= at < size:continue
                 kind = relocation['r_info_type']
-                if at % 4 or kind not in MASKS or table.is_RELA():return []
+                if at % 4 or (kind not in MASKS and not (ignore_pc16 and kind == PC16)) or table.is_RELA():return []
                 symbol = symbols.get_symbol(relocation['r_info_sym'])
                 relocations.append((at, kind, symbol.name, symbol['st_shndx'] == 'SHN_UNDEF'))
-        masks = {at:MASKS[kind] for at,kind,_,_ in relocations}
+        masks = {at:MASKS.get(kind, 0xffff0000) for at,kind,_,_ in relocations}
         if len(masks) != len(relocations):return []
         word = lambda data,at:int.from_bytes(data[at:at+4],order)
         if any((word(code,at)^word(target,at)) & masks.get(at,WORD_MASK) for at in range(0,size,4)):return []
         pending = {}; values = {}; bad = set(); seen = set()
         for at,kind,symbol,undefined in relocations:
+            if kind == PC16:continue  # Its branch target is not an address binding.
             if not undefined or not symbol or resolve(symbol) is not None:continue
             seen.add(symbol)
             if len(seen) > MAX_SYMBOLS:return []

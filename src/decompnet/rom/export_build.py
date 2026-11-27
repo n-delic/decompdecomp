@@ -455,7 +455,8 @@ def segment_addresses() -> dict[str, int]:
                 offset = seg['start'] + vram - seg['vram']
                 target = image[offset:offset + size] if offset >= 0 else b''
                 for found in bindings(obj, name, target, vram,
-                                      lambda symbol: None if symbol in names and symbol not in addresses else 0):
+                                      lambda symbol: None if symbol in names and symbol not in addresses else 0,
+                                      ignore_pc16=True):
                     evidence.setdefault(found['name'], set()).add(found['address'])
     for name, values in evidence.items():
         if len(values) != 1:
