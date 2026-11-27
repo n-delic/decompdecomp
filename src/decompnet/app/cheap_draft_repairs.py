@@ -11,8 +11,15 @@ target's assembly, the declared types), so a draft that doesn't show the shape c
 extra compiles per function; the raw draft is still tried first and stays the stored seed. `linked_switch_empty_arm` is
 not here: it works from a compiled jump table's differences, so it can only run after a compile (the Deep Permuter's
 diff-gated step).
+
+A target jump table that sends several entries to one place is the other gate (`_table_copies`): m2c stacks those case
+labels over one body, where the game wrote the body per label. The stage is the only automatic lane that returns to an
+open function after a library update, and without it a function with 400 recorded trials, all from before
+`case_label_copies` existed, never kept that step (2655 -> 800, exact with `symbol_run_pointer` on top). The tables come
+from `switch_tables.read`, which reads MIPS ROM games only, so other consoles get nothing here yet (ROADMAP.md).
 """
 from decomprepair import (
+    case_label_copies,
     frame_padding_repairs,
     global_array_repairs,
     guard_shape_repairs,
@@ -20,6 +27,7 @@ from decomprepair import (
     mmio_repairs,
     stack_object_size_repairs,
     stack_run_array_repairs,
+    symbol_run_pointer,
     symbol_width_repairs,
     target_call_arity_repairs,
     unknown_symbol_offset_repairs,
@@ -59,12 +67,30 @@ def _declared(source, name, arch, asm, header, flags):
             yield repair.module, lambda repair=repair: registry.run(repair.module, **repair.arguments(context))
 
 
-def variants(draft: str, name: str, arch: str, asm: str = '', header: str = '', flags=()) -> list[tuple[str, str]]:
+def _table_copies(draft, name, tables):
+    """The draft with a body per stacked case label, then that with its last run of one symbol's accesses read through a
+    block pointer (a step worth keeping, then the two together). Only for a target table with a shared destination."""
+    if not any(len(set(targets)) < len(targets) for _low, targets in tables):
+        return []
+    copies = case_label_copies.variants(draft, name)
+    if not copies:
+        return []
+    family, copied = copies[-1]  # every run of stacked labels copied
+    out = [(family, copied)]
+    pointed = symbol_run_pointer.variants(copied, name)
+    if pointed:
+        out.append((f'{family}+{pointed[0][0]}', pointed[0][1]))  # the first child is the last run
+    return out
+
+
+def variants(draft: str, name: str, arch: str, asm: str = '', header: str = '', flags=(),
+             tables=()) -> list[tuple[str, str]]:
     """[(family, source)] of the cheap families' changes to `draft`, each a separate candidate, at most MAX_CANDIDATES.
     A family that fails on unusual source is skipped: a draft is never lost to a rewrite."""
     asm, header = asm or '', header or ''
     out, seen = [], {draft}
-    calls = list(_stages(draft, name, arch, asm, header))
+    calls = [(case_label_copies.FAMILY, lambda: _table_copies(draft, name, tables))]
+    calls += list(_stages(draft, name, arch, asm, header))
     try:
         calls += list(_declared(draft, name, arch, asm, header, flags))
     except Exception:  # noqa: BLE001 - a registry that can't be asked costs the extras, not the draft

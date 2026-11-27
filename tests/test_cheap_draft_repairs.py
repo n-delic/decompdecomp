@@ -61,3 +61,39 @@ def test_a_failing_family_is_skipped_and_the_rest_still_run(monkeypatch):
 def test_the_setting_turns_the_stage_off():
     assert cheap_draft_repairs.enabled({})
     assert not cheap_draft_repairs.enabled({'cheap_draft_repairs': False})
+
+
+# A switch as m2c writes it when its jump table sends several entries to one place: stacked labels over one body, then
+# the stores after the switch through one symbol's address.
+STACKED = """void f(void) {
+    switch (sPage) {
+    case 1:
+    case 2:
+        M2C_FIELD(&D_80070000, s16 *, 0) = 1;
+        break;
+    case 3:
+        M2C_FIELD(&D_80070000, s16 *, 0) = 2;
+        break;
+    }
+    M2C_FIELD(&D_80070010, s32 *, 0x14) = 0;
+    M2C_FIELD(&D_80070010, s32 *, 0x18) = 0;
+}
+"""
+SHARED_TABLE = [(1, [0x80040030, 0x80040030, 0x800400C8])]
+
+
+def test_a_shared_table_entry_gets_the_copied_bodies_then_the_run_pointer_on_top():
+    found = cheap_draft_repairs.variants(STACKED, 'f', 'mips', tables=SHARED_TABLE)
+    assert [family for family, _ in found[:2]] == ['case_label_copies', 'case_label_copies+symbol_run_pointer']
+    copied, pointed = found[0][1], found[1][1]
+    assert copied.count('M2C_FIELD(&D_80070000, s16 *, 0) = 1;') == 2
+    assert '__run_' not in copied
+    # only the run after the switch is read through the pointer, on top of the copies
+    assert pointed.count('M2C_FIELD(&D_80070000, s16 *, 0) = 1;') == 2
+    assert 's8 *__run_D_80070010 = (s8 *) &D_80070010;' in pointed
+
+
+def test_stacked_labels_without_a_shared_table_entry_are_left_alone():
+    for tables in ((), [(1, [0x80040030, 0x80040060, 0x800400C8])]):
+        families = [family for family, _ in cheap_draft_repairs.variants(STACKED, 'f', 'mips', tables=tables)]
+        assert not [family for family in families if 'case_label_copies' in family]

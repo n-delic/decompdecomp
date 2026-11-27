@@ -2433,6 +2433,10 @@ reuse the saved map. See [ROM Explorer](docs/ROM_EXPLORER.md) for support and li
 
 ## Next
 
+- Autopilot's case-copy draft candidates (`case_label_copies`, then `symbol_run_pointer`) are gated by a target jump
+  table with a shared destination, which `switch_tables.read` reads only for MIPS ROM games: read PowerPC, ARM, x86
+  and project-mode tables so every console gets them.
+
 ### Matched callees' prototypes in project-mode drafts
 
 ROM drafts take the prototype of each matched callee the shared header does not declare (`app/callee_prototypes.py`).
