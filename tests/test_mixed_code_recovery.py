@@ -16,6 +16,18 @@ def packed(words,big=True):
     return struct.pack(('>' if big else '<')+f'{len(words)}I',*words)
 
 
+@pytest.mark.parametrize('big', [True, False])
+def test_a_branch_delay_slot_cannot_become_a_separate_source_unit(tmp_path, big):
+    path, console = project(tmp_path, big=big)
+    image = bytearray((tmp_path/'rom.bin').read_bytes())
+    # The frame is the delay slot of a branch into its own body.
+    image[0x3c:0x40] = packed([0x14400003], big)
+    (tmp_path/'rom.bin').write_bytes(image)
+    asm(tmp_path/'asm/nonmatchings/unit/dropped.s',
+        list(struct.unpack(('>' if big else '<')+f'{(len(image)-32)//4}I', image[32:])), 32, raw=True, big=big)
+    assert not mixed_code.refine(path, tmp_path, 'rom.bin', console, log=lambda _: None)
+
+
 @pytest.mark.parametrize('big',[True,False])
 def test_a_closed_frame_requires_valid_bytes_and_balanced_returns(big):
     data=packed(BODY,big)

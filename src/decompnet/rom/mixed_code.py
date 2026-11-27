@@ -14,6 +14,20 @@ MAX_CANDIDATES = 512
 REFINE_TIMEOUT = 120
 
 
+def _branch_delay_frame(image, offset, size, start, order):
+    """A stack allocation in a branch delay slot is part of its surrounding body."""
+    if offset < start + 4:
+        return False
+    word = int.from_bytes(image[offset-4:offset], order)
+    if word >> 26 not in (4, 5, 6, 7, 20, 21, 22, 23):
+        return False
+    displacement = word & 0xffff
+    if displacement & 0x8000:
+        displacement -= 0x10000
+    target = offset + 4 * displacement
+    return offset + 4 <= target < offset + size
+
+
 def refine(config, workdir, image, console, log=print, *, visited=None):
     """Add C subsegment boundaries inside raw .word output, preserving explicit data and known functions."""
     from . import split
@@ -132,7 +146,9 @@ def refine(config, workdir, image, console, log=print, *, visited=None):
         visited.add((offset,target,row[1]))
         size=validate(rom,offset,row[1],target,big_endian=console.big_endian,cpu=console.cpu_variant,
                       asm_check=console.asm_reason)
-        if size and not any(offset<other<offset+size for other,_,_ in calls):
+        if (size and not _branch_delay_frame(rom,offset,size,row[2].rom_start,
+                                             'big' if console.big_endian else 'little')
+                and not any(offset<other<offset+size for other,_,_ in calls)):
             accepted.append((offset,offset+size,row))
     # Competing called frames must not cut through each other.
     accepted=[a for a in accepted if not any(a is not b and a[0]<b[1] and b[0]<a[1] for b in accepted)]
