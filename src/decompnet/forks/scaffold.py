@@ -70,7 +70,18 @@ def prepare(project, log=print, *, limit: int = 32, units: set[str] | None = Non
                            if refs / name in target.parents), None)
             if not target.is_file():
                 continue
-            if layout is None:
+            state_root = (project.root / STATE).resolve()
+            target_parts = target.relative_to(state_root).parts if state_root in target.parents else ()
+            nested = (len(target_parts) >= 4 and target_parts[0].startswith('verified-program-references-')
+                      and target_parts[2] == 'objects')
+            if nested:
+                # Verified program references use program/objects while their split is asm/program.
+                program = target_parts[1]
+                relative = Path(program, *target_parts[3:]).with_suffix('')
+                assembly = (project.root / 'asm' / program / Path(*target_parts[3:]).with_suffix('.s')).resolve()
+                if project.root.resolve() not in assembly.parents:
+                    continue
+            elif layout is None:
                 # Native assembly-only objdiff units can use an existing generic C object rule too.
                 # Probe it; never add a Makefile rule or replace the assembly's linked baseline.
                 name = str(entry.get('name') or '')

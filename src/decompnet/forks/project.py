@@ -91,6 +91,7 @@ class Unit:
     options: dict | None = None  # the unit's own objdiff options
     mappings: dict | None = None  # objdiff symbol mappings (target name -> base name)
     auto: bool = False  # split off by dtk because no file covers it (auto_00_80003100_text)
+    scaffold: bool = False  # app-created candidate, not an upstream source file
 
 
 @functools.lru_cache(maxsize=64)
@@ -2018,7 +2019,8 @@ class ForkProject:
             out.append(Unit(u.get("name") or u.get("path") or "?", self.root / t if t else None,
                             self.root / b if b else None, meta.get("source_path"),
                             bool(meta.get("complete", u.get("complete", False))), u.get("scratch"),
-                            u.get("options") or None, u.get("symbol_mappings") or None, bool(meta.get("auto_generated"))))
+                            u.get("options") or None, u.get("symbol_mappings") or None, bool(meta.get("auto_generated")),
+                            bool(meta.get("autopilot_scaffold"))))
         return out
 
     def units(self) -> list[Unit]:
@@ -2047,7 +2049,12 @@ class ForkProject:
         make = cfg.get("custom_make") or "make"
         tool = _tool(make) or make
         rel = self._target(unit.base)  # (named from the build's folder: `-C sub` builds final.o for sub/final.o)
-        return self.run([tool, *cfg.get("custom_args", []), rel], log=log, timeout=UNIT_SECONDS)
+        args = cfg.get("custom_args", [])
+        result = self.run([tool, *args, rel], log=log, timeout=UNIT_SECONDS)
+        if unit.scaffold and Path(tool).stem.lower() == "ninja" and not result[0] and "unknown target" in result[1]:
+            from .ninja_candidates import build
+            return build(self, unit, tool, args, log, UNIT_SECONDS) or result
+        return result
 
     def build_units(self, units: list[Unit], log=lambda *_: None) -> list[tuple[bool, str]]:
         """Build several units' objects in one run of the build: (built, the log) for each, in the order given.
