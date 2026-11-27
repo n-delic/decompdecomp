@@ -17,6 +17,8 @@ def test_lone_nop_is_deferred_as_possible_padding(tmp_path):
     assert not padding_only(obj)
     obj.write_bytes(b'not an object')
     assert not padding_only(obj)
+    obj.write_bytes(bytes(8 * 1024 * 1024 + 1))
+    assert not padding_only(obj)
 
 
 @pytest.mark.parametrize('body, expected', [

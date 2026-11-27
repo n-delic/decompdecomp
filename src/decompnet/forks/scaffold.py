@@ -167,7 +167,7 @@ def prepare(project, log=print, *, limit: int = 32, units: set[str] | None = Non
                 log(f'Deferred {entry.get("name")}: its assembly marks functions as handwritten; review them first.')
                 continue
             from .assembly_evidence import padding_only
-            if padding_only(target):
+            if project.root.resolve() in target.parents and padding_only(target):
                 log(f'Deferred {entry.get("name")}: its only function is a nop; review its boundary first.')
                 continue
             candidate = relative.with_suffix('.c')
