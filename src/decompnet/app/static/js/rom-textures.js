@@ -13,6 +13,7 @@ function romGroupedSlotsHTML(group, selected) {
 function romTextureControlsHTML(region) {
   const detected=region.detected_asset;if(!detected || ['audio','model','metadata'].includes(detected.media))return '';
   const saved=region.annotation?.preview_settings || {};
+  if(!Number.isInteger(detected.frames) && !detected.textures?.length && !detected.texture_groups?.length)return '';
   if(detected.texture_groups?.length){
     const selected=Number(saved.texture)||0,groups=romGroupedTextureOptions(detected.texture_groups,selected);
     return `<div class="rom-asset-fields"><label class="field"><span>Texture bank</span><select data-texture-bank>${groups.map(({bank,selected})=>`<option value="${bank}"${selected?' selected':''}>Bank ${bank}</option>`).join('')}</select></label><label class="field"><span>Texture</span><select data-texture-texture>${romGroupedSlotsHTML(groups.find(group=>group.selected)||groups[0],selected)}</select></label></div>`;
@@ -23,6 +24,7 @@ function romTextureControlsHTML(region) {
 }
 function setupRomTextureControls(body,region,active) {
   if(!region.detected_asset || ['audio','model','metadata'].includes(region.detected_asset.media))return;
+  if(!Number.isInteger(region.detected_asset.frames) && !region.detected_asset.textures?.length && !region.detected_asset.texture_groups?.length)return;
   if(region.detected_asset.texture_groups?.length){
     const bank=body.querySelector('[data-texture-bank]'),texture=body.querySelector('[data-texture-texture]');
     const groups=romGroupedTextureOptions(region.detected_asset.texture_groups,0);
