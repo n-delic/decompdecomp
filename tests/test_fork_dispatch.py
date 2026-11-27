@@ -1,10 +1,25 @@
 """A reference-only dispatch entry stays assembly until its reference changes."""
 import json
 
+import pytest
+
 from decompnet import consoles
 from decompnet.app.engine import RomNetwork
 from decompnet.forks.assembly_evidence import dispatches
 from tests.mips_elf_fixture import linked_object
+
+
+@pytest.mark.parametrize('body, expected', [
+    ('3c0910000120000824080100', True),
+    ('3c0910000120000800004025', True),
+    ('3c0910010120000824080100', False),
+    ('3c0910000120000824090100', False),
+    ('3c09100003e0000824080100', False),
+])
+def test_fixed_dispatch_requires_exact_calling_convention(tmp_path, body, expected):
+    obj = tmp_path / 'target.o'
+    obj.write_bytes(linked_object('entry', 0x80001000, bytes.fromhex(body)))
+    assert bool(dispatches(consoles.get('n64'), tmp_path, obj)) is expected
 
 
 def test_reference_requires_a_complete_non_sdk_dispatch(tmp_path):
@@ -73,19 +88,20 @@ def test_sync_preserves_claims_and_matches(tmp_path):
     assert row['status'] == 'matched' and 'fork_dispatch' not in json.loads(row['meta'])
 
 
-def test_autopilot_does_not_scaffold_an_assembly_only_unit(tmp_path, monkeypatch):
+@pytest.mark.parametrize('body', ['0000000824080100', '3c0910000120000824080100'])
+def test_autopilot_does_not_scaffold_an_assembly_only_unit(tmp_path, monkeypatch, body):
     from decompnet.forks.project import ForkProject
 
     root = tmp_path / 'project'
     root.mkdir()
     obj = root / 'target.o'
-    obj.write_bytes(linked_object('entry', 0x80001000, bytes.fromhex('0000000824080100')))
+    obj.write_bytes(linked_object('entry', 0x80001000, bytes.fromhex(body)))
     (root / 'objdiff.json').write_text(json.dumps({'units': [{'name': 'unit', 'target_path': obj.name}]}))
     net = RomNetwork(tmp_path / 'app.db', tmp_path)
     net.forks._register('p', 'P', 'fork', root, {'kind': 'fork', 'origin': 'local',
                          'platform': 'n64', 'ready': True}, 'x')
     report = {'measures': {'total_functions': 1, 'matched_functions': 0, 'total_code': '8', 'matched_code': '0'},
-              'units': [{'name': 'unit', 'functions': [{'name': 'entry', 'size': '8'}]}]}
+              'units': [{'name': 'unit', 'functions': [{'name': 'entry', 'size': str(len(bytes.fromhex(body)))}]}]}
     monkeypatch.setattr(ForkProject, 'report', lambda self: report)
     monkeypatch.setattr(net.forks, 'start_indexing', lambda slug: None)
     monkeypatch.setattr('decompnet.app.forkengine.toolchains.installed', lambda name: {'id': name})

@@ -1203,7 +1203,7 @@ class ForkEngine:
         # Reference-only dispatch tables have no C source; check their complete object
         # bodies before candidate preparation, and recompute on every measurement.
         from ..forks.assembly_evidence import dispatches
-        assembly_units = {uname for uname, f in rows if int(f.get('size', 0)) == 8
+        assembly_units = {uname for uname, f in rows if int(f.get('size', 0)) in (8, 12)
                           and (f.get('fuzzy_match_percent') or 0) < 100}
         assembly_evidence = {uname: dispatches(console, fp.root, units[uname].target)
                              for uname in assembly_units if uname in units}
