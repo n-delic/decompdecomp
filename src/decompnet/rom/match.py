@@ -394,8 +394,11 @@ class _Linker:
 
     def holds_own_word(self, shndx: int, off: int, base: int) -> bool:
         """Can the ROM keep the candidate's datum at `off` at `base + off`: the ROM's bytes there are the datum's
-        (its first word, or less when the section ends sooner). A word with a relocation in it (a jump table's
-        entry) and a section with no bytes (.bss) always can: their bytes are only known after linking.
+        (its first word, or less when the section ends sooner). A word with a relocation in it and a section with
+        no bytes (.bss) can: their bytes are only known after linking. A jump table's entry is the exception: it
+        is relocated against this function's own code, so the ROM's word there must be an address inside the
+        target function. A switch whose table was voted onto a record array the function indexes more often than
+        its table showed two wrong `%hi`/`%lo` rows (300 points) that the source did not have.
 
         A 72-instruction SN function with one `li.s` literal had it voted to a global pointer's address, because
         that global's %lo appears three times within BASE_WINDOW and the pool's own address only once per half
@@ -407,7 +410,14 @@ class _Linker:
             sec = self.elf.get_section(shndx)
             mine = b"" if sec["sh_type"] == "SHT_NOBITS" else sec.data()[off:off + 4]
             relocated = any(off - 4 < at < off + 4 for at, _, _ in self._relocs_in(shndx))
-            if not mine or relocated:
+            entry = any(at == off and rtype == R_MIPS_32 and symbol["st_shndx"] == self.fn_shndx
+                        for at, rtype, symbol in self._relocs_in(shndx))
+            if entry:
+                word = self.read((base + off) & 0xFFFFFFFF, 4)
+                at = int.from_bytes(word, self.target.order) | 0x80000000 if word and len(word) == 4 else 0
+                start = self.target.vram | 0x80000000  # some games store the words without the KSEG0 bit
+                cache[key] = start <= at < start + len(self.target.code)
+            elif not mine or relocated:
                 cache[key] = True
             else:
                 cache[key] = self.read((base + off) & 0xFFFFFFFF, len(mine)) == mine
