@@ -12,7 +12,7 @@ largest. The target holds `sqrt.d`, the `c.eq.d` self-compare with a `jal` of th
 the top with a `j` at the bottom, and only even float registers (a per-function `-mfp32` profile).
 
 The source change, and the measured result before and after (scores, the project judge), from the plain form of the
-m2c draft (910):
+m2c draft (500 under this profile):
 1. `v = sqrt(a)` with no retry block, `double sqrt(double);` declared (the draft named both calls after the project's
    symbol for the library routine): 245. Library `sqrt_nan_fallback_double`.
 2. The pool word written as the literal `10000.0f` (still held in its local): 40. Library `float_literal_global`.
