@@ -742,3 +742,24 @@ def test_decoded_indexed_image_can_use_a_rom_palette_and_flip_rows(tmp_path, mon
         rom_explorer.asset_preview(net, 'game', request | {'options': options | {'flip_y': 'true'}})
     with pytest.raises(NetworkError, match='decompressed indexed image'):
         rom_explorer.asset_preview(net, 'game', request | {'options': options | {'source': 'rom'}})
+
+
+def test_detected_image_preview_survives_region_boundaries(tmp_path, monkeypatch):
+    from decompnet.rom.asset_formats import _png
+
+    encoded = _png(2, 2, bytes([255, 0, 0, 255]*4))
+    offset = PAGE_BYTES - 8
+    image = bytes(offset) + encoded + bytes(16)
+    path = tmp_path/'image'
+    path.write_bytes(image)
+    report = analyse(image, [], [], [])
+    row = next(row for row in report['regions'] if row['start'] == PAGE_BYTES)
+    assert row['detected_asset']['offset'] == offset
+    console = SimpleNamespace(asset_scene=lambda *_: None, asset_preview=lambda *_: None)
+    net = SimpleNamespace(console=lambda _: console)
+    monkeypatch.setattr(rom_explorer, '_current', lambda *_: ({}, dict(report=report), row))
+    monkeypatch.setattr(rom_explorer, '_source', lambda *_: dict(path=path))
+    monkeypatch.setattr(rom_explorer, '_resource_links', lambda *_: None)
+    shown = rom_explorer.asset_preview(net, 'game', dict(region=row['id'], image_hash=hashlib.sha256(image).hexdigest()))
+    assert shown['media'] == 'image'
+    assert shown['details']['width'] == shown['details']['height'] == 2
