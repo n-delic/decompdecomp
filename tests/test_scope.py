@@ -556,3 +556,29 @@ def test_re_measuring_builds_what_changed_first(tmp_path, monkeypatch):
     assert builds == [1] and _sums(net) == (2, 1)
     net.forks.check(slug, log=lambda *_: None, build=True)
     assert builds == [1, 1] and _statuses(net)["game_a"] != "matched"
+
+
+def test_sync_reads_data_symbols_only_for_units_with_reported_functions(tmp_path, monkeypatch):
+    """A report can have thousands of data-only units; they cannot supply a function to filter."""
+    from decompnet.app import forkengine
+
+    net = RomNetwork(tmp_path / 'decomp.db', tmp_path / 'ws')
+    root = tmp_path / 'ws' / 'p'
+    root.mkdir(parents=True)
+    slug = _project(net, root, monkeypatch)
+    code = root / 'code.o'
+    assets = [Unit(f'asset_{i}', root / f'asset_{i}.o', None, None, False, None) for i in range(100)]
+    units = [Unit('game', code, None, 'src/game.c', False, None), *assets]
+    report = {'measures': {'total_functions': 2, 'matched_functions': 0, 'total_code': '32', 'matched_code': '0'},
+              'units': [{'name': 'game', 'functions': [_fn('game_a', 0x1000), _fn('game_b', 0x1010)]},
+                        *[{'name': unit.name, 'functions': []} for unit in assets]]}
+    monkeypatch.setattr(ForkProject, 'units', lambda self: units)
+    monkeypatch.setattr(ForkProject, 'report', lambda self: report)
+    seen = []
+    def data_symbols(target):
+        seen.append(target)
+        return {'game_a'}
+    monkeypatch.setattr(forkengine, '_data_symbols', data_symbols)
+    net.forks.sync(slug, log=lambda *_: None)
+    assert seen == [code]
+    assert set(_statuses(net)) == {'game_b'}

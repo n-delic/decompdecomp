@@ -1177,7 +1177,10 @@ class ForkEngine:
                 raise NetworkError(f"objdiff couldn't measure the project: {e}") from None
         units = {u.name: u for u in fp.units()}
         addresses = consoles.get(cfg.get("platform")).function_addresses(fp)
-        data = {n: _data_symbols(u.target) for n, u in units.items()}
+        # Reports can contain thousands of data-only assets. Only units with reported functions can
+        # contribute a misclassified data symbol, so opening the others cannot change the result.
+        function_units = {u["name"] for u in rep.get("units", []) if u.get("functions")}
+        data = {n: _data_symbols(u.target) for n, u in units.items() if n in function_units}
         rows = [(u["name"], f) for u in rep.get("units", []) for f in u.get("functions", [])
                 if f["name"] not in data.get(u["name"], ())]
         listed = _set_aside(fp)
