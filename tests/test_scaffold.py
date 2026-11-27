@@ -352,3 +352,47 @@ def test_scaffold_ambiguous_object_suffix_falls_back_safely():
         {'base_path': 'build/src/b.c.o', 'metadata': {'source_path': 'src/b.c'}},
     ]}
     assert _object_layout(cfg) == (Path('build'), True)
+
+
+def test_nested_reference_candidates_use_the_child_build(tmp_path, monkeypatch):
+    child = tmp_path / 'game'
+    (child / '.decomp-wtf/objdiff-references/targets/asm').mkdir(parents=True)
+    (child / '.decomp-wtf/objdiff-references/targets/asm/demo.s.o').write_bytes(b'verified')
+    (child / 'asm').mkdir()
+    (child / 'asm/demo.s').write_text('glabel demo\njr $ra\nnop\n')
+    (child / 'Makefile').write_text('')
+    cfg = {'custom_make': 'make', 'custom_args': ['VERSION=us'], 'units': [
+        {'name': 'game/main', 'base_path': 'game/build/src/main.c.o',
+         'metadata': {'source_path': 'game/src/main.c'}},
+        {'name': 'game/asm/demo', 'target_path': 'game/.decomp-wtf/objdiff-references/targets/asm/demo.s.o',
+         'metadata': {'assembly_source': 'game/asm/demo.s'}},
+    ]}
+    (tmp_path / 'objdiff.json').write_text(json.dumps(cfg))
+    fp = ForkProject(tmp_path)
+    commands = []
+    def run(cmd, **kwargs):
+        commands.append(cmd)
+        (child / cmd[-1]).write_bytes(b'compiled')
+        return True, ''
+    monkeypatch.setattr(fp, 'run', run)
+    made = prepare(fp)
+    assert len(made) == 1 and made[0].startswith('game/src/decompdecomp/')
+    unit = fp.unit('game/asm/demo')
+    assert unit.scaffold_dir == 'game'
+    assert unit.base.is_file()
+    assert commands[0][1:4] == ['-C', 'game', 'VERSION=us']
+    assert commands[0][-1].startswith('build/src/decompdecomp/')
+
+
+def test_nested_candidate_refuses_build_directory_escape(tmp_path, monkeypatch):
+    from decompnet.forks.project import Unit
+
+    (tmp_path / 'objdiff.json').write_text(json.dumps({'custom_make': 'make', 'units': []}))
+    (tmp_path / 'game').mkdir()
+    (tmp_path / 'game/Makefile').write_text('')
+    unit = Unit('demo', None, tmp_path/'outside.o', 'game/source.c', False, None,
+                scaffold=True, scaffold_dir='game')
+    fp = ForkProject(tmp_path)
+    monkeypatch.setattr(fp, 'run', lambda *a, **kw: pytest.fail('must not build outside child'))
+    ok, message = fp.build_unit(unit)
+    assert not ok and 'not inside' in message

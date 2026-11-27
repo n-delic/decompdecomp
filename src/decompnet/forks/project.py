@@ -92,6 +92,7 @@ class Unit:
     mappings: dict | None = None  # objdiff symbol mappings (target name -> base name)
     auto: bool = False  # split off by dtk because no file covers it (auto_00_80003100_text)
     scaffold: bool = False  # app-created candidate, not an upstream source file
+    scaffold_dir: str | None = None  # nested project whose build owns the candidate
 
 
 @functools.lru_cache(maxsize=64)
@@ -2022,7 +2023,7 @@ class ForkProject:
                             self.root / b if b else None, meta.get("source_path"),
                             bool(meta.get("complete", u.get("complete", False))), u.get("scratch"),
                             u.get("options") or None, u.get("symbol_mappings") or None, bool(meta.get("auto_generated")),
-                            bool(meta.get("autopilot_scaffold"))))
+                            bool(meta.get("autopilot_scaffold")), meta.get("autopilot_build_dir")))
         return out
 
     def units(self) -> list[Unit]:
@@ -2052,6 +2053,21 @@ class ForkProject:
         tool = _tool(make) or make
         rel = self._target(unit.base)  # (named from the build's folder: `-C sub` builds final.o for sub/final.o)
         args = cfg.get("custom_args", [])
+        if unit.scaffold and unit.scaffold_dir:
+            if not isinstance(unit.scaffold_dir, str):
+                return False, 'The nested candidate build directory is invalid.'
+            child = Path(unit.scaffold_dir)
+            root = self.root.resolve()
+            folder = (self.root / child).resolve()
+            if (child.is_absolute() or '..' in child.parts or root not in folder.parents
+                    or folder not in unit.base.resolve().parents or not unit.source
+                    or folder not in (self.root / unit.source).resolve().parents
+                    or Path(tool).stem.lower() not in ('make', 'gmake')
+                    or not (folder / 'Makefile').is_file()
+                    or any(a.startswith(('-C', '--directory', '-f', '--file', '--makefile')) for a in args)):
+                return False, 'The nested candidate build is not inside its project or has no supported Makefile.'
+            target = unit.base.resolve().relative_to(folder).as_posix()
+            return self.run([tool, '-C', child.as_posix(), *args, target], log=log, timeout=UNIT_SECONDS)
         if unit.scaffold and Path(tool).stem.lower() == "ninja":
             from .ninja_candidates import build
             result = build(self, unit, tool, args, log, UNIT_SECONDS)
