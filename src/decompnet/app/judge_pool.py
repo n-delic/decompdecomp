@@ -18,7 +18,7 @@ import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
-from . import edition
+from . import edition, remote_judge
 
 WORKERS = 4  # beside the app's own compile pool: enough to be fast, few enough to leave the machine usable
 LAUNCH = ('import sys\nfrom decompnet.app.cli import main\nsys.exit(main(sys.argv[1:]))')
@@ -63,7 +63,7 @@ class Worker:
 class JudgePool:
     """`judge_many(sources)` -> scores (0 is a match; None when a source did not compile or could not be judged)."""
 
-    def __init__(self, slug, fn, toolchain, flags, size=WORKERS, home=None):
+    def __init__(self, slug, fn, toolchain, flags, size=WORKERS, home=None, net=None):
         target = bytes(fn['target'] or b'').hex()
         self.request = {'op': 'judge', 'slug': slug,
                         'function': {'name': fn['name'], 'vram': fn['vram'], 'target': target},
@@ -74,6 +74,7 @@ class JudgePool:
         for worker in self.all:
             self.workers.put(worker)
         self.errors = []
+        self.remote = remote_judge.RemoteJudge.configured(net, slug, fn, self.request)
 
     def judge(self, source):
         worker = self.workers.get()
@@ -115,10 +116,18 @@ class JudgePool:
     def judge_many(self, sources, check=lambda: None, chunk=64):
         """Scores in the order of `sources`. `check` runs between chunks (cancellation, deadline)."""
         scores = []
+        if self.remote:
+            chunk = min(chunk, 64)
         with ThreadPoolExecutor(max_workers=len(self.all)) as executor:
             for at in range(0, len(sources), chunk):
                 check()
-                scores += list(executor.map(self.judge, sources[at:at + chunk]))
+                batch = sources[at:at + chunk]
+                remote = self.remote.batch(batch, check) if self.remote else {}
+                if not remote:
+                    # An offline or stale verifier should only delay the first batch in this search.
+                    self.remote = None
+                remaining = executor.map(self.judge, (source for i, source in enumerate(batch) if i not in remote))
+                scores.extend(remote[i] if i in remote else next(remaining) for i in range(len(batch)))
         return scores
 
     def close(self):

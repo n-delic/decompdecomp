@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS submissions(id INTEGER PRIMARY KEY AUTOINCREMENT, fun
     verified_at REAL, verifier TEXT, lease_verifier INTEGER, lease_until REAL, tries INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX IF NOT EXISTS submissions_state ON submissions(state, id);
 CREATE INDEX IF NOT EXISTS submissions_verified ON submissions(verified_at);
+CREATE TABLE IF NOT EXISTS judge_trials(id INTEGER PRIMARY KEY, request TEXT NOT NULL, expires REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS notes(id INTEGER PRIMARY KEY AUTOINCREMENT, function_id INTEGER, user_name TEXT NOT NULL,
     text TEXT NOT NULL, created_at REAL NOT NULL);
 ";
@@ -326,7 +327,7 @@ impl Project {
             |r| Ok((r.get(0)?, r.get::<_, Option<i64>>(1)?.unwrap_or(0), r.get::<_, Option<i64>>(2)?.unwrap_or(0))),
         )?;
         let pending: i64 =
-            db.query_row("SELECT COUNT(*) FROM submissions WHERE state='reported'", [], |r| r.get(0))?;
+            db.query_row("SELECT COUNT(*) FROM submissions WHERE state='reported' AND id NOT IN (SELECT id FROM judge_trials)", [], |r| r.get(0))?;
         let name = Self::meta(db, "name").unwrap_or_else(|| self.slug.clone());
         let platform = Self::meta(db, "platform").unwrap_or_default();
         let compiler = Self::meta(db, "compiler").map(|c| compiler_text(&c)).unwrap_or_default();
@@ -629,6 +630,59 @@ impl Project {
 
     // ---------------------------------------------------------------------------------------------- verification
 
+    fn enqueue_trials(&self, user: &User, body: Value) -> Result<Value, Problem> {
+        let function = &body["function"];
+        let Some(name) = function["name"].as_str() else { return problem("function name is required") };
+        let Some(target) = function["target"].as_str() else { return problem("target is required") };
+        let Some(sources) = body["sources"].as_array() else { return problem("sources are required") };
+        if sources.is_empty() || sources.len() > 64 || sources.iter().any(|s| !s.is_string())
+            || body["compiler"]["toolchain"].as_str().is_none()
+            || body["pack_sha256"].as_str().filter(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())).is_none()
+            || body["header_sha256"].as_str().filter(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())).is_none()
+        {
+            return problem("send up to 64 sources with compiler and snapshot information");
+        }
+        let mut db = self.db.lock().unwrap();
+        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let at = now();
+        tx.execute("DELETE FROM submissions WHERE id IN (SELECT id FROM judge_trials WHERE expires<=?)", [at])?;
+        tx.execute("DELETE FROM judge_trials WHERE expires<=?", [at])?;
+        let id: Option<i64> = tx.query_row(
+            "SELECT id FROM functions WHERE name=? AND vram IS ? AND lower(hex(target))=? AND status!='removed'",
+            params![name, function["vram"].as_i64(), target], |r| r.get(0),
+        ).optional()?;
+        let Some(id) = id else { return problem("publish the current function target before delegating trials") };
+        let request = json!({"compiler": body["compiler"], "pack_sha256": body["pack_sha256"],
+                             "header_sha256": body["header_sha256"]}).to_string();
+        let mut ids = Vec::with_capacity(sources.len());
+        for source in sources {
+            tx.execute(
+                "INSERT INTO submissions(function_id,user_id,user_name,source,reported_score,created_at) VALUES(?,?,?,?,1,?)",
+                params![id, user.id, user.name, source.as_str(), at],
+            )?;
+            let trial = tx.last_insert_rowid();
+            tx.execute("INSERT INTO judge_trials VALUES(?,?,?)", params![trial, request, at + 120.0])?;
+            ids.push(trial);
+        }
+        tx.commit()?;
+        Ok(json!({"ids": ids}))
+    }
+
+    fn trial_results(&self, user: &User, body: Value) -> Result<Value, Problem> {
+        let Some(ids) = body["ids"].as_array().filter(|ids| ids.len() <= 64 && ids.iter().all(Value::is_i64))
+            else { return problem("send up to 64 trial ids") };
+        self.read(|db| {
+            let mut stmt = db.prepare_cached(
+                "SELECT s.id,s.state,s.verified_score FROM judge_trials j JOIN submissions s ON s.id=j.id \
+                 WHERE s.user_id=? AND j.expires>? AND s.id IN (SELECT value FROM json_each(?))",
+            )?;
+            let rows = stmt.query_map(params![user.id, now(), Value::Array(ids.clone()).to_string()], |r| {
+                Ok(json!({"id": r.get::<_, i64>(0)?, "state": r.get::<_, String>(1)?, "score": r.get::<_, Option<i64>>(2)?}))
+            })?.collect::<Result<Vec<_>, _>>()?;
+            Ok(json!({"results": rows}))
+        })
+    }
+
     pub fn pending(&self, limit: i64) -> Result<Value, Problem> {
         self.read(|db| self.pending_on(db, limit))
     }
@@ -636,7 +690,7 @@ impl Project {
     fn pending_on(&self, db: &Connection, limit: i64) -> Result<Value, Problem> {
         let mut statement = db.prepare_cached(
             "SELECT s.id,f.name,f.unit,f.vram,f.size,f.compiler,s.source,s.reported_score,s.user_name,s.created_at \
-             FROM submissions s JOIN functions f ON f.id=s.function_id WHERE s.state='reported' ORDER BY s.id LIMIT ?",
+             FROM submissions s JOIN functions f ON f.id=s.function_id WHERE s.state='reported' AND s.id NOT IN (SELECT id FROM judge_trials) ORDER BY s.id LIMIT ?",
         )?;
         let rows: Vec<Value> = statement
             .query_map([limit.clamp(1, 500)], |r| {
@@ -675,6 +729,14 @@ impl Project {
                 return problem(format!("submission {id} is leased to another verifier"));
             }
         }
+        let trial_expiry: Option<f64> = tx.query_row(
+            "SELECT expires FROM judge_trials WHERE id=?", [id], |r| r.get(0),
+        ).optional()?;
+        if let Some(expiry) = trial_expiry {
+            if expiry <= at || holder.is_none() || holder != lease || until.is_none_or(|end| end <= at) {
+                return problem("trial lease expired or belongs to another verifier");
+            }
+        }
         // Scores measured by agents' own tools differ from the verifier's for anything but a match, so any compile
         // is recorded with the verifier's score. Rejected: it didn't compile, or it claimed a match that isn't one.
         let accepted = matches!(score, Some(s) if s >= 0 && !(reported == 0 && s != 0));
@@ -684,7 +746,7 @@ impl Project {
             params![if accepted { "verified" } else { "rejected" }, score, detail, at, verifier.name, id],
         )?;
         let mut matched = false;
-        if let (true, Some(score)) = (accepted, score) {
+        if let (true, true, Some(score)) = (trial_expiry.is_none(), accepted, score) {
             if score == 0 {
                 // (its matching C is its best: not stored twice)
                 matched = tx.execute(
@@ -705,21 +767,24 @@ impl Project {
     }
 
     /// Lease up to `max` reported submissions to a verifier (those whose compiler it has, if it names any).
-    pub fn lease(&self, verifier: i64, toolchains: &[String], max: i64) -> Result<Vec<Value>, Problem> {
+    pub fn lease(&self, verifier: i64, toolchains: &[String], max: i64, trials: bool, trials_only: bool) -> Result<Vec<Value>, Problem> {
         let mut db = self.db.lock().unwrap();
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let at = now();
         let wanted = serde_json::to_string(toolchains).unwrap_or_else(|_| "[]".into());
         let found: Vec<Value> = {
             let mut statement = tx.prepare_cached(
-                "SELECT s.id,f.id,f.name,f.unit,f.vram,f.size,f.target,f.relocs,f.compiler,s.source,s.reported_score \
-                 FROM submissions s JOIN functions f ON f.id=s.function_id \
+                "SELECT s.id,f.id,f.name,f.unit,f.vram,f.size,f.target,f.relocs,f.compiler,s.source,s.reported_score,j.request \
+                 FROM submissions s JOIN functions f ON f.id=s.function_id LEFT JOIN judge_trials j ON j.id=s.id \
                  WHERE s.state='reported' AND (s.lease_until IS NULL OR s.lease_until<?1) \
-                 AND (?2='[]' OR json_extract(f.compiler,'$.toolchain') IN (SELECT value FROM json_each(?2))) \
+                 AND ((j.id IS NULL AND NOT ?5) OR (j.id IS NOT NULL AND ?4 AND j.expires>?1 AND f.status!='removed')) \
+                 AND (?2='[]' OR coalesce(json_extract(j.request,'$.compiler.toolchain'),json_extract(f.compiler,'$.toolchain')) \
+                      IN (SELECT value FROM json_each(?2))) \
                  ORDER BY s.id LIMIT ?3",
             )?;
-            let rows = statement.query_map(params![at, wanted, max.clamp(1, 100)], |r| {
-                Ok(json!({"id": r.get::<_, i64>(0)?, "slug": self.slug,
+            let rows = statement.query_map(params![at, wanted, max.clamp(1, 100), trials, trials_only], |r| {
+                let trial = r.get::<_, Option<String>>(11)?.and_then(|s| serde_json::from_str::<Value>(&s).ok());
+                Ok(json!({"id": r.get::<_, i64>(0)?, "slug": self.slug, "trial": trial,
                           "function": {"id": r.get::<_, i64>(1)?, "name": r.get::<_, String>(2)?,
                                        "unit": r.get::<_, Option<String>>(3)?, "vram": r.get::<_, Option<i64>>(4)?,
                                        "size": r.get::<_, Option<i64>>(5)?,
@@ -791,7 +856,7 @@ impl Project {
             // Matches verified here: not the ones the project came with (hosted_export.py).
             "SELECT id,name,unit,vram,matched_source,matched_by,matched_at FROM functions \
              WHERE status='matched' AND matched_at>? AND id IN \
-             (SELECT function_id FROM submissions WHERE state='verified' AND verified_score=0) \
+             (SELECT function_id FROM submissions WHERE state='verified' AND verified_score=0 AND id NOT IN (SELECT id FROM judge_trials)) \
              ORDER BY matched_at LIMIT 1000",
         )?;
         let rows: Vec<Value> = statement
@@ -1209,7 +1274,7 @@ impl Hosted {
     }
 
     /// Up to `max` submissions for a verifier, across the projects it registered for.
-    pub fn lease(&self, user: &User, verifier: i64, max: i64) -> Result<Value, Problem> {
+    pub fn lease(&self, user: &User, verifier: i64, max: i64, trials: bool, trials_only: bool) -> Result<Value, Problem> {
         let (projects, toolchains) = self.verifier_of(user, verifier)?;
         let mut work = Vec::new();
         for slug in projects {
@@ -1218,7 +1283,7 @@ impl Hosted {
                 break;
             }
             if let Some(project) = self.project(&slug) {
-                work.extend(project.lease(verifier, &toolchains, left)?);
+                work.extend(project.lease(verifier, &toolchains, left, trials, trials_only)?);
             }
         }
         Ok(json!({"work": work, "lease_seconds": LEASE_SECONDS}))
@@ -1421,6 +1486,27 @@ async fn pending(
     blocking(move || project.pending(limit)).await
 }
 
+async fn trials(
+    State(hosted): State<Arc<Hosted>>, UrlPath(slug): UrlPath<String>, headers: HeaderMap, body: Bytes,
+) -> Response {
+    let user = match admin(&hosted, &headers) {
+        Ok(user) => user,
+        Err(denied) => return denied,
+    };
+    let Some(project) = hosted.project(&slug) else {
+        return json_response(StatusCode::NOT_FOUND, json!({"error": "no such project"}));
+    };
+    let body = match json_body(&body) {
+        Ok(body) => body,
+        Err(bad) => return bad,
+    };
+    blocking(move || match body["op"].as_str() {
+        Some("enqueue") => project.enqueue_trials(&user, body),
+        Some("results") => project.trial_results(&user, body),
+        _ => problem("send enqueue or results"),
+    }).await
+}
+
 async fn verdict(State(hosted): State<Arc<Hosted>>, UrlPath(slug): UrlPath<String>, headers: HeaderMap, body: Bytes) -> Response {
     let user = match verifier(&hosted, &headers) {
         Ok(user) => user,
@@ -1436,7 +1522,15 @@ async fn verdict(State(hosted): State<Arc<Hosted>>, UrlPath(slug): UrlPath<Strin
     let score = body.get("score").and_then(Value::as_i64);
     let lease = body.get("verifier").and_then(Value::as_i64);
     let detail = body.get("detail").and_then(Value::as_str).unwrap_or("").chars().take(4000).collect::<String>();
-    blocking(move || project.verdict(&user, lease, id, score, &detail)).await
+    blocking(move || {
+        if let Some(lease) = lease {
+            let (projects, _) = hosted.verifier_of(&user, lease)?;
+            if !projects.contains(&slug) {
+                return problem("this verifier cannot judge that project");
+            }
+        }
+        project.verdict(&user, lease, id, score, &detail)
+    }).await
 }
 
 async fn matches(
@@ -1501,7 +1595,9 @@ async fn lease(State(hosted): State<Arc<Hosted>>, headers: HeaderMap, body: Byte
         return json_response(StatusCode::BAD_REQUEST, json!({"error": "verifier is required"}));
     };
     let max = body.get("max").and_then(Value::as_i64).unwrap_or(1);
-    blocking(move || hosted.lease(&user, id, max)).await
+    let trials = body["judge_trials"].as_bool().unwrap_or(false);
+    let trials_only = body["judge_trials_only"].as_bool().unwrap_or(false);
+    blocking(move || hosted.lease(&user, id, max, trials, trials_only)).await
 }
 
 /// POST /v1/work/release {verifier, slug, id, reason}: a submission this verifier couldn't judge.
@@ -1664,6 +1760,7 @@ pub fn router(hosted: Arc<Hosted>, max_body: usize) -> Router {
         .route("/p/{slug}/mcp", post(mcp).get(mcp_other).delete(mcp_other))
         .route("/v1/projects", get(projects))
         .route("/v1/p/{slug}/pending", get(pending))
+        .route("/v1/p/{slug}/judge-trials", post(trials))
         .route("/v1/p/{slug}/verdicts", post(verdict))
         .route("/v1/p/{slug}/matches", get(matches))
         .route("/v1/p/{slug}/pack", get(verification_pack))
@@ -1878,25 +1975,75 @@ mod tests {
     }
 
     #[test]
+    fn judge_trials_use_the_verifier_queue_without_recording_matches() {
+        let (_dir, p) = project();
+        let owner = user(1);
+        let request = json!({
+            "function": {"name": "small", "vram": 2147487744i64, "target": ""},
+            "compiler": {"toolchain": "ido", "flags": ["-O2"]},
+            "pack_sha256": "a".repeat(64), "header_sha256": "b".repeat(64),
+            "sources": ["void small(){}", "other"]
+        });
+        let ids = p.enqueue_trials(&owner, request).unwrap()["ids"].clone();
+        assert_eq!(p.pending(10).unwrap()["submissions"], json!([]));
+        assert!(p.lease(3, &[], 10, false, false).unwrap().is_empty());
+        assert!(p.lease(3, &["other".into()], 10, true, false).unwrap().is_empty());
+        let leased = p.lease(3, &["ido".into()], 10, true, false).unwrap();
+        assert_eq!(leased.len(), 2);
+        assert_eq!(leased[0]["trial"]["compiler"]["flags"], json!(["-O2"]));
+        let id = ids[0].as_i64().unwrap();
+        assert!(p.verdict(&user(2), Some(4), id, Some(0), "").is_err());
+        assert_eq!(p.verdict(&user(2), Some(3), id, Some(0), "").unwrap()["matched"], false);
+        assert_eq!(p.trial_results(&owner, json!({"ids": ids})).unwrap()["results"]
+            .as_array().unwrap().iter().find(|row| row["id"] == id).unwrap()["score"], 0);
+        assert_eq!(p.trial_results(&user(2), json!({"ids": ids})).unwrap()["results"], json!([]));
+        let status: String = p.read(|db| Ok(db.query_row("SELECT status FROM functions WHERE id=1", [], |r| r.get(0))?)).unwrap();
+        assert_eq!(status, "open");
+    }
+
+    #[test]
+    fn local_and_remote_verifiers_lease_disjoint_trials_from_the_same_queue() {
+        let (_dir, p) = project();
+        let agent = user(1);
+        let claim = p.call(&agent, "claim_function", &json!({"function": "small"})).unwrap();
+        let token = token_of(&claim);
+        p.call(&agent, "submit_result", &json!({"function": "small", "claim_token": token, "source": "ordinary", "score": 4})).unwrap();
+        let request = json!({
+            "function": {"name": "small", "vram": 2147487744i64, "target": ""},
+            "compiler": {"toolchain": "ido", "flags": []},
+            "pack_sha256": "a".repeat(64), "header_sha256": "b".repeat(64),
+            "sources": ["first trial", "second trial"]
+        });
+        p.enqueue_trials(&agent, request).unwrap();
+        let local = p.lease(3, &[], 1, true, true).unwrap();
+        assert_eq!(local[0]["source"], "first trial");
+        let remote = p.lease(4, &[], 3, true, false).unwrap();
+        assert_eq!(remote.len(), 2);
+        assert_eq!(remote[0]["source"], "ordinary");
+        assert_eq!(remote[1]["source"], "second trial");
+        assert!(p.lease(3, &[], 1, true, true).unwrap().is_empty());
+    }
+
+    #[test]
     fn leases_are_exclusive_and_three_releases_give_up() {
         let (_dir, p) = project();
         let token = token_of(&p.call(&user(1), "claim_function", &json!({"function": "small"})).unwrap());
         for source in ["a", "b"] {
             p.call(&user(1), "submit_result", &json!({"function": "small", "claim_token": token, "source": source, "score": 3})).unwrap();
         }
-        let first = p.lease(10, &[], 1).unwrap();
-        let second = p.lease(11, &[], 5).unwrap();
+        let first = p.lease(10, &[], 1, false, false).unwrap();
+        let second = p.lease(11, &[], 5, false, false).unwrap();
         assert_eq!((first.len(), second.len()), (1, 1));
         assert_ne!(first[0]["id"], second[0]["id"]);
-        assert!(p.lease(12, &[], 5).unwrap().is_empty()); // both leased
-        assert!(p.lease(12, &["ido-7.1".to_string()], 5).unwrap().is_empty());
+        assert!(p.lease(12, &[], 5, false, false).unwrap().is_empty()); // both leased
+        assert!(p.lease(12, &["ido-7.1".to_string()], 5, false, false).unwrap().is_empty());
         let id = first[0]["id"].as_i64().unwrap();
         let checker = User { id: 9, name: "v".into(), role: "verifier".into() };
         assert!(p.verdict(&checker, Some(11), id, Some(1), "").unwrap_err().0.contains("another verifier"));
         assert!(p.release_lease(11, id, "not mine").is_err());
         for (round, verifier) in [10, 12, 13].into_iter().enumerate() {
             if round > 0 {
-                assert_eq!(p.lease(verifier, &[], 1).unwrap()[0]["id"].as_i64(), Some(id));
+                assert_eq!(p.lease(verifier, &[], 1, false, false).unwrap()[0]["id"].as_i64(), Some(id));
             }
             let state = p.release_lease(verifier, id, "no compiler").unwrap()["state"].clone();
             assert_eq!(state, if round == 2 { "unverifiable" } else { "reported" });

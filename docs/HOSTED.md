@@ -251,3 +251,47 @@ On a copy of v-rally, the whole loop ran with the real compilers:
 - Sign-in for users with GitHub, instead of tokens handed out by an admin. This needs a GitHub OAuth app of the
   server's own.
 - Fork (project-mode) projects. Only ROM projects export.
+
+## Delegate desktop ROM searches to another computer
+
+The desktop Deep Permuter can send score-only pair and two-move search batches to
+the same hosted verifier queue. Run a gateway and verifier that both support
+judge trials, and give the verifier the matching decompdecomp installation and
+`--packs DIR`. Publish the desktop project with `decomp hosted-publish` and
+copy the verification pack SHA-256 printed by that command.
+
+Set `DECOMP_REMOTE_JUDGES` to the absolute path of a private JSON file when
+launching the desktop app. Each entry is keyed by the local project slug.
+Use a hosted admin token and the hosted server's HTTPS URL.
+
+```json
+{
+  "local-game": {
+    "server": "https://decomp.example",
+    "remote": "published-game",
+    "token": "dd_...",
+    "verifier_token": "<token for a hosted verifier user>",
+    "pack_sha256": "<SHA-256 printed by hosted-publish>"
+  }
+}
+```
+
+With `verifier_token` set, the desktop starts a local two-slot verifier when it
+first queues a batch. Local and remote verifiers lease individual candidates
+from the same queue using the same protocol. The desktop-managed verifier
+leases only search trials and exits when idle or when the desktop exits. Omit
+`verifier_token` to use only independently managed verifiers on that queue.
+You can run the hosted gateway on the desktop machine if you want it to own
+the queue. The usual local judge pool handles fallback if the gateway or its
+verifiers are unavailable.
+
+Omit `remote` when the slugs are identical. Republish and update the digest
+after changing the project inputs. The verifier checks the pack digest, target
+bytes and context header before judging. It uses the toolchain and flags
+requested by the desktop.
+
+Trials return scores to the search and leave hosted claims and progress alone.
+The desktop still rejudges a proposed winner through the normal attempt path.
+The search continues locally for unavailable scores, including when a verifier
+has yet to download an updated pack. Interactive attempts, diff-row batches,
+and PROJECT-mode builds use their existing paths.

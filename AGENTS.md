@@ -276,6 +276,8 @@ linting). In short:
 - Every behavior change gets a test in `tests/`. Tests that need a real game or a compiler skip when it isn't there
   (CI has none of them); small homemade games/objects live in `projects/demo-*` and are built by their own scripts.
 - `uv run ruff check src tests projects` passes (CI runs it). No formatter: don't run `ruff format`.
+- Start each change in a fresh Git worktree based on current `origin/main`. Commit the verified change,
+  open a pull request and merge it once the required checks pass so the user can test it from `main`.
 - A change goes on a branch named `<type>/<short-name>`, the type one of `feat`, `fix`, `refactor`, `perf`, `docs`, `test`, `ci`, `build`, `chore`, `revert` (`fix/ps2-long-symbol-names`); keep this naming convention even while the automatic label workflow is paused. An issue you open (`gh issue create`) gets `--label` for its kind (`bug`, `enhancement`,
   `documentation`, `question`) and for each console (`n64`, `psx`, `ps2`, `gc`, `wii`, `pc`, `ds`, `new-console`) and
   system (`linux`, `windows`) it's about: `gh label list` has them all.

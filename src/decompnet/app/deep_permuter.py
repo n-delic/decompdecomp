@@ -735,7 +735,7 @@ class Search(Permuter):
             return best
         self.log(f'Searching pairs of repairs: judging {len(kids)} single children, then pairs of the best '
                  f'{int(pair_search.TOP_K * self.pair_scale)} from different families.')
-        with judge_pool.JudgePool(proj['slug'], fn, own['toolchain'], flags, size=self.PAIR_WORKERS) as pool:
+        with judge_pool.JudgePool(proj['slug'], fn, own['toolchain'], flags, size=self.PAIR_WORKERS, net=self.net) as pool:
             cover = parent_bad = None
             if pair_search.row_coverage_enabled(self.net.cfg(proj)):
                 # the rows of each judgment too: a child that fixes a row of the difference is kept whatever its
@@ -1431,7 +1431,7 @@ class Search(Permuter):
             self.log('Searching two statement moves at once: every single move is judged, then a second move on '
                      'the least-different results.')
             rank = self._allocation_rank(proj, fn, source, rows, fork)
-            with judge_pool.JudgePool(proj['slug'], fn, own['toolchain'], flags) as pool:
+            with judge_pool.JudgePool(proj['slug'], fn, own['toolchain'], flags, net=self.net) as pool:
                 score, candidate, judged = paired_moves.search(
                     pool.judge_many, source, fn['name'], header, best, seen=self.local_seen, check=self.check,
                     log=self.log, rank=rank)

@@ -66,6 +66,8 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
     from .startup_steps import begin, end
     begin("Preparing the helpers, jobs and queues")
     from .permuter_worker import PermuterWorker
+    from .remote_judge import LocalVerifiers
+    net.local_verifiers = LocalVerifiers(home)
     net.permuter = PermuterWorker(net)
     # The helpers' address: the MCP gateway's when it runs (app/mcp_gateway.py), else this server's own /mcp.
     mcp_url = mcp_url or f"http://127.0.0.1:{port}/mcp"
@@ -113,6 +115,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
         if getattr(net,'autosave',None):bounded('Stopping project autosave workers',lambda _:net.autosave.close(),3)
         if close_window:bounded('Closing the app window',lambda _:window.close_app(),3)
         bounded('Stopping deep searches and queued repairs',lambda _:net.deep_sweeps.shutdown(),5)
+        bounded('Stopping local verifiers',lambda _:net.local_verifiers.close(),5)
         bounded('Stopping the permuter process',lambda _:net.permuter.close(),5)
         stopped=bounded('Saving agent recovery and releasing claims',lambda notify:manager.shutdown(notify=notify),30)
         if net.attempt_workers is not None:

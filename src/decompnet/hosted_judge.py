@@ -111,6 +111,12 @@ def judge(net, request: dict) -> dict:
         return {"error": "the target bytes aren't hex"}
     if bytes(fn["target"] or b"") != expected:
         return {"error": f"{slug}'s {fn['name']} here has other target bytes: another build of the game"}
+    if expected_header := request.get("header_sha256"):
+        import hashlib
+
+        header = net._context(proj["id"], fn["unit"])["header"]
+        if hashlib.sha256(header.encode()).hexdigest() != expected_header:
+            return {"error": "the verification pack has a different context header"}
     toolchain = compiler.get("toolchain")
     flags = compiler.get("flags") or []
     if not toolchain:
@@ -379,7 +385,7 @@ class Packs:
 
     def __init__(self, folder: Path, cache: Path):
         self.folder, self.cache = Path(folder), Path(cache)
-        self.nets: dict[str, tuple[tuple, object]] = {}
+        self.nets: dict[str, tuple[tuple, object, str]] = {}
 
     def slugs(self) -> list[str]:
         return sorted(p.stem for p in self.folder.glob("*.sqlite3"))
@@ -388,15 +394,20 @@ class Packs:
         path = self.folder / f"{slug}.sqlite3"
         if not path.is_file():
             return None
-        version = (path.stat().st_mtime_ns, path.stat().st_size)
+        stat = path.stat()
+        version = (stat.st_ino, stat.st_mtime_ns, stat.st_size)
         if slug not in self.nets or self.nets[slug][0] != version:  # (a newer pack: a new scratch project)
             from .app.tool_reader import reader_progress
-            from .hosted_pack import scratch
+            from .hosted_pack import digest, scratch
+            pack_sha256 = digest(path)
             net, found = scratch(path, self.cache)
             if found != slug:
                 raise ValueError(f"{path.name} is the pack of {found!r}")
             reader_progress(net)
-            self.nets[slug] = (version, net)
+            stat = path.stat()
+            if version != (stat.st_ino, stat.st_mtime_ns, stat.st_size):
+                raise ValueError(f"the pack for {slug} changed while it was opening")
+            self.nets[slug] = (version, net, pack_sha256)
         return self.nets[slug][1]
 
     def describe(self) -> dict:
@@ -405,10 +416,17 @@ class Packs:
         return {"projects": self.slugs(), "toolchains": installed, "version": __version__}
 
     def judge(self, request: dict) -> dict:
-        net = self.net(str(request.get("slug") or ""))
+        slug = str(request.get("slug") or "")
+        net = self.net(slug)
         if net is None:
             return {"error": f"this computer has no verification pack for {request.get('slug')!r}"}
-        return judge(net, request)
+        pack_sha256 = request.get("pack_sha256")
+        if pack_sha256 and pack_sha256 != self.nets[slug][2]:
+            return {"error": "the verification pack is a different revision"}
+        reply = judge(net, request)
+        if pack_sha256 and "error" not in reply:
+            reply["pack_sha256"] = pack_sha256
+        return reply
 
 
 def serve(net, lines=sys.stdin, out=sys.stdout) -> None:

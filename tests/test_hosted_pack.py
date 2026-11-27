@@ -89,19 +89,25 @@ def test_judging_from_packs(tmp_path, monkeypatch):
     request = {"slug": "game", "function": {"name": "f1", "vram": 0x80001100, "target": bytes([1, 3, 0xE0, 8]).hex()},
                "compiler": {"toolchain": "gcc-2.7.2-kmc", "flags": []}, "source": "MATCH"}
     assert packs.judge(request) == {"score": 0, "detail": "byte-identical"}
+    digest = hosted_pack.digest(folder / "game.sqlite3")
+    trial = request | {"pack_sha256": digest, "header_sha256": hashlib.sha256(b"typedef int s32;").hexdigest()}
+    assert packs.judge(trial)["pack_sha256"] == digest
+    assert "different revision" in packs.judge(trial | {"pack_sha256": "a" * 64})["error"]
+    assert "different context" in packs.judge(trial | {"header_sha256": "b" * 64})["error"]
     assert "no verification pack" in packs.judge(request | {"slug": "other"})["error"]
     assert "another build" in packs.judge(request | {"function": request["function"] | {"target": "00"}})["error"]
 
 
 @pytest.mark.skipif(mcp_gateway.built() is None, reason="the gateway isn't built (cargo build --release in gateway/)")
-def test_only_verifiers_get_packs_and_a_verifier_keeps_them_current(tmp_path):
+@pytest.mark.parametrize("managed", [False, True])
+def test_only_verifiers_get_packs_and_a_verifier_keeps_them_current(tmp_path, managed):
     net = game(tmp_path)
     folder = tmp_path / "hosted"
     hosted_export.export(net, "game", folder / "projects" / "game.sqlite3", log=lambda _: None)
     hosted_pack.export_pack(net, "game", folder / "packs" / "game.sqlite3")
     token = {name: subprocess.run(gateway("add-user", "--dir", str(folder), "--name", name, "--role", role),
                                   capture_output=True, text=True, check=True).stdout.strip()
-             for name, role in [("alice", "agent"), ("box", "verifier"), ("other-box", "verifier")]}
+             for name, role in [("alice", "agent"), ("box", "verifier"), ("owner", "admin")]}
     server = subprocess.Popen(gateway("serve", "--dir", str(folder), "--listen", "127.0.0.1:0"),
                               stdout=subprocess.PIPE, text=True)
     base = f"http://127.0.0.1:{int(server.stdout.readline().split()[1])}"
@@ -112,20 +118,43 @@ def test_only_verifiers_get_packs_and_a_verifier_keeps_them_current(tmp_path):
         assert got.status_code == 200 and got.content == (folder / "packs" / "game.sqlite3").read_bytes()
         again = httpx.get(url, headers={"Authorization": f"Bearer {token['box']}", "If-None-Match": got.headers["etag"]})
         assert again.status_code == 304
+        # The same verifier protocol also handles score-only desktop batches.
+        from decompnet.app.remote_judge import RemoteJudge
+
+        request = {"slug": "game", "function": {"name": "f1", "vram": 0x80001100, "target": "0103e008"},
+                   "compiler": {"toolchain": "gcc-2.7.2-kmc", "flags": ["-O2"]},
+                   "header_sha256": hashlib.sha256(b"typedef int s32;").hexdigest()}
+        remote = RemoteJudge({"server": base, "token": token["owner"],
+                              "pack_sha256": hashlib.sha256(got.content).hexdigest()}, request)
         # The verifier downloads the pack and hands its judge --packs.
         judge = tmp_path / "judge.py"
         judge.write_text(textwrap.dedent("""
             import json, sys
             open(sys.argv[1], "w").write(json.dumps(sys.argv[2:]))
             for line in sys.stdin:
-                print(json.dumps({"projects": ["game"], "toolchains": []}), flush=True)
+                request = json.loads(line)
+                if request["op"] == "describe":
+                    reply = {"projects": ["game"], "toolchains": ["gcc-2.7.2-kmc"]}
+                else:
+                    assert request["compiler"]["flags"] == ["-O2"]
+                    reply = {"score": 0, "pack_sha256": request["pack_sha256"]}
+                print(json.dumps(reply), flush=True)
         """))
         mine = tmp_path / "mine"
-        run = subprocess.run([str(mcp_gateway.built()), "verifier", "--server", base, "--token", token["box"],
-                              "--name", "box", "--poll", "0.2", "--idle-exit", "1", "--packs", str(mine),
+        managed_args = ["--parent-pipe", "--trials-only"] if managed else ["--idle-exit", "1"]
+        run = subprocess.Popen([str(mcp_gateway.built()), "verifier", "--server", base, "--token", token["box"],
+                              "--name", "box", "--poll", "0.2", "--packs", str(mine), *managed_args,
                               "--judge", sys.executable, "--judge-arg", str(judge), "--judge-arg", str(tmp_path / "argv")],
-                             capture_output=True, text=True, timeout=60)
-        assert run.returncode == 0, run.stderr
+                             stdin=subprocess.PIPE if managed else None, stderr=subprocess.PIPE, text=True)
+        try:
+            assert remote.batch(["candidate"], lambda: None) == {0: 0}
+            if managed:
+                run.stdin.close()
+            assert run.wait(10) == 0, run.stderr.read()
+        finally:
+            if run.poll() is None:
+                run.terminate()
+                run.wait(5)
         assert (mine / "game.sqlite3").read_bytes() == got.content
         assert json.loads((tmp_path / "argv").read_text()) == ["--packs", str(mine)]
     finally:

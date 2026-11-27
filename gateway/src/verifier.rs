@@ -37,6 +37,8 @@ struct Options {
     token: String,
     name: String,
     slots: usize,
+    trials_only: bool,
+    parent_pipe: bool,
     judge: Vec<String>,
     poll: Duration,
     idle_exit: Option<Duration>,
@@ -50,6 +52,8 @@ impl Options {
             token: std::env::var("DECOMP_VERIFIER_TOKEN").unwrap_or_default(),
             name: String::new(),
             slots: 2,
+            trials_only: false,
+            parent_pipe: false,
             judge: Vec::new(),
             poll: Duration::from_secs(3),
             idle_exit: None,
@@ -58,6 +62,14 @@ impl Options {
         let mut judge_args = Vec::new();
         let mut args = args.into_iter();
         while let Some(flag) = args.next() {
+            if flag == "--trials-only" {
+                options.trials_only = true;
+                continue;
+            }
+            if flag == "--parent-pipe" {
+                options.parent_pipe = true;
+                continue;
+            }
             let value = args.next().ok_or_else(|| format!("{flag} needs a value"))?;
             match flag.as_str() {
                 "--server" => options.server = value.trim_end_matches('/').to_string(),
@@ -82,6 +94,9 @@ impl Options {
             options.judge.push("--packs".into());
             options.judge.push(packs.to_string_lossy().into_owned());
         }
+        if options.trials_only && options.packs.is_none() {
+            return Err("--trials-only requires --packs".into());
+        }
         if options.server.is_empty() || options.token.is_empty() || options.name.is_empty() {
             return Err("--server, --token (or DECOMP_VERIFIER_TOKEN) and --name are required".into());
         }
@@ -100,6 +115,7 @@ impl Judge {
     fn start(command: &[String]) -> Result<Judge, String> {
         let mut child = Command::new(&command[0])
             .args(&command[1..])
+            .env_remove("DECOMP_VERIFIER_TOKEN")
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .kill_on_drop(true)
@@ -227,8 +243,13 @@ impl Verifier {
         let id = item.get("id").and_then(Value::as_i64).unwrap_or(0);
         let slug = item.get("slug").and_then(Value::as_str).unwrap_or("").to_string();
         let verifier = self.id.load(Ordering::Relaxed);
-        let request = json!({"op": "judge", "slug": slug, "function": item.get("function"),
-                             "compiler": item.get("compiler"), "source": item.get("source")});
+        let mut request = json!({"op": "judge", "slug": slug, "function": item.get("function"),
+                                 "compiler": item.get("compiler"), "source": item.get("source")});
+        if let Some(trial) = item["trial"].as_object() {
+            for (key, value) in trial {
+                request[key] = value.clone();
+            }
+        }
         let outcome = match self.judge() {
             Ok(mut judge) => match judge.ask(&request, JUDGE_LIMIT).await {
                 Ok(reply) => {
@@ -240,7 +261,8 @@ impl Verifier {
             Err(e) => Err(e),
         };
         let result = match outcome {
-            Ok(reply) if reply.get("error").is_none() => {
+            Ok(reply) if reply.get("error").is_none()
+                && (request["pack_sha256"].is_null() || request["pack_sha256"] == reply["pack_sha256"]) => {
                 let body = json!({"id": id, "verifier": verifier, "score": reply.get("score"),
                                   "detail": reply.get("detail").and_then(Value::as_str).unwrap_or("")});
                 self.post(&format!("/v1/p/{slug}/verdicts"), &body).await.map(|v| {
@@ -270,6 +292,22 @@ pub async fn main(args: Vec<String>) -> i32 {
             return 2;
         }
     };
+    if options.parent_pipe {
+        let (closed, parent) = tokio::sync::oneshot::channel();
+        std::thread::spawn(move || {
+            let _ = std::io::copy(&mut std::io::stdin().lock(), &mut std::io::sink());
+            let _ = closed.send(());
+        });
+        tokio::select! {
+            result = run(options) => result,
+            _ = parent => 0,
+        }
+    } else {
+        run(options).await
+    }
+}
+
+async fn run(options: Options) -> i32 {
     let slots = options.slots;
     let verifier = Arc::new(Verifier {
         http: reqwest::Client::builder().timeout(Duration::from_secs(60)).build().expect("HTTP client"),
@@ -280,8 +318,12 @@ pub async fn main(args: Vec<String>) -> i32 {
         released: AtomicU64::new(0),
     });
     let mut pause = Duration::from_secs(1);
+    let starting = Instant::now();
     while let Err(e) = verifier.register().await {
         log(format!("can't register yet: {e}"));
+        if verifier.options.idle_exit.is_some_and(|limit| starting.elapsed() >= limit) {
+            return 1;
+        }
         tokio::time::sleep(pause).await;
         pause = (pause * 2).min(Duration::from_secs(60));
     }
@@ -298,7 +340,9 @@ pub async fn main(args: Vec<String>) -> i32 {
         let free = running.available_permits();
         let mut leased = 0;
         if free > 0 {
-            let body = json!({"verifier": verifier.id.load(Ordering::Relaxed), "max": free});
+            let body = json!({"verifier": verifier.id.load(Ordering::Relaxed), "max": free,
+                              "judge_trials": verifier.options.packs.is_some(),
+                              "judge_trials_only": verifier.options.trials_only});
             match verifier.post("/v1/work/lease", &body).await {
                 Ok(reply) => {
                     for item in reply.get("work").and_then(Value::as_array).cloned().unwrap_or_default() {

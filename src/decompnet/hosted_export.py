@@ -158,7 +158,7 @@ def publish(net, slug: str, server: str, token: str, log=print, post=None) -> di
     `merge` does here (POST /v1/p/<slug>/upload)."""
     import tempfile
 
-    from .hosted_pack import export_pack
+    from .hosted_pack import digest, export_pack
     if post is None:
         import httpx
 
@@ -178,6 +178,8 @@ def publish(net, slug: str, server: str, token: str, log=print, post=None) -> di
             results[kind] = post(f"{server}/v1/p/{slug}/upload?kind={kind}", path.read_bytes(), token)
             done = ("created" if results[kind].get("created") else "updated") if kind == "project" else "uploaded"
             log(f"{slug}: {kind} ({path.stat().st_size / 2**20:.1f} MiB) -> {server}: {done}")
+        results["pack_sha256"] = digest(pack)
+        log(f"{slug}: verification pack SHA-256 {results['pack_sha256']}")
     results["functions"] = counts["functions"]
     return results
 

@@ -120,7 +120,7 @@ def test_the_deep_permuters_pair_pass_adopts_a_pair_the_ordinary_judge_confirms(
     pools = []
 
     class Pool:
-        def __init__(self, slug, fn, toolchain, flags, size=4, home=None):
+        def __init__(self, slug, fn, toolchain, flags, size=4, home=None, net=None):
             pools.append(size)
             self.errors = []
 
