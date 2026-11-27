@@ -2,7 +2,7 @@
 title: An || the draft split into nested ifs with one arm twice or a jump past it
 kind: finding
 compiler: sn-n64-281 -G0 -mips3 -O2
-evidence: exact-match
+evidence: verified
 date: 2026-11-27
 ---
 
