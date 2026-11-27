@@ -36,6 +36,11 @@ def generate(text):
     return out
 
 
+def one_family(text):
+    """The toy children as one family: a step's survey then takes only a few of them."""
+    return [("fix", child) for _, child in generate(text)]
+
+
 def test_the_chain_applies_the_best_child_each_step_until_it_reaches_zero():
     lines = []
     final, best, chain = prove_chain.prove("xyz", generate, score, None, log=lines.append)
@@ -54,7 +59,7 @@ def test_only_the_named_families_are_applied_and_the_chain_stops_when_nothing_im
 
 def test_the_steps_and_children_bounds_hold():
     calls = []
-    prove_chain.prove("xyz", generate, lambda t: calls.append(t) or score(t), None, steps=1, children=1, log=lambda _: None)
+    prove_chain.prove("xyz", generate, lambda t: calls.append(t) or score(t), None, steps=1, max_judged=1, log=lambda _: None)
     assert len(calls) == 2  # the start, and one child at the cap
     with pytest.raises(SystemExit, match="doesn't compile"):
         prove_chain.prove("BROKEN", generate, score, None, log=lambda _: None)
@@ -117,21 +122,21 @@ def test_the_generator_passes_the_functions_jump_tables_and_context_to_the_repai
 
 def test_children_left_out_by_the_cap_are_reported_when_a_batch_improves():
     lines = []
-    prove_chain.prove("xyz", generate, score, None, steps=1, children=1, log=lines.append)
-    assert any("left out" in line and "--children 1" in line for line in lines)
+    prove_chain.prove("xyz", one_family, score, None, steps=1, children=1, log=lines.append)
+    assert any("left out" in line and "--families" in line for line in lines)
     lines.clear()
     prove_chain.prove("xyz", generate, score, None, steps=1, children=50, log=lines.append)
     assert not any("left out" in line for line in lines)
 
 
 def test_a_batch_with_no_improving_child_goes_on_to_the_children_left_out():
-    # fix_0 improves but sits behind four children that do not (the cap's family order puts it late)
+    # the improving child sits behind four of its own family that do not, past the survey's few
     def late(text):
-        return [("noop", text + str(i)) for i in range(4)] + [("fix_0", "a" + text[1:])]
+        return [("noop", text + str(i)) for i in range(4)] + [("noop", "a" + text[1:])]
     lines = []
     final, best, chain = prove_chain.prove("xyz", late, lambda t: score(t[:3]), None,
                                            steps=1, children=2, log=lines.append)
-    assert chain and chain[0][0] == "fix_0" and best == 2
+    assert chain and chain[0][0] == "noop" and best == 2
     assert any("judging the other" in line for line in lines)
 
 
@@ -257,8 +262,8 @@ def test_the_run_stops_at_the_cap_on_judged_variants_and_says_how_many_were_left
 
 def test_the_cap_covers_all_steps_and_keeps_the_improvement_it_already_found():
     lines = []
-    # each step: the improving fix first, then noop and breaks. Batch size 1, so one variant judged per step.
-    final, best, chain = prove_chain.prove("xyz", generate, score, None, children=1, max_judged=2, log=lines.append)
+    # each step: an improving fix first. Batch size 1 and one family, so one variant judged per step.
+    final, best, chain = prove_chain.prove("xyz", one_family, score, None, children=1, max_judged=2, log=lines.append)
     assert (final, best) == ("abz", 1) and len(chain) == 2
     assert any(line.startswith("step 3") and "cap of 2" in line and "2 of 2 children" in line for line in lines)
     lines.clear()
@@ -293,3 +298,13 @@ def test_the_generator_gives_the_families_the_assembly_under_the_sources_names(m
     seen.clear()
     prove_chain.generator(judge, "f")("void f(char *b) { func_8005BB50(b); }")
     assert seen == ["jal func_8005BB50\n", "jal func_8005BB50\n"]
+
+
+def test_a_capped_step_sees_every_family_before_it_takes_a_child():
+    def many(text):
+        return [("small", f"s{i}") for i in range(20)] + [("large", "big")] if text == "start" else []
+    scores = {"start": 1030, "big": 330} | {f"s{i}": 1000 for i in range(20)}
+    judged = []
+    final, best, chain = prove_chain.prove("start", many, lambda t: judged.append(t) or scores[t], None, children=3,
+                                           max_judged=10, log=lambda _: None)
+    assert (final, best) == ("big", 330) and chain == [("large", 330)] and len(judged) <= 1 + 10

@@ -16,10 +16,11 @@ from decompnet.rom import match
 from tests.test_hosted import gateway
 from tests.test_hosted_pack import ROM, game
 
-BASELINE = "volatile int D_80002020 = 7; extern int callee(int); int f1(void) { return callee(D_80002020); }"
+BASELINE = ("volatile int D_80002020[2] = {6, 7}; extern int callee(int); "
+            "int f1(void) { return callee(D_80002020[1]); }")
 SOURCES = [
     BASELINE,
-    BASELINE.replace("= 7", "= 8"),
+    BASELINE.replace(", 7", ", 8"),
     BASELINE.replace("callee(D_", "callee(1 + D_"),
     BASELINE.replace("callee", "unknown_call"),
     "int f1( /* compile failure */",
@@ -46,15 +47,20 @@ def test_real_mips_objects_have_the_same_verdict_on_the_shared_queue(tmp_path, t
     with net.store.tx() as db:
         db.execute("INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)",
                    (proj["id"], "callee", CALLEE, 4, "func"))
+        db.execute("INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)",
+                   (proj["id"], "D_80002020", DATA, 8, "data"))
     target = match.RomTarget("f1", VRAM, b"", [])
     baseline = match.link(built.obj, "f1", target, net.symbols(proj["id"]), lambda *_: None)
     assert baseline.linked_code and not baseline.problems
-    symbols = {"callee": CALLEE, "D_80002020": DATA}
+    low = next(r.addend for r in baseline.candidate.relocs if r.symbol == "D_80002020" and r.type == 6)
+    symbols = {"callee": CALLEE, "D_80002020": DATA + low}
     relocs = [(r.offset, r.type, symbols[r.symbol]) for r in baseline.candidate.relocs]
     assert {kind for _, kind, _ in relocs} >= {4, 5, 6}
+    if toolchain == "gcc-2.7.2-kmc":
+        assert low == 4
     rom = bytearray(ROM)
     rom[VRAM - 0x80000000:VRAM - 0x80000000 + len(baseline.linked_code)] = baseline.linked_code
-    rom[DATA - 0x80000000:DATA - 0x80000000 + 4] = (7).to_bytes(4, "big")
+    rom[DATA - 0x80000000:DATA - 0x80000000 + 16] = bytes.fromhex("0000000600000007") + bytes(8)
     (tmp_path / "rom.z64").write_bytes(rom)
     cfg = json.loads(proj["config"])
     cfg["rom"]["sha1"] = hashlib.sha1(rom).hexdigest()
@@ -77,7 +83,7 @@ def test_real_mips_objects_have_the_same_verdict_on_the_shared_queue(tmp_path, t
     python_judge = hosted_judge.Packs(pack.parent, tmp_path / "python-cache")
     expected = [python_judge.judge({**request, "source": source}) for source in SOURCES]
     assert all("error" not in reply for reply in expected)
-    assert [reply["score"] for reply in expected[:2]] == [0, 1]
+    assert [reply["score"] for reply in expected[:2]] == [0, 1], expected
     assert all(reply["score"] > 0 for reply in expected[2:4])
     assert expected[-1]["score"] is None
 
@@ -89,13 +95,14 @@ def test_real_mips_objects_have_the_same_verdict_on_the_shared_queue(tmp_path, t
     try:
         base = f"http://127.0.0.1:{int(server.stdout.readline().split()[1])}"
         queue = RemoteJudge({"server": base, "token": tokens["admin"], "pack_sha256": digest}, request)
-        # The normal worker still compiles. Forbid only the Python patcher so a fallback cannot pass the test.
+        # Make sure the normal queue worker cannot fall back to Python instruction relocation.
         entry = (
             "from decompnet.rom import match\n"
             "from decompnet.app.cli import main\n"
             "def forbidden(*args):\n"
-            "    raise AssertionError('queued MIPS relocations must be applied in Rust')\n"
-            "match._patch = forbidden\n"
+            "    raise AssertionError('queued MIPS instruction ELF must be handled by Rust')\n"
+            "match._patch = match.raw_relocs = match.section_target = forbidden\n"
+            "match.MipsRelocationPairs = match._Linker.function = forbidden\n"
             "raise SystemExit(main())\n"
         )
         worker = subprocess.Popen(

@@ -195,8 +195,8 @@ def find(rom, boot_ranges):
     pointer = _pointer_find(rom, boot_ranges)
     if pointer:
         return pointer
-    from . import boot_brs, boot_lzss, boot_raw_deflate, boot_refpack, boot_rnc2, boot_two_bit
-    return (boot_raw_deflate.find(rom, boot_ranges) or boot_brs.find(rom, boot_ranges)
+    from . import boot_brs, boot_compact_mio, boot_lzss, boot_raw_deflate, boot_refpack, boot_rnc2, boot_two_bit
+    return (boot_compact_mio.find(rom, boot_ranges) or boot_raw_deflate.find(rom, boot_ranges) or boot_brs.find(rom, boot_ranges)
             or boot_lzss.find(rom, boot_ranges) or boot_refpack.find(rom, boot_ranges)
             or boot_two_bit.find(rom, boot_ranges) or boot_rnc2.find(rom, boot_ranges))
 
@@ -242,6 +242,11 @@ def add(config, workdir, image, rom, boot_ranges, log):
     expanded = bytearray(rom)
     two_bit = boot_two_bit.find(rom, boot_ranges) or boot_rnc2.find(rom, boot_ranges)
     repeated = {vram for vram, _, _ in programs if sum(vram == other for other, _, _ in programs) > 1}
+    # Distinct starting addresses can still overlap when one program extends
+    # into another overlay's slot; all programs then need scoped symbols.
+    overlapping = any(a < b+len(bt)+len(bd) and b < a+len(at)+len(ad)
+                      for i, (a, at, ad) in enumerate(programs)
+                      for b, bt, bd in programs[i+1:])
     replacing = any(boot_brs.replacement_entry(rom[0x1000:0x1010], text)
                     and vram < base + end - start and base < vram + len(text) + len(data)
                     for vram, text, data in programs for start, end, base in boot_ranges)
@@ -275,7 +280,7 @@ def add(config, workdir, image, rom, boot_ranges, log):
                           [start + after, 'c', f'{name}_text_{after:X}']])
         parts.append([start + len(text), 'data', name])
         segment = dict(name=name, type='code', start=start, vram=vram, subsegments=parts)
-        if repeated or replacing:
+        if overlapping or replacing:
             segment.update(exclusive_ram_id='replaced_boot' if replacing else f'gzip_slot_{vram:08X}', symbol_name_format=f'$VRAM_{name}',
                            symbol_name_format_no_rom=f'$VRAM_{name}')
         segments.append(segment)

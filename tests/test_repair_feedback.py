@@ -769,3 +769,35 @@ def test_autopilot_reuse_worker_scope_survives_thread_handoff(setup, monkeypatch
                                                threading.Event(), threading.Event(), lambda _:None)
     assert result['matched'] == 1 and fn(net,fid)['status'] == 'matched'
     assert not scheduled and not net.repair_feedback.listing('demo')['examples']
+
+
+def test_report_finds_a_renamed_function_by_its_old_name_or_address(setup):
+    net, winner, _, _, fid = setup
+    match(setup)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET name='spawnThing', meta=? WHERE id=?",
+                   (json.dumps({'naming': {'original_name': 'target', 'previous_name': 'target'}}), fid))
+    net.resolve_function = lambda agent, slug, name: net._function(name, slug)['name']  # (the engine's, for a plain network)
+    for name in ('target', 'func_80001000', '0x80001000', 'spawnThing'):
+        named = tools._named(net, winner, 'demo', {'function': name}, 'report_repair')
+        assert named['function'] == 'spawnThing'
+    assert 'classified as constants' in net.repair_feedback.report(winner, 'demo', 'spawnThing', category='constants')
+    with pytest.raises(NetworkError, match='no function'):
+        tools._named(net, winner, 'demo', {'function': 'target'}, 'compile_and_diff')
+    with pytest.raises(NetworkError, match='no function'):
+        tools._named(net, winner, 'demo', {'function': 'nothing'}, 'report_repair')
+
+
+def test_report_says_an_installed_repair_covered_the_match(setup):
+    from decompnet.app import repair_outcomes
+    net, winner, other, pid, fid = setup
+    case = match(setup)
+    repair_outcomes.prepare(net.repair_feedback.owner(case))
+    attempt = net.store.one('SELECT attempt_id FROM main.repair_examples WHERE id=?', case)['attempt_id']
+    with net.store.tx() as db:
+        db.execute('DELETE FROM repair_examples WHERE id=?', (case,))
+        db.execute('INSERT INTO repair_coverage_verdicts VALUES(?,?,?,?,?)', (attempt, attempt, 'x', 'some_family', 1.0))
+    reply = net.repair_feedback.report(winner, 'demo', 'target', category='constants')
+    assert reply.startswith('Nothing to file') and 'some_family' in reply
+    with pytest.raises(NetworkError, match='by you'):
+        net.repair_feedback.report(other, 'demo', 'target', category='constants')

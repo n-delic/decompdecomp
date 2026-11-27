@@ -903,7 +903,8 @@ priorities and preferences, `-dS -dR` scheduling), and run the recent repair fam
 
 `prove_chain.py --slug S --function F [SOURCE.c] --families a,b|all` applies the best-scoring child of those families
 (including the diff-gated ones the Deep Permuter calls with the judge's rows) step by step (bounded: one judge, capped steps, and at most 400 judged variants in the whole run, `--max-judged N` to raise it and 0 to remove it; `--children` is only the batch size; a run the cap stopped says how many were left; `--list` shows which families produce children) and prints
-each step's family and score: the cheap answer to "would the library have reached this from here". When edits are each
+each step's family and score (a step first judges a few children of every family, so a late family's large step is
+seen before a small one is taken): the cheap answer to "would the library have reached this from here". When edits are each
 worse alone, `--combine 10` merges a stalled step's 10 best children in pairs and triples (off by default: it found
 none on three three-edit functions, whose edits ranked far below the 10 best; narrow `--families` first).
 The Deep Permuter does the same after its operand pass (`Search.repair_pair_pass`, `app/pair_search.py`: the best 30 children

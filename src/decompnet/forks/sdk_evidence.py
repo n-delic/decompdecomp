@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 from io import BytesIO
@@ -10,6 +11,8 @@ from pathlib import Path
 from elftools.common.exceptions import ELFError
 from elftools.elf.elffile import ELFFile
 from elftools.elf.relocation import RelocationSection
+
+from .reference_cache import Cache, ChangedDuringRead, read
 
 
 def identities(console, root: Path, target: Path | None) -> dict[str, dict]:
@@ -21,7 +24,19 @@ def identities(console, root: Path, target: Path | None) -> dict[str, dict]:
     if root not in target.parents:
         return {}
     try:
-        raw = target.read_bytes()
+        raw = read(target)
+        digest = hashlib.sha256(raw).hexdigest()
+        result = _CACHE.get((console, root, target, digest), lambda: _identities(console, root, target, raw, digest))
+        return copy.deepcopy(result)
+    except (OSError, ChangedDuringRead):
+        return {}
+
+
+_CACHE = Cache()
+
+
+def _identities(console, root: Path, target: Path, raw: bytes, digest: str) -> dict[str, dict]:
+    try:
         with BytesIO(raw) as stream:
             elf = ELFFile(stream)
             if elf.little_endian == console.big_endian:
@@ -57,7 +72,7 @@ def identities(console, root: Path, target: Path | None) -> dict[str, dict]:
                 found[name] = {**identity, 'verified': True, 'kind': 'sdk',
                                'verification_method': 'fork-sdk-digest', 'symbol': name,
                                'object_path': target.relative_to(root).as_posix(),
-                               'object_sha256': hashlib.sha256(raw).hexdigest(),
+                               'object_sha256': digest,
                                'evidence': 'Complete reference-object bytes match a self-contained SDK routine; no relocations.'}
             return {name: value for name, value in found.items() if name not in duplicates}
     except (OSError, ValueError, TypeError, KeyError, IndexError, ELFError):

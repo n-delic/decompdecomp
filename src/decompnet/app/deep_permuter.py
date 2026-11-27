@@ -168,6 +168,7 @@ class Search(Permuter):
         # A caller that caps the run (release repairs, maintenance tasks) owns its budget and gets no more.
         self.extendable = getattr(log, 'maximum_seconds', None) is None
         self.log = log
+        self.miss_cache = getattr(log, 'miss_cache', None)
         self.tested = self.skipped = self.visited = self.rejected = 0
         from .search_efficiency import Measurements
         self.efficiency = Measurements()
@@ -2165,7 +2166,7 @@ class Search(Permuter):
     def _prime_trial_inputs(self, agent, proj, fn, sources, fork):
         # Scope each candidate exactly as the single-candidate path does. The map
         # lives for one generated chunk and never authorizes a winner.
-        store = self.net.project_store(proj['id'])
+        store = self.net.project_store(proj['id']) if self.miss_cache is None else None
         fid = fn['id']
         keys = []
         self._primed_scopes = {}
@@ -2179,6 +2180,8 @@ class Search(Permuter):
                 if recent_key is None:continue
                 scope = agent_tokens.target_scope(self.net, {**dict(fn), 'best_source': source}, '')
                 self._primed_scopes[recent_key] = scope
+                if self.miss_cache is not None:
+                    continue
                 key = search_history.signature(scope, source)
                 pending = trial_bookkeeping.lookup(store, ('reuse_trials', fid, key))
                 if pending is None:
@@ -2192,6 +2195,13 @@ class Search(Permuter):
                 ','.join('?' for _ in group)+')', fid, *group)
             found = {row['signature']: row['feedback'] for row in rows}
             self._primed_trials.update({(fn['id'], key): found.get(key) for key in group})
+
+    def _miss_feedback(self, proj, fn, key, *, read=False):
+        if self.miss_cache is not None:
+            item = self.miss_cache.get(key)
+            return item[1] if item is not None else None
+        return search_history.miss_feedback(self.net.project_store(proj['id']), fn['id'], key,
+                                            getattr(self, '_primed_trials', {}), read=read)
 
     @trial
     def _score_current(self, agent, proj, fn, source, best, fork):
@@ -2226,10 +2236,9 @@ class Search(Permuter):
         if scope is None:scope = agent_tokens.target_scope(self.net, {**dict(fn), 'best_source': source}, '')
         self._efficiency_scope = scope
         key = search_history.signature(scope, source)
-        store = self.net.project_store(proj['id'])
         cached = None
         if not self.measuring_baseline and not (current_trial() or {}).get('fresh'):
-            cached = search_history.miss_feedback(store, fn['id'], key, getattr(self, '_primed_trials', {}), read=True)
+            cached = self._miss_feedback(proj, fn, key, read=True)
         feedback = json.loads(cached) if cached else None
         score = feedback.get('score') if isinstance(feedback, dict) else feedback
         self._cached_rows = feedback.get('rows', []) if isinstance(feedback, dict) else []
@@ -2286,7 +2295,11 @@ class Search(Permuter):
                 if isinstance(feedback,dict):feedback['output']=getattr(self,'_trial_output',None)
                 packed_feedback = json.dumps(search_history.feedback(feedback), separators=(',', ':'))
                 reason = 'deep function search; path: ' + ' → '.join(provenance.get('lineage', []))
-                search_history.record_miss(store, fn['id'], key, reason, packed_feedback)
+                if self.miss_cache is not None:
+                    self.miss_cache.record(key, 'miss', reason, packed_feedback)
+                else:
+                    store = self.net.project_store(proj['id'])
+                    search_history.record_miss(store, fn['id'], key, reason, packed_feedback)
         if not self.measuring_baseline:
             self.recipe(fn, source, best, score, 'skipped' if reused else 'tested', elapsed_ms)
             if self.tested and self.tested % 100 == 0 and not reused:
@@ -2437,11 +2450,12 @@ def _full_run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, 
         remaining = max_variants - tried_twin
         if proj is not None and remaining > 1 and twins.has_open_deep_twin(proj, fn):
             remaining -= 1  # Reserve a destination compile if this draft improves.
-        if threads_per_function > 1:
-            from .deep_parallel import run as parallel
-            result = parallel(net, slug, name, minutes, remaining, log, compiler_profiles, threads_per_function, **order)
-        else:
-            result = _run(net, slug, name, minutes, remaining, log, compiler_profiles, **order)
+        with search_history.function_turn(log, net.project_store(fn['project_id']), fn['id']):
+            if threads_per_function > 1:
+                from .deep_parallel import run as parallel
+                result = parallel(net, slug, name, minutes, remaining, log, compiler_profiles, threads_per_function, **order)
+            else:
+                result = _run(net, slug, name, minutes, remaining, log, compiler_profiles, **order)
         result['rank_candidates'] = rank_candidates
         result['tested'] += tried_twin
         if proj is not None and not result['matched'] and result['tested'] < max_variants + result.get('extra_variants', 0):

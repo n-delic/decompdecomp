@@ -303,10 +303,13 @@ The Rust scorer applies reorder, insertion and deletion penalties and returns
 the final score. Older judge workers can still return a complete verdict through
 the same verifier protocol.
 
-For MIPS trials, the verifier also applies resolved instruction relocations
-and compares the linked instruction bytes in Rust. The Python adapter reads
-ELF, resolves symbolic addresses and relocation addends, and places and
-verifies candidate-defined data. Data checks still decide whether exact
-instruction bytes qualify as a match. The adapter and verifier negotiate this
-step over their local process connection, so older verifiers or adapters can
-use the Python implementation. The hosted queue protocol stays the same.
+For MIPS trials, the verifier reads ELF32 function bytes, symbol tables and
+instruction relocations in Rust. It pairs HI16 and LO16 in relocation table
+order, resolves references to ELF symbols and offsets, and applies the
+resolved instruction relocations. The Python adapter maps the references to
+the project's ROM addresses, places candidate-defined data and verifies its
+bytes. Those data checks still decide whether exact instruction bytes qualify
+as a match. Objects requiring unported metadata, such as IDO private
+procedures found only in ECOFF debug records, can use the Python ELF reader.
+The adapter and verifier negotiate these stages on their private connection
+and use the same hosted queue protocol.

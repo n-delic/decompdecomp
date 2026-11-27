@@ -23,6 +23,18 @@ def needs_name(fn) -> bool:
     return generated(json.loads(fn["meta"] or "{}").get("real") or fn["name"])
 
 
+def former(net, slug: str, name: str) -> str | None:
+    """The current name of the one function that was called `name` before a rename, or that starts at the address
+    `name` spells (`func_80001000`, `0x80001000`); None when there is none or several (overlays share addresses)."""
+    text = name.strip().strip("`")
+    spelled = re.fullmatch(r"(?:func_|0[xX])([0-9a-fA-F]{8,16})", text)
+    rows = net.project_store(slug).all(
+        "SELECT f.name FROM functions f JOIN projects p ON p.id=f.project_id WHERE p.slug=? AND (f.vram=? "
+        "OR json_extract(f.meta,'$.naming.original_name')=? OR json_extract(f.meta,'$.naming.previous_name')=?) LIMIT 2",
+        slug, int(spelled[1], 16) if spelled else None, text, text)
+    return rows[0]["name"] if len(rows) == 1 else None
+
+
 def state(fn) -> dict:
     meta = json.loads(fn["meta"] or "{}")
     naming = meta.get("naming")

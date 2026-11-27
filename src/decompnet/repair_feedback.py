@@ -400,6 +400,15 @@ class RepairFeedback:
                 'SELECT id FROM main.repair_examples WHERE project_id=? AND function_id=? AND agent_id=? '
                 'ORDER BY id DESC', (fn['project_id'], fn['id'], agent.id))]
             if not mine:
+                # The check after a match drops the example when an installed repair already reproduces it
+                # (app/repair_outcomes.py): the agent did match, and there is nothing left for it to file.
+                covered = db.execute("SELECT 1 FROM sqlite_master WHERE name='repair_coverage_verdicts'").fetchone() and db.execute(
+                    'SELECT v.family FROM repair_coverage_verdicts v JOIN attempts a ON a.id=v.attempt_id '
+                    'WHERE a.function_id=? AND a.agent_id=? ORDER BY v.verified_at DESC LIMIT 1',
+                    (fn['id'], agent.id)).fetchone()
+                if covered:
+                    return (f"Nothing to file: the installed repair {covered['family']} already reproduces your match of "
+                            f"{fn['name']}, so no repair example was kept for it.")
                 raise NetworkError('No captured matching repair by you exists for this function. Match it first.')
             # No case_id is the latest case; a given one is never replaced by another (a placeholder 0 was filed
             # under a real case).
