@@ -375,9 +375,36 @@ def decide(entries, *, big_endian=True, word_at=None, stored=frozenset(), review
         if fix is not None:
             found[e.name] = fix
     for before, after in zip(entries, entries[1:]):
-        if before.name not in found and after.name not in found and (fix := _runs_on(before, after, pointed, shared, big_endian)):
+        if before.name in found or after.name in found:
+            continue
+        fix = (_shared_frame_prefix(before, after, pointed, shared, flow, stored, word, big_endian)
+               or _runs_on(before, after, pointed, shared, big_endian))
+        if fix:
             found[after.name] = fix
     return found
+
+
+def _shared_frame_prefix(before, after, pointed, shared, flow, stored, word, big_endian):
+    """A called stack frame can also be the preceding return's delay slot."""
+    if ('matched' in (before.status, after.status) or len(before.code) != 4
+            or before.vram + 4 != after.vram or word(before.vram-4) != JR_RA
+            or not any((word(source) or 0) >> 26 == 3
+                       for name, source in pointed.get(before.vram, ()) if name != before.name)
+            or any(a in pointed or a in stored
+                   or any(source < before.vram or source >= after.vram + len(after.code)
+                          for source in flow.get(a, ()))
+                   for a in range(after.vram, after.vram + len(after.code), 4))
+            or any(a in shared for a in range(before.vram, after.vram + len(after.code), 4))):
+        return None
+    words = _words(before.code + after.code, big_endian)
+    frame = _sp_step(words[0])
+    if (frame is None or frame >= 0 or len(words) < 4 or words[1] >> 16 != 0xafbf
+            or words[-2:] != [JR_RA, 0x27bd0000 | (-frame & 0xffff)]
+            or _closed(words, before.vram, 0) != len(words) or not _frame_shape(words, 0)):
+        return None
+    return Fix(after.name, after.vram, 'join_previous', before.vram, 'auto', [
+        f'Calls enter 0x{before.vram:08X}, whose stack-frame instruction is also the preceding return delay slot.',
+        'The following unentered words save the return address and restore the same frame before returning.'])
 
 
 def _runs_on(before, after, pointed, shared, big_endian):

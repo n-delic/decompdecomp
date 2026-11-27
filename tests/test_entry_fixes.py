@@ -276,3 +276,20 @@ def test_a_function_cut_where_its_first_part_branches_into_the_rest_is_joined():
     assert 'b' not in ef.decide([prev, jumping, b])
     framed = entry('b', 0x80001020, [addiu(SP, SP, -0x18)] + rest[1:])
     assert 'b' not in ef.decide([prev, a, framed])
+
+
+def test_called_frame_shared_with_previous_return_delay_slot_joins_continuation():
+    start = 0x80001000
+    head = entry('head', start, [addiu(SP, SP, -0x18)])
+    tail = entry('tail', start+4, body()[1:])
+    caller = entry('caller', 0x80002000, [jal(start), NOP, JR_RA, NOP], [(0, 4, start)])
+    prior = lambda at: JR_RA if at == start-4 else None
+    fix = ef.decide([head, tail, caller], word_at=prior)['tail']
+    assert (fix.kind, fix.at, fix.confidence) == ('join_previous', start, 'auto')
+    assert 'tail' not in ef.decide([head, tail, caller], word_at=lambda _: None)
+    assert 'tail' not in ef.decide([head, tail, caller], word_at=prior, stored={start+4})
+    assert 'tail' not in ef.decide([head, tail, caller], word_at=prior, stored={start+8})
+    extra = entry('other', 0x80003000, [jal(start+4), NOP, JR_RA, NOP], [(0, 4, start+4)])
+    assert 'tail' not in ef.decide([head, tail, caller, extra], word_at=prior)
+    wrong = entry('tail', start+4, body()[1:-1]+[addiu(SP, SP, 0x20)])
+    assert 'tail' not in ef.decide([head, wrong, caller], word_at=prior)
