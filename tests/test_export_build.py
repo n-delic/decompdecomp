@@ -1,6 +1,8 @@
 """Export builds index function source files once, including shared-source aliases."""
+import hashlib
 import importlib.util
 import json
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -10,6 +12,9 @@ from decompnet.rom import export as rom_export
 def builder(tmp_path, functions, monkeypatch):
     script = tmp_path/'build.py'
     script.write_text(Path(rom_export.__file__).with_name('export_build.py').read_text())
+    (tmp_path/'export_entry.py').write_text(Path(rom_export.__file__).with_name('export_entry.py').read_text())
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.delitem(sys.modules, 'export_entry', raising=False)
     (tmp_path/'build.json').write_text(json.dumps({'functions':functions,'compiler':{'toolchain':'test','flags':[]}}))
     spec = importlib.util.spec_from_file_location('test_export_builder', script)
     module = importlib.util.module_from_spec(spec)
@@ -57,9 +62,10 @@ def test_check_accepts_the_c_symbol_and_old_splitter_name(tmp_path, monkeypatch)
     from .test_export_entry import object_file
 
     fn = {'name':'old_entry','symbol':'renamed_entry','vram':0x80001000,
-          'c':'src/entry.c','asm':'target.s','seg':'game'}
+          'c':'src/entry.c','asm':'target.s','seg':'game','rom':0}
     module = builder(tmp_path, [fn], monkeypatch)
-    module.B.update(symbols={}, labels={}, big_endian=True, segments=[], image='baserom')
+    module.B.update(symbols={}, labels={}, big_endian=True, segments=[], image='baserom',
+                    sha1=hashlib.sha1(b'original').hexdigest())
     (tmp_path/'baserom').write_bytes(b'original')
     (tmp_path/'src').mkdir()
     (tmp_path/fn['c']).write_text('int renamed_entry(void) { return 3; }')
@@ -67,15 +73,57 @@ def test_check_accepts_the_c_symbol_and_old_splitter_name(tmp_path, monkeypatch)
     obj = export_entry.object_for(object_file(), 'renamed_entry', bytes.fromhex('03e0000824020003'))
     monkeypatch.setattr(compiler, 'compile_source', lambda *args, **kwargs:SimpleNamespace(ok=True, obj=obj))
     monkeypatch.setattr(split, 'parse_function', lambda *args:None)
-    monkeypatch.setattr(match, 'target_from_split', lambda *args:None)
+    monkeypatch.setattr(match, 'target_from_split', lambda *args:SimpleNamespace(code=b'original'))
     def link(obj, symbol, target, table, read):
         assert symbol == 'renamed_entry'
         assert table.resolve('old_entry') == table.resolve('renamed_entry') == fn['vram']
-        return SimpleNamespace(exact=True, placements={})
+        return SimpleNamespace(exact=True, placements={}, missing_data_reads=[])
     monkeypatch.setattr(match, 'link', link)
     assert module.check('old_entry')
     assert module.check('renamed_entry')
     assert not module.B['functions'][0].get('entry_only')
+
+
+def test_check_rejects_unverified_data_and_preserves_manifest(tmp_path, monkeypatch, capsys):
+    from decompnet import compiler
+    from decompnet.rom import match, split
+
+    from .test_export_entry import object_file
+
+    fn = {'name':'entry','vram':0x80001000,'rom':0,'c':'src/entry.c','asm':'target.s','seg':'game'}
+    module = builder(tmp_path, [fn], monkeypatch)
+    image = b'original' + bytes.fromhex('12345678')
+    module.B.update(symbols={}, labels={}, big_endian=True, segments=[], image='baserom',
+                    sha1=hashlib.sha1(image).hexdigest())
+    (tmp_path/'baserom').write_bytes(image)
+    (tmp_path/'src').mkdir()
+    (tmp_path/fn['c']).write_text('int entry(void) { return 3; }')
+    original_manifest = (tmp_path/'build.json').read_bytes()
+    monkeypatch.setattr(module, 'setup', lambda:None)
+    monkeypatch.setattr(compiler, 'compile_source', lambda *args, **kwargs:SimpleNamespace(ok=True, obj=object_file()))
+    monkeypatch.setattr(split, 'parse_function', lambda *args:None)
+    monkeypatch.setattr(match, 'target_from_split', lambda *args:SimpleNamespace(code=b'original'))
+    def link(obj, symbol, target, table, read):
+        data = read(0x80002000, 4)
+        return SimpleNamespace(exact=True, problems=[], placements={},
+                               missing_data_reads=[] if data == bytes.fromhex('12345678') else [(0x80002000, 4)])
+    monkeypatch.setattr(match, 'link', link)
+    assert not module.check('entry')
+    assert 'unverified constant' in capsys.readouterr().out
+    assert (tmp_path/'build.json').read_bytes() == original_manifest
+    monkeypatch.setattr(match, 'target_from_split', lambda *args:SimpleNamespace(code=b'changed!'))
+    assert not module.check('entry')
+    assert 'target assembly does not match' in capsys.readouterr().out.lower()
+    assert (tmp_path/'build.json').read_bytes() == original_manifest
+    monkeypatch.setattr(match, 'target_from_split', lambda *args:SimpleNamespace(code=b'original'))
+    module.B['data_mappings'] = [{'rom_start':8,'rom_end':12,'vram':0x80002000}]
+    assert module.check('entry')
+    module.B['data_mappings'].append({'rom_start':0,'rom_end':4,'vram':0x80002000})
+    assert not module.check('entry')
+    assert 'disagree' in capsys.readouterr().out
+    (tmp_path/'baserom').write_bytes(b'changed')
+    assert not module.check('entry')
+    assert 'verified game image' in capsys.readouterr().out
 
 
 def test_rebuild_verifies_image_with_mixed_mips_abis(tmp_path, monkeypatch):

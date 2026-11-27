@@ -2,6 +2,7 @@
 import hashlib
 import struct
 from io import BytesIO
+from types import SimpleNamespace
 
 import pytest
 from elftools.elf.elffile import ELFFile
@@ -32,9 +33,9 @@ def test_entry_write_requires_fresh_judge_and_verified_image(tmp_path,monkeypatc
     image=b'original data';(tmp_path/'rom').write_bytes(image)
     manifest={'image':'rom','sha1':hashlib.sha1(image).hexdigest(),'symbols':{},'functions':[],
               'segments':[],'big_endian':True}
-    fn={'name':'entry','asm':'target.s','seg':'game'};path=tmp_path/'entry.o';path.write_bytes(object_file())
+    fn={'name':'entry','asm':'target.s','seg':'game','rom':0};path=tmp_path/'entry.o';path.write_bytes(object_file())
     monkeypatch.setattr(export_entry.split,'parse_function',lambda *args:None)
-    monkeypatch.setattr(export_entry.match,'target_from_split',lambda *args:None)
+    monkeypatch.setattr(export_entry.match,'target_from_split',lambda *args:SimpleNamespace(code=image))
     monkeypatch.setattr(export_entry.match,'link',lambda *args:LinkResult(None,False,['wrong bytes'],{},linked_code=b'compiler'))
     with pytest.raises(ValueError,match='freshly verified'):export_entry.write(tmp_path,manifest,fn,path)
     assert path.read_bytes()==object_file()
@@ -42,6 +43,11 @@ def test_entry_write_requires_fresh_judge_and_verified_image(tmp_path,monkeypatc
     monkeypatch.setattr(export_entry.match,'link',lambda *args:LinkResult(None,True,[],{},linked_code=code))
     export_entry.write(tmp_path,manifest,fn,path)
     assert ELFFile(BytesIO(path.read_bytes())).get_section_by_name('.text').data()==code
+    path.write_bytes(object_file())
+    monkeypatch.setattr(export_entry.match,'target_from_split',lambda *args:SimpleNamespace(code=b'other bytes'))
+    with pytest.raises(ValueError,match='target assembly does not match'):
+        export_entry.write(tmp_path,manifest,fn,path)
+    assert path.read_bytes()==object_file()
     (tmp_path/'rom').write_bytes(b'changed')
     with pytest.raises(ValueError,match='verified game image'):export_entry.write(tmp_path,manifest,fn,path)
 
@@ -50,9 +56,9 @@ def test_entry_extraction_refuses_unmapped_or_ambiguous_pool_reads(tmp_path,monk
     image=bytes(64);(tmp_path/'rom').write_bytes(image)
     manifest={'image':'rom','sha1':hashlib.sha1(image).hexdigest(),'symbols':{},'functions':[],
               'segments':[],'big_endian':True}
-    fn={'name':'entry','asm':'target.s','seg':'game'};path=tmp_path/'entry.o';path.write_bytes(object_file())
+    fn={'name':'entry','asm':'target.s','seg':'game','rom':0};path=tmp_path/'entry.o';path.write_bytes(object_file())
     monkeypatch.setattr(export_entry.split,'parse_function',lambda *args:None)
-    monkeypatch.setattr(export_entry.match,'target_from_split',lambda *args:None)
+    monkeypatch.setattr(export_entry.match,'target_from_split',lambda *args:SimpleNamespace(code=image))
     def linked(obj,name,target,symbols,read):
         missing=[] if read(0x80001000,8) is not None else [(0x80001000,8)]
         return LinkResult(None,True,[],{'.rodata':{0:0x80001000}},linked_code=bytes.fromhex('03e0000800000000'),

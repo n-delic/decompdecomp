@@ -677,16 +677,17 @@ def check(name: str) -> bool:
     big = B["big_endian"]
     rf = split.parse_function(ROOT / fn["asm"], fn["seg"], big)
     target = match.target_from_split(rf, table.resolve, big, B.get("gp") or 0)
-    image = (ROOT / B["image"]).read_bytes()
-
-    def read(addr: int, n: int) -> bytes | None:
-        for seg in B["segments"]:
-            if seg["kind"] == "code":
-                size = (seg["end"] if seg["end"] is not None else len(image)) - seg["start"]
-                if seg["vram"] <= addr and addr + n <= seg["vram"] + size:
-                    at = seg["start"] + addr - seg["vram"]
-                    return image[at:at + n]
-        return None
+    from export_entry import verified_image_reader, verify_target
+    try:
+        image, read = verified_image_reader(ROOT, B)
+    except (OSError, ValueError) as error:
+        print(f"{name}: {error}")
+        return False
+    try:
+        verify_target(image, fn, target)
+    except ValueError as error:
+        print(f"{name}: {error}")
+        return False
 
     cfg = compiler_config(ROOT, {"compiler": compiler_for(B, fn["vram"], fn)})
     cfg.include_dirs = (str(ROOT / "include"),)
@@ -702,11 +703,17 @@ def check(name: str) -> bool:
 
     console = get(B.get("platform"))
     linker = console.link_function if console.rust_desktop_judge else match.link
-    linked = linker(res.obj, symbol, target, table, read)
-    if not linked.exact:
+    try:
+        linked = linker(res.obj, symbol, target, table, read)
+    except ValueError as error:
+        print(f"{name}: {error}")
+        return False
+    if not linked.exact or linked.missing_data_reads:
         print(f"{name}: not identical yet")
         for p in linked.problems:
             print(f"  - {p}")
+        for address, size in linked.missing_data_reads:
+            print(f"  - unverified constant at 0x{address:08X} ({size} bytes); add a reviewed data mapping")
         return False
     fn["c"] = src
     from decompnet.rom.export import _section_bases, _single_definition
