@@ -43,7 +43,17 @@ decomp = "decompnet.app.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.12.18,<0.14.0"]
-build-backend = "uv_build"
+build-backend = "build_backend"
+backend-path = ["."]
+
+[tool.uv]
+cache-keys = [
+    {file = "pyproject.toml"}, {file = "build_backend.py"}, {file = "gateway/Cargo.*"},
+    {file = "gateway/THIRD_PARTY_LICENSES.txt"}, {file = "gateway/src/**/*.rs"}, {env = "DECOMP_BUILD_GATEWAY"},
+]
+
+[tool.uv.build-backend]
+source-include = ["build_backend.py"]
 
 [dependency-groups]
 dev = [

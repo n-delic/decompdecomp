@@ -25,6 +25,7 @@ import json
 import logging
 import os
 import subprocess
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -68,23 +69,77 @@ def program() -> Path | None:
     if chosen.lower() not in AUTOMATIC:
         path = Path(chosen).expanduser()
         return path if path.is_file() else None
+    if active := os.environ.get("DECOMP_ACTIVE_MCP_GATEWAY"):
+        path = Path(active)
+        if path.is_file():
+            return path
     return built()
 
 
-def startup_program() -> Path | None:
-    """Resolve or provision the gateway before opening the app, unless explicitly disabled."""
+def startup_program(warn=log.warning) -> Path | None:
+    """Prefer a current checkout build, otherwise check the latest published gateway at startup."""
     chosen = os.environ.get("DECOMP_MCP_GATEWAY", "").strip()
     if chosen.lower() in DISABLED:
         return None
-    if exe := program():
-        return exe
     if chosen.lower() not in AUTOMATIC:
-        raise RuntimeError(f"MCP gateway executable not found at {chosen}. Correct DECOMP_MCP_GATEWAY.")
-    if exe := install(log=log.info):
-        return exe
-    raise RuntimeError("No MCP gateway build is available. Install a packaged decompdecomp release, "
-                       "set DECOMP_MCP_GATEWAY to a gateway executable, or set DECOMP_MCP_GATEWAY=0 to start without "
-                       "the gateway.")
+        exe = program()
+        if exe is None:
+            raise RuntimeError(f"MCP gateway executable not found at {chosen}. Correct DECOMP_MCP_GATEWAY.")
+    elif (local := _checkout_gateway()) is not None and _current_checkout_build(local) and _supports_judge(local):
+        return local
+    else:
+        existing = built()
+        from . import updates
+
+        repo = updates.installed().get("repo") or updates.REPO
+        base = f"https://github.com/{repo}/releases/latest/download/{asset_name()}"
+        try:
+            exe = _download_release(base, existing, log.info, checksum_timeout=5, download_timeout=25,
+                                    validate=_supports_judge)
+        except (OSError, ValueError) as error:
+            cached = downloaded()
+            exe = cached if cached != existing and cached.is_file() and _supports_judge(cached) else existing
+            if exe is not None:
+                warn(f"Couldn't update to the latest MCP gateway ({error}). Using {exe}.")
+        if exe is None:
+            # A new install may still need an older gateway to bring up the UI and agents.
+            exe = install(log=log.info, repo=repo)
+        if exe is None:
+            raise RuntimeError("No MCP gateway build is available. Install a packaged decompdecomp release, "
+                               "set DECOMP_MCP_GATEWAY to a gateway executable, or set DECOMP_MCP_GATEWAY=0 to start without "
+                               "the gateway.")
+    if not _supports_judge(exe):
+        warn("The MCP gateway is too old for Rust N64 judging. N64 judging will use Python. "
+             "In a source checkout, install Rust and run uv sync --reinstall-package decompnet. "
+             "For a packaged install, update to a release that includes the Rust judge.")
+    return exe
+
+
+def _supports_judge(exe: Path) -> bool:
+    """Check the newest judge operation the app needs, without starting a listener."""
+    try:
+        reply = subprocess.run([str(exe.resolve()), "desktop-judge"],
+                               input='{"action":"rom_data_mips","request":{"object":""}}\n',
+                               capture_output=True, text=True, timeout=2, check=True,
+                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        return json.loads(reply.stdout) == {"result": None}
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return False
+
+
+def _checkout_gateway() -> Path | None:
+    path = _local()[1]
+    return path if path.is_file() and os.access(path, os.X_OK) else None
+
+
+def _current_checkout_build(exe: Path) -> bool:
+    gateway = exe.parents[2]
+    try:
+        stamp = exe.stat().st_mtime_ns
+        return all(path.stat().st_mtime_ns <= stamp for path in
+                   (gateway / "Cargo.toml", gateway / "Cargo.lock", *(gateway / "src").rglob("*.*")))
+    except OSError:
+        return False
 
 
 def built() -> Path | None:
@@ -101,8 +156,11 @@ def built() -> Path | None:
 
 def _local() -> tuple[Path, Path]:
     package = Path(__file__).resolve().parents[1]
-    return (package / "bin" / NAME,  # a packaged build
-            package.parents[1] / "gateway" / "target" / "release" / NAME)  # a checkout's cargo build
+    target = package.parents[1] / "gateway" / "target"
+    checkout = target / "checkout" / NAME
+    release = target / "release" / NAME
+    builds = [path for path in (checkout, release) if path.is_file() and os.access(path, os.X_OK)]
+    return package / "bin" / NAME, max(builds, key=lambda path: path.stat().st_mtime) if builds else checkout
 
 
 def downloaded() -> Path:
@@ -124,9 +182,6 @@ def install(log=print, repo: str | None = None, version: str | None = None) -> P
     gateway for this platform, checked against its .sha256. The release of this version first, else the latest
     (the gateway only forwards requests: any recent one serves). None, and the app's own endpoint, when neither
     has one; a copy downloaded before stays."""
-    import urllib.error
-    import urllib.request
-
     from .. import __version__
     if any(p.is_file() and os.access(p, os.X_OK) for p in _local()):
         return built()
@@ -134,34 +189,51 @@ def install(log=print, repo: str | None = None, version: str | None = None) -> P
         from . import updates
         repo = updates.installed().get("repo") or updates.REPO
     name = asset_name()
-    target = downloaded()
     for release in (f"download/v{version or __version__}", "latest/download"):
         base = f"https://github.com/{repo}/releases/{release}/{name}"
         try:
-            with urllib.request.urlopen(urllib.request.Request(base + ".sha256", headers=HEADERS), timeout=30) as r:
-                expected = r.read(4096).decode("ascii", "replace").split()[0].lower()
-            if target.is_file() and _sha256(target.read_bytes()) == expected:
-                log(f"MCP gateway: up to date ({target})")
-                return target
-            with urllib.request.urlopen(urllib.request.Request(base, headers=HEADERS), timeout=120) as r:
-                data = r.read(MAX_PROGRAM + 1)
-        except (urllib.error.URLError, OSError, IndexError, ValueError):
-            continue  # no such release or asset, or offline
-        if len(data) > MAX_PROGRAM or _sha256(data) != expected:
-            log(f"MCP gateway: {base} didn't match its checksum; not installed")
+            return _download_release(base, built(), log)
+        except ValueError as error:
+            log(f"MCP gateway: {error}")
             return built()
-        target.parent.mkdir(parents=True, exist_ok=True)
-        part = target.with_name(f"{target.name}.{os.getpid()}.part")
-        try:
-            part.write_bytes(data)
-            part.chmod(0o755)
-            os.replace(part, target)
-        finally:
-            part.unlink(missing_ok=True)
-        log(f"MCP gateway: installed {target}")
-        return target
+        except OSError:
+            continue
     log("MCP gateway: no release build available for this computer")
     return built()
+
+
+def _download_release(base, existing, log, *, checksum_timeout=30, download_timeout=120, validate=None):
+    import urllib.request
+
+    with urllib.request.urlopen(urllib.request.Request(base + ".sha256", headers=HEADERS), timeout=checksum_timeout) as r:
+        fields = r.read(4096).decode("ascii", "replace").split()
+    expected = fields[0].lower() if fields else ""
+    if len(expected) != 64 or any(c not in "0123456789abcdef" for c in expected):
+        raise ValueError("the gateway release has an invalid checksum")
+    target = downloaded()
+    for candidate in dict.fromkeys((existing, target)):
+        if (candidate is not None and candidate.is_file() and os.access(candidate, os.X_OK)
+                and _sha256(candidate.read_bytes()) == expected):
+            log(f"MCP gateway: up to date ({candidate})")
+            return candidate
+    with urllib.request.urlopen(urllib.request.Request(base, headers=HEADERS), timeout=download_timeout) as r:
+        data = r.read(MAX_PROGRAM + 1)
+    if len(data) > MAX_PROGRAM or _sha256(data) != expected:
+        raise ValueError("the gateway release didn't match its checksum")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=target.parent, prefix=target.name + ".", suffix=target.suffix or ".part",
+                                     delete=False) as stream:
+        part = Path(stream.name)
+    try:
+        part.write_bytes(data)
+        part.chmod(0o755)
+        if validate is not None and not validate(part):
+            raise ValueError("the published gateway does not support this app's Rust N64 judge")
+        os.replace(part, target)
+    finally:
+        part.unlink(missing_ok=True)
+    log(f"MCP gateway: installed {target}")
+    return target
 
 
 HEADERS = {"User-Agent": "decompnet-toolchain-installer"}

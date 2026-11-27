@@ -31,7 +31,9 @@ a tenth of a second (1.4 s before), and agents restart by themselves after a cra
 
 N64 attempts, direct checks, interactive diffs, and cartridge rebuild verification use the Rust judge
 when a compatible gateway is available. Shared compiler trials use the same linkers. The desktop still runs the project's original compiler locally.
-The Python judge remains available for unsupported inputs and installations without a compatible gateway.
+Source checkouts build the gateway during `uv sync` when Cargo is installed. Otherwise startup checks for
+the latest published gateway and warns if it has to use an older one. Unsupported inputs and incompatible gateways
+fall back to the Python judge.
 
 Packaged builds use a Rust instruction aligner when available. Source checkouts can build it with
 `uv run python packaging/build_alignment.py` and Rust installed. Set `DECOMP_NATIVE_ALIGNMENT=0`

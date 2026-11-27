@@ -30,3 +30,9 @@ lto = "thin"
 codegen-units = 1
 panic = "abort"
 strip = true
+
+[profile.checkout]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true
