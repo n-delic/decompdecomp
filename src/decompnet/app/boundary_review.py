@@ -40,20 +40,34 @@ def refresh(net,proj,console):
     return updated
 
 
-def refresh_shared_entries(net, proj, console, segments):
+def refresh_shared_entries(net, proj, console, segments, originals=None):
     """Reprove shared entries after import-time edits invalidate their old evidence."""
+    if console.arch != 'mips':
+        return refresh(net,proj,console)
     from ..rom.shared_entries import intentional
     from ..rom.split import function_from_text
 
     store = net.project_store(proj['id'])
     rows = store.all("SELECT id,name,unit,asm,status,meta FROM functions WHERE project_id=? AND gone_mark IS NULL",
                      proj['id'])
+    original_pieces = None
+    if originals is not None:
+        original_pieces = {}
+        for fn in originals:
+            key = (fn.name,fn.rom,fn.vram,fn.size)
+            # A repeated identity is ambiguous even if one record says it is a function.
+            original_pieces[key] = key in original_pieces or getattr(fn,'piece',True)
     functions = []
     for row in rows:
         if not row['asm']:
             continue
         try:
-            functions.append(function_from_text(row['name'],row['asm'],row['unit']))
+            fn = function_from_text(row['name'],row['asm'],row['unit'])
+            if original_pieces is not None:
+                # A repaired or unknown fragment cannot inherit a claim that it
+                # was an independently discovered function.
+                fn.piece = original_pieces.get((fn.name,fn.rom,fn.vram,fn.size),True)
+            functions.append(fn)
         except (IndexError, ValueError):
             continue
     evidence = intentional(functions,console,segments)

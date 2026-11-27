@@ -609,7 +609,7 @@ class ImportMixin:
         # Automatic boundary fixes invalidate earlier shared-entry evidence.
         # Reprove it against the final stored split before a helper can claim it.
         from ..boundary_review import refresh_shared_entries
-        refresh_shared_entries(self, self.project_row(slug), console, res.segments)
+        refresh_shared_entries(self, self.project_row(slug), console, res.segments, res.functions)
         console.after_import(self, slug, chosen=chosen, log=log)
         if reimport is not None and backup is not None:
             try:

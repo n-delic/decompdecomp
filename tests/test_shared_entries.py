@@ -115,3 +115,37 @@ def test_import_refresh_reproves_shared_entries_after_boundary_edits(tmp_path):
     assert meta['boundary_override_source'] == 'shared_entry'
     assert meta['shared_entry']['tail'] == 'tail'
     assert 'boundary_review' not in meta
+
+
+def test_import_refresh_does_not_promote_an_unproven_piece(tmp_path):
+    import json
+
+    from decompnet.app.boundary_review import refresh_shared_entries
+    from decompnet.app.engine import RomNetwork
+    from decompnet.consoles import get
+    from decompnet.rom.split import function_asm
+
+    net = RomNetwork(tmp_path / 'audit.db', tmp_path)
+    prefix = function('prefix', 0x80001000, 0x100, [(0x00802825, 'or')])
+    tail = function('tail', 0x80001004, 0x104, [(0x03e00008, 'jr'), (0, 'nop')])
+    caller = function('caller', 0x80002000, 0x200, [(0x0c000400, 'jal'), (0x0c000401, 'jal')])
+    segments = [Segment('one', 0x100, 0x200, 0x80001000)]
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,arch,root,config) VALUES('game','Game','mips',?,'{}')", (str(tmp_path),)).lastrowid
+        for fn in (prefix, tail, caller):
+            target = b''.join(line.word.to_bytes(4, 'big') for line in fn.lines)
+            db.execute("INSERT INTO functions(project_id,name,vram,rom_offset,size,n_insns,target,status,unit,asm,meta) VALUES(?,?,?,?,?,?,?,'open',?,?,?)",
+                       (pid, fn.name, fn.vram, fn.rom, fn.size, len(fn.lines), target, fn.segment, function_asm(fn), '{}'))
+    prefix.piece = True
+    refresh_shared_entries(net, {'id': pid}, get('n64'), segments, [prefix,tail,caller])
+    meta = json.loads(net.store.one('SELECT meta FROM functions WHERE name=?', 'prefix')['meta'])
+    assert not meta.get('shared_entry')
+    assert meta.get('boundary_review')
+
+
+def test_non_mips_import_does_not_assume_mips_function_shapes(monkeypatch):
+    from decompnet.app import boundary_review
+
+    monkeypatch.setattr(boundary_review, 'refresh', lambda *args: 7)
+    console = SimpleNamespace(arch='arm')
+    assert boundary_review.refresh_shared_entries(None, {}, console, [], [object()]) == 7
