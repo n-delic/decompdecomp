@@ -1991,6 +1991,8 @@ class ForkProject:
                 for wait in range(40):  # configure.py rewrites it when a file is linked: read it whole
                     try:
                         cfg = json.loads(p.read_text(encoding="utf-8"))
+                        from .ninja_candidates import correct_generated_make
+                        cfg = correct_generated_make(self.root, cfg)
                         break
                     except (ValueError, OSError):
                         if wait == 39:
@@ -2050,11 +2052,19 @@ class ForkProject:
         tool = _tool(make) or make
         rel = self._target(unit.base)  # (named from the build's folder: `-C sub` builds final.o for sub/final.o)
         args = cfg.get("custom_args", [])
-        result = self.run([tool, *args, rel], log=log, timeout=UNIT_SECONDS)
-        if unit.scaffold and Path(tool).stem.lower() == "ninja" and not result[0] and "unknown target" in result[1]:
+        if unit.scaffold and Path(tool).stem.lower() == "ninja":
             from .ninja_candidates import build
-            return build(self, unit, tool, args, log, UNIT_SECONDS) or result
-        return result
+            result = build(self, unit, tool, args, log, UNIT_SECONDS)
+            if result is not None and (result[0] or 'multiple rules generate' not in result[1]):
+                return result
+            if result is None:
+                # Ninja calls an existing file with no rule "no work", even when its C changed.
+                # Accept the normal graph only when it really has a build rule for this target.
+                ok, query = self.run([tool, *args, '-t', 'query', rel], log=log, timeout=UNIT_SECONDS)
+                if not ok or not re.search(r'^\s+input:\s*(?!phony(?:\s|$))\S+', query, re.M):
+                    return False, 'This Ninja project has no usable C build rule for the candidate.'
+            # A project may later add the candidate to its own graph.
+        return self.run([tool, *args, rel], log=log, timeout=UNIT_SECONDS)
 
     def build_units(self, units: list[Unit], log=lambda *_: None) -> list[tuple[bool, str]]:
         """Build several units' objects in one run of the build: (built, the log) for each, in the order given.
@@ -2070,7 +2080,7 @@ class ForkProject:
         cfg = self.objdiff_config()
         make = cfg.get("custom_make") or "make"
         tool = _tool(make) or make
-        if len(units) < 2 or any(u.base is None for u in units) or Path(tool).stem.lower() != "ninja":
+        if len(units) < 2 or any(u.base is None or u.scaffold for u in units) or Path(tool).stem.lower() != "ninja":
             return [self.build_unit(u, log=log) for u in units]
 
         def alone(u: Unit):

@@ -259,8 +259,11 @@ def test_assembly_units_are_visible_without_counting_original_assembly_as_c(tmp_
 @pytest.mark.parametrize('duplicate_elf', [False, True])
 @pytest.mark.parametrize('root_elf', [False, True])
 @pytest.mark.parametrize('source_tree', [True, False])
-def test_verified_rebuild_retains_nested_config_version(tmp_path, monkeypatch, root_elf, source_tree, duplicate_elf):
+@pytest.mark.parametrize('ninja', [False, True])
+def test_verified_rebuild_retains_nested_config_version(tmp_path, monkeypatch, root_elf, source_tree, duplicate_elf, ninja):
     cfg = config(tmp_path)
+    if ninja:
+        (tmp_path/'build.ninja').write_text('')
     cfg['segments'][0]['subsegments'].append([12, 'bin', 'opaque'])
     data = b'full original cartridge'
     image = tmp_path/'baserom.jp.z64'
@@ -307,7 +310,8 @@ def test_verified_rebuild_retains_nested_config_version(tmp_path, monkeypatch, r
     monkeypatch.setattr(project, '_splat_version_configs', lambda: {'jp':selected})
     assert splatrefs.verified_rebuild(project, selected, cfg, image, hashlib.sha1(data).hexdigest(), lambda *_: None)
     result = json.loads((tmp_path/'objdiff.json').read_text())
-    assert result['custom_args'] == ['VERSION=jp']
+    assert result['custom_make'] == ('ninja' if ninja else 'make')
+    assert result['custom_args'] == ([] if ninja else ['VERSION=jp'])
     asm = next(u for u in result['units'] if u['name'] == 'asm/start')
     assert 'base_path' not in asm and 'source_path' not in asm['metadata']
     assert asm['metadata']['assembly_source'] == 'asm/start.s'

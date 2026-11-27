@@ -281,7 +281,8 @@ def verified_rebuild(project, config_path: Path, config: dict, image_path: Path,
                 }
             entries.append(entry)
         pending = work / 'objdiff.json'
-        pending.write_text(json.dumps({'custom_make': 'make', 'custom_args': make_args,
+        ninja = not any((root / name).is_file() for name in ('Makefile', 'makefile', 'GNUmakefile')) and (root / 'build.ninja').is_file()
+        pending.write_text(json.dumps({'custom_make': 'ninja' if ninja else 'make', 'custom_args': [] if ninja else make_args,
                                        'build_target': False, 'build_base': True, 'units': entries,
                                        'coverage_notes': ([f'{len(binary_assembly)} linked binary assembly images '
                                            'are not split into functions and are excluded from function progress.']
