@@ -36,6 +36,11 @@ DISCARD = ["*(.reginfo)", "*(.MIPS.abiflags)", "*(.MIPS.options)", "*(.pdr)", "*
            "*(.gnu.attributes)", "*(.note*)", "*(.gptab.*)"]
 
 
+def _needs_entry_only(linked, problem, single, donor_unit):
+    """Keep per-function inferred call bindings out of the global linker namespace."""
+    return bool(problem or not single or donor_unit or linked.inferred_library_calls)
+
+
 def _entry_reads_available(reads, image, segments, mappings):
     """Only extract entries whose judge reads the standalone image can reproduce."""
     ranges = [dict(rom_start=s['start'], rom_end=s['end'] or len(image), vram=s['vram'])
@@ -550,7 +555,9 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
                 f["kind"] = "asm"
                 continue
             bases, problem = _section_bases(linked.placements)
-            if problem or not single or donor_unit:
+            if _needs_entry_only(linked, problem, single, donor_unit):
+                # Calls inferred from one target cannot be global symbols: another bank
+                # can bind the same compiler helper name to a different address.
                 # Recompile and judge this entry every build; the builder can retain
                 # scattered original pools and other function bodies without placing them in this entry's slot.
                 if not _entry_reads_available(linked.required_data_reads, image, entry_segments, entry_mappings):
