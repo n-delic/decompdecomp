@@ -86,7 +86,7 @@ def test_scaffold_defers_binary_in_executable_section(tmp_path, monkeypatch, sec
     messages = []
     result = prepare(fp, log=messages.append)
     assert bool(result) is not deferred
-    assert any('includes a binary' in message for message in messages) is deferred
+    assert any('only binary data' in message for message in messages) is deferred
 
 
 def test_scaffold_does_not_defer_mixed_code_and_binary(tmp_path, monkeypatch):
@@ -98,6 +98,17 @@ def test_scaffold_does_not_defer_mixed_code_and_binary(tmp_path, monkeypatch):
         return True, ''
     monkeypatch.setattr(fp, 'build_unit', build)
     assert prepare(fp) == ['src/decompdecomp/demo.c']
+
+
+@pytest.mark.parametrize('directive', ['.word', '.4byte', '.long', '.byte', '.half', '.dword'])
+def test_scaffold_defers_executable_sections_of_raw_data(tmp_path, monkeypatch, directive):
+    fp = project(tmp_path)
+    assembly = tmp_path / '.decomp-wtf/objdiff-references/asm/demo.s'
+    assembly.write_text(f'.section .text, "ax"\nglabel demo\n{directive} 0x1234\nendlabel demo\n')
+    monkeypatch.setattr(fp, 'build_unit', lambda unit: pytest.fail('raw data must not be compiled as C'))
+    messages = []
+    assert prepare(fp, log=messages.append) == []
+    assert any('only binary data' in message for message in messages)
 
 
 @pytest.mark.parametrize('failure', ['failed', 'missing_object'])
