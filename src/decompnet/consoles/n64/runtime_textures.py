@@ -38,8 +38,8 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
             snapshots = [path.read_bytes() for path in dumps.values() if path.is_file()]
             direct = runtime_textures.regions(image, snapshots)
             packed = runtime_packed_graphics.regions(image, snapshots, progress=progress)
-            if not direct and not run.timed_out:
-                log('No textures were visible at rest; observing the title and menus with scripted input.')
+            if not run.timed_out:
+                log('Observing title and gameplay textures with scripted input.')
                 for path in dumps.values():
                     path.unlink(missing_ok=True)
                 run = emulator.run(rom, VIS[-1], inputs=loaded_code.inputs(VIS[-1]), dumps=dumps,
@@ -57,7 +57,15 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
                                     if tuple(item['preview_settings'].items()) not in known)
                 else:
                     merged[key] = asset
-            assets = direct + list(merged.values())
+            # The idle and scripted runs may see the same texture. Preserve
+            # distinct captured palettes while avoiding duplicate map regions.
+            unique = {}
+            for asset in direct:
+                key = (asset.get('offset'), asset.get('size'), asset.get('layout'),
+                       asset.get('width'), asset.get('height'), asset.get('format'),
+                       asset.get('palette_offset'), asset.get('palette_little_endian'), asset.get('palette'))
+                unique[key] = asset
+            assets = list(unique.values()) + list(merged.values())
         if run.timed_out:
             log('Runtime observation timed out; any completed snapshots are still included.')
         log(f'Found {len(assets)} graphics regions backed by runtime commands and cartridge bytes.')
