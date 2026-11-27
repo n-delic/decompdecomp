@@ -34,6 +34,10 @@ class Batch:
                 for statement in (*buffer['pending'], *((sql, args) for (sql, _), args in buffer['counters'].items()))]
 
     @property
+    def statement_count(self):
+        return sum(len(buffer['pending']) + len(buffer['counters']) for buffer in self.buffers)
+
+    @property
     def bytes(self):
         return sum(buffer['bytes'] for buffer in self.buffers)
 
@@ -134,7 +138,6 @@ def submit(store, statements, *, immediate=False, memo=None):
     if value.bytes >= value.max_bytes or sum(len(b['pending']) for b in value.buffers) >= value.max_statements or time.monotonic()-value.started >= value.seconds:value.flush()
 
 
-@contextmanager
 def count(store, sql, args, key, merge, *, immediate=False):
     """A counter upsert (attempted+N and the like): within a batch, one with the same SQL and key (`key` leading
     arguments) is merged into the pending one by `merge(old, new)`, so a batch writes one row per key rather than
@@ -150,7 +153,7 @@ def count(store, sql, args, key, merge, *, immediate=False):
     if old is None:
         buffer['bytes'] += len(sql.encode()) + 64*len(args)
     if immediate:value.flush(store)
-    elif (value.bytes >= value.max_bytes or len(value.pending) >= value.max_statements
+    elif (value.bytes >= value.max_bytes or value.statement_count >= value.max_statements
           or time.monotonic()-value.started >= value.seconds):value.flush()
 
 

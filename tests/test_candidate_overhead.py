@@ -32,6 +32,48 @@ def test_scopes_reuse_only_within_trial_and_invalidate_each_input_change(monkeyp
     assert len(calls) == 4
 
 
+def test_rom_target_config_reads_once_until_another_connection_changes_it(tmp_path, monkeypatch):
+    from decompnet import compile_sessions, consoles
+    from decompnet.app.engine import RomNetwork
+    from decompnet.store import Store
+
+    path = tmp_path / 'project.db'
+    net = RomNetwork(path, tmp_path)
+    with net.store.tx() as db:
+        db.execute("INSERT INTO projects(id,slug,root,config) VALUES(1,'game',?,?)",
+                   (str(tmp_path), '{"gp":1}'))
+    other = Store(path)
+    fn = {'project_id': 1}
+    monkeypatch.setattr(consoles, 'of', lambda cfg: SimpleNamespace(target_from_row=lambda fn, cfg: cfg['gp']))
+    original = net.store.one
+    reads = []
+
+    def read(sql, *args):
+        if sql == 'SELECT config FROM projects WHERE id=?':
+            reads.append(args)
+        return original(sql, *args)
+
+    monkeypatch.setattr(net.store, 'one', read)
+    try:
+        with compile_sessions.session():
+            assert net._rom_target(fn) == net._rom_target(fn) == 1
+            assert reads == [(1,)]
+            with other.tx() as db:
+                db.execute("UPDATE projects SET config=? WHERE id=1", ('{"gp":2}',))
+            assert net._rom_target(fn) == 2
+            assert reads == [(1,), (1,)]
+            with pytest.raises(RuntimeError, match='rollback'), net.store.tx() as db:
+                db.execute("UPDATE projects SET config=? WHERE id=1", ('{"gp":3}',))
+                assert net._rom_target(fn) == 3
+                raise RuntimeError('rollback')
+            with other.tx() as db:
+                db.execute("UPDATE projects SET config=? WHERE id=1", ('{"gp":4}',))
+            assert net._rom_target(fn) == 4
+    finally:
+        other.conn.close()
+        net.store.conn.close()
+
+
 def test_imported_files_are_never_scope_memoized(monkeypatch):
     net = FakeNet();net.fork_slug = lambda _: 'imported'
     proj = net.project_row('game');fn = net.function();calls = []

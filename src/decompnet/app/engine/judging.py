@@ -19,6 +19,7 @@ from ...request_timing import build as timed_build
 from ...request_timing import timed_lock
 from ...rom import match
 from ...rom.symbols import SymbolTable
+from ...store import in_transaction
 from .. import attempt_workers
 from ..function_names import canonical_source
 from .common import _AUTO_TOKEN, BATCH_INSNS
@@ -48,18 +49,36 @@ class JudgeMixin:
         return super()._compile_batch(proj, header, sources, fn)
 
     def _rom_target(self, fn) -> match.RomTarget:
-        cfg = self.cfg(self.project_store(fn['project_id']).one("SELECT config FROM projects WHERE id=?", fn["project_id"]))
+        project_id = fn['project_id']
+        store = self.project_store(project_id)
         session = compile_sessions.current()
-        key = None
-        if session is not None:
-            row = dict(fn)
-            key = ('rom', id(self), fn['project_id'], repr(cfg),
-                   tuple((k, row.get(k)) for k in ('name', 'target', 'relocs', 'vram', 'meta')))
-            if key in session.targets:return session.targets[key]
+
+        def load_config():
+            return self.cfg(store.one("SELECT config FROM projects WHERE id=?", project_id))
+
+        if session is None or in_transaction():
+            cfg = load_config()
+            return consoles.of(cfg).target_from_row(fn, cfg)
+
+        # A session's target hit needs only the committed project revision. Bypass
+        # target caching in write transactions because rollback can reuse a revision.
+        tracked = getattr(store, 'project_rows_tracked', False)
+        if tracked:
+            revision = store.read_version('project_rows', project_id)
+        else:
+            cfg = load_config()
+            revision = repr(cfg)
+        row = dict(fn)
+        key = ('rom', id(self), project_id, revision,
+               tuple(row.get(k) for k in ('name', 'target', 'relocs', 'vram', 'rom_offset', 'meta')))
+        if key in session.targets:
+            return session.targets[key]
+        if tracked:
+            cfg = store.read_cache.get(('rom-target-config', project_id), revision, load_config)
         target = consoles.of(cfg).target_from_row(fn, cfg)
-        if session is not None:
-            session.targets[key] = target
-            while len(session.targets) > 16:session.targets.popitem(last=False)
+        session.targets[key] = target
+        while len(session.targets) > 16:
+            session.targets.popitem(last=False)
         return target
 
     def _make_target(self, proj, rf, syms: SymbolTable):
