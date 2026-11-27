@@ -1275,3 +1275,41 @@ def test_n64_copies_the_installed_ido_where_a_project_builds_its_own_and_never_l
     assert not folder.is_symlink() and (folder / "cc").read_text() == "cc" and not (folder / "cc.c").exists()
     assert (folder / "cc").stat().st_mtime > (root / "build/recomp/recomp").stat().st_mtime
     assert (ido / "cc").read_text() == "cc"
+
+
+def test_kmc_release_folder_uses_pinned_driver_with_its_program_prefix(tmp_path, monkeypatch):
+    import subprocess
+
+    from decompnet.consoles.n64 import buildtools
+
+    installed = tmp_path / "pinned compiler"
+    installed.mkdir()
+    driver = installed / "gcc"
+    driver.write_text('#!/bin/sh\nprintf "%s\\n" "$@"\n')
+    driver.chmod(0o755)
+    monkeypatch.setattr(buildtools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(buildtools.toolchains, "require", lambda tid: installed)
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "Makefile").write_text(
+        "KMC_URL := https://example.invalid/mips-gcc-2.7.2/release.tar.gz\n"
+        "KMC := $(TOOLS_DIR)/gcc-kmc\nCC := $(KMC)/gcc\n")
+    buildtools._provide_compiler_dirs(SimpleNamespace(root=root))
+    wrapper = root / "tools/gcc-kmc/gcc"
+    result = subprocess.run([str(wrapper), "-c", "source.c"], capture_output=True, text=True, check=True)
+    assert result.stdout.splitlines() == [f"-B{installed}/", "-c", "source.c"]
+    wrapper.write_text("user compiler")
+    buildtools._provide_compiler_dirs(SimpleNamespace(root=root))
+    assert wrapper.read_text() == "user compiler"
+
+
+def test_kmc_named_folder_without_version_evidence_is_not_replaced(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import buildtools
+
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "Makefile").write_text("CC := $(TOOLS_DIR)/gcc-kmc/gcc\n")
+    monkeypatch.setattr(buildtools.toolchains, "installed", lambda tid: {"id": tid})
+    monkeypatch.setattr(buildtools.toolchains, "require", lambda tid: pytest.fail("unknown compiler build"))
+    buildtools._provide_compiler_dirs(SimpleNamespace(root=root))
+    assert not (root / "tools/gcc-kmc").exists()
