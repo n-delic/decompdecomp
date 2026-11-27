@@ -495,7 +495,13 @@ class AutopilotMixin:
                 from .. import cheap_draft_repairs
                 if cheap_draft_repairs.enabled(self.cfg(proj)):
                     # the families that matched drafts in seconds of search, now before an agent's turns (app/cheap_draft_repairs.py)
-                    for family, source in cheap_draft_repairs.variants(draft, fn['name'], proj['arch'], target_asm, ctx['header'], own.get('flags', [])):
+                    from .. import switch_tables
+                    try:  # the target's jump tables, which gate the case-copy candidates
+                        tables = switch_tables.read(self, proj, fn)
+                    except Exception:  # noqa: BLE001 - a witness; the draft stage goes on without it
+                        tables = []
+                    for family, source in cheap_draft_repairs.variants(draft, fn['name'], proj['arch'], target_asm, ctx['header'],
+                                                                       own.get('flags', []), tables):
                         candidates.append((family, f"{note}{seeds.with_m2c_macros(source)}\n"))
                 for canonical in (False,True):
                     if array := m2cfix.stack_array(draft,fn['name'],canonical):
