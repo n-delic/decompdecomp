@@ -1262,3 +1262,48 @@ def test_closed_overlay_terminal_loaded_pointer_record_is_data(case):
     result = repair(functions, data, image, consoles.get('n64'), segments)
     assert any(fn.rom == 12 for fn in result) == (case != 'record')
     assert any(item.rom == 12 and item.size == 8 for item in data) == (case == 'record')
+
+
+@pytest.mark.parametrize('case', ['stale', 'pointer', 'interior_pointer', 'incoming', 'changed',
+                                  'uncalled_next', 'uncalled_source', 'open_source', 'different_relocation'])
+def test_stale_code_copy_between_return_and_called_frame(case):
+    from collections import defaultdict
+
+    from decompnet.rom.automatic_boundaries import stale_code_copies
+
+    prior = [0x27bdffe8] + [0x24840001+i for i in range(13)] + [0x03e00008, 0x27bd0018]
+    copy = prior[3:11]
+    if case == 'changed': copy[0] = 0x24850001
+    if case == 'open_source': prior[-2] = 0
+    if case == 'different_relocation': copy[0] = 0x24840099
+    words = prior + copy + BODY
+    image, functions, segments = fixture(words, cuts=(0, 64, 96, 128))
+    ghost = functions[1]
+    if case in ('pointer', 'interior_pointer'):
+        image += (ghost.vram+(4 if case == 'interior_pointer' else 0)).to_bytes(4, 'big')
+    references = defaultdict(set)
+    for target in (functions[0].vram, functions[2].vram):
+        references[target].add((len(image), 'code'))
+        image += (0x0c000000 | (target >> 2 & 0x3ffffff)).to_bytes(4, 'big')
+    if case == 'incoming': references[ghost.vram+4].add((0, 'code'))
+    calls = {functions[0].vram, functions[2].vram}
+    if case == 'uncalled_next': calls.remove(functions[2].vram)
+    if case == 'uncalled_source': calls.remove(functions[0].vram)
+    def owner(fn): return (0, '')
+    found = stale_code_copies(functions, image, 'big', consoles.get('n64'), segments, owner, set(),
+                              references, calls, [])
+    assert ((ghost.rom, ghost.vram) in found) == (case == 'stale')
+
+
+def test_stale_copy_requires_one_consistent_relocation():
+    from decompnet.rom.automatic_boundaries import _same_stale_instructions
+
+    old = [0xafbf0034, 0x0c014000, 0xafb00030, 0x24040005, 0x27a50010, 0x0c016a90,
+           0x00003021, 0x27a40010, 0x3c068008, 0x24c67358, 0x0c013eb0, 0x27a5002c]
+    new = [0xafbf0034, 0x0c0140e0, 0xafb00030, 0x24040005, 0x27a50010, 0x0c016b70,
+           0x00003021, 0x27a40010, 0x3c068008, 0x24c676d8, 0x0c013f90, 0x27a5002c]
+    image = b''.join(word.to_bytes(4, 'big') for word in old+new)
+    assert _same_stale_instructions(image, 0, len(old)*4, len(old)*4, 'big')
+    new[9] += 4
+    image = b''.join(word.to_bytes(4, 'big') for word in old+new)
+    assert not _same_stale_instructions(image, 0, len(old)*4, len(old)*4, 'big')
