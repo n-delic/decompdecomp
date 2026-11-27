@@ -21,14 +21,23 @@ The app's isolated judge, then its own judge (0). From the 110 rewrite:
 - the second product held in the local that held the first call's length (`dead_scratch_reuse`).
 - `x = f(); x *= speed;`; a narrow call result declared `s32` and sign-extended by hand through a dead local
   (`d = f() << 16; x = d >> 16;`, the target's `sll $v0; sra $s1`); `x >>= 12; d = -x; p->m = d;` and
-  `y >>= 12; p->m = y;`. The new family `call_product_stage` offers these together; applied to the state after the
-  two existing families it gave 0 (140 before).
+  `y >>= 12; p->m = y;`. The new family `call_product_stage` offers these together. As first released it gave 0 only
+  after both existing families; since decomprepair 0.6.291 it also moves the product to the finished local itself,
+  so from the rewrite with only the speed fence (140) one step of `prove_chain.py` gave 0 (79 children scored).
+
+The greedy chain from the 110 rewrite takes another fence first (`run_weight_scope` around the arms, 110 -> 40, then
+`call_product_stage` 35) and stopped there: the fence that matters is worse alone (110 -> 140).
 
 Failed experiments that would otherwise be repeated:
 
 A fresh temporary for the negation or the shift (`temporary_hoist`, `store_result_reuse`) stayed at 10: the variable
 has to be one the function uses elsewhere. A `s16` temporary for the first call and `(s16)` casts did not change the
 `sll`'s register. `/ 0x1000` for `>> 12` scored 840.
+
+The family's first release read a `do { } while (0)` fence as a loop and so offered nothing after the weight scope.
+
+A neighbouring routine tried first has a `break 1` inside an `if`; no installed GCC source has a pattern that emits it
+from C (read in the sources, not tested for the SN build), so it was left with a note.
 
 What is controlled evidence and what is one function:
 
