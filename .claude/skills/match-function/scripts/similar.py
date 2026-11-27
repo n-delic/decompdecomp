@@ -9,7 +9,8 @@ similarity and status, then the saved source of the top matched ones.
     similar.py SLUG FUNC [--limit 10] [--sources 3] [--all] [--out DIR] [--max-chars 6000] [--holder H]
 
 Read-only: it changes nothing and needs no claim, but it does use the MCP connection a `setup.py SLUG` session made (the
-only one for SLUG; with several sessions open pass `--holder NAME`, your own session's). Matched look-alikes come first; `--all` also lists unmatched ones (best score so far).
+only one for SLUG; with several sessions open pass `--holder NAME`, your own session's).
+Matched look-alikes come first; `--all` also lists unmatched ones (best score so far).
 `--sources N` prints the saved source (`get_function section=matched`) of the best N matched ones; `--out DIR` writes
 each to DIR/NAME.c and prints the path instead. A look-alike is a lead, not a proof: judge any C you adapt.
 """

@@ -10,7 +10,8 @@ the evidence and how strong it is).
     callers.py SLUG FUNC [--limit 8] [--holder H]
 
 Read-only: it changes nothing and needs no claim, but it does use the MCP connection a `setup.py SLUG` session made (the
-only one for SLUG; with several sessions open pass `--holder NAME`, your own session's). ROM projects only (a project's callees are not stored yet). The verdict is a lead:
+only one for SLUG; with several sessions open pass `--holder NAME`, your own session's).
+ROM projects only (a project's callees are not stored yet). The verdict is a lead:
 write the result type it names, judge, and trust the judge.
 """
 import argparse

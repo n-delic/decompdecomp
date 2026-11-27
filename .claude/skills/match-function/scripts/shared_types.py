@@ -19,7 +19,8 @@ The app itself then refuses the edit if any already-matched function stops match
 compiles run before the header changes), and says which; keep the declaration in your candidate then.
 
 Read through, and a write sent over, the MCP connection of a `setup.py SLUG` session (the
-only one for SLUG; with several sessions open pass `--holder NAME`, your own session's): a write, so `--apply` is the only thing here that changes the project. Never writes without it.
+only one for SLUG; with several sessions open pass `--holder NAME`, your own session's):
+a write, so `--apply` is the only thing here that changes the project. Never writes without it.
 """
 import argparse
 import re
