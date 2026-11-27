@@ -168,3 +168,17 @@ def test_terminal_header_does_not_leave_a_code_fragment(tmp_path, monkeypatch):
         subsegments=[[0, 'c', 'program']]), [20], [len(context)]])))
     inline_data.apply(config, context, lambda _: None)
     assert code_ranges(config) == [(0, 8, 0x80000000)]
+
+
+def test_leading_code_pointer_table_requires_mapped_targets_and_a_frame(tmp_path):
+    import struct
+
+    words = [0x80010000, 0x80010004, 0x80010000, 0, 0x27bdffe8, 0x03e00008, 0x27bd0018]
+    image = struct.pack('>7I', *words) + bytes(0x100)
+    ranges = [(0, 28, 0x80000000), (28, len(image), 0x80010000)]
+    assert list(inline_data._leading_code_pointer_tables(image, ranges)) == [(0, 16)]
+    assert not list(inline_data._leading_code_pointer_tables(image, ranges[:1]))
+    changed = bytearray(image); struct.pack_into('>I', changed, 4, 0x80020000)
+    assert not list(inline_data._leading_code_pointer_tables(bytes(changed), ranges))
+    changed = bytearray(image); struct.pack_into('>I', changed, 16, 0)
+    assert not list(inline_data._leading_code_pointer_tables(bytes(changed), ranges))

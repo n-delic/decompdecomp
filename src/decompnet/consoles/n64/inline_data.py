@@ -206,10 +206,40 @@ def _stack_padding(image, ranges):
     yield start, end
 
 
+def _leading_code_pointer_tables(image, ranges):
+    """Recognize address tables at text starts before a framed function.
+
+    A code scanner can begin at a table of pointers into another loaded code
+    range, treating their high bytes as loads from address zero. Require several
+    distinct, aligned destinations in other known code and a following frame.
+    """
+    from ...arch.mips import is_frame
+
+    for start, end, base in ranges:
+        if start % 4 or start + 20 > min(end, len(image)):
+            continue
+        at = start
+        values = set()
+        while at + 4 <= min(end, len(image)) and at - start < 1024:
+            word = int.from_bytes(image[at:at+4], 'big')
+            if word % 4 or not any(other != start and v <= word < v + hi - other
+                                   for other, hi, v in ranges):
+                break
+            values.add(word)
+            at += 4
+        if at - start < 12 or len(values) < 2:
+            continue
+        if image[at:at+4] == bytes(4):
+            at += 4
+        if at + 4 <= min(end, len(image)) and is_frame(int.from_bytes(image[at:at+4], 'big')):
+            yield start, at
+
+
 def apply(config, image, log=print):
     """Split mapped text subsegments at verified inline data boundaries."""
     code = split.code_ranges(config)
-    regions = sorted([*spans(image), *_startup_padding(image, code), *_stack_padding(image, code)])
+    regions = sorted([*spans(image), *_startup_padding(image, code), *_stack_padding(image, code),
+                      *_leading_code_pointer_tables(image, code)])
     if not regions:
         return
     ranges = {start: end for start, end, _ in code}
