@@ -1066,6 +1066,11 @@ n_audio, which ultralib has no C for): waiting for that C had left a racing game
 `n_alFxNew`, named from exact signatures, to agents and deep passes. The port runs their original code. Check again,
 and the deep permuter before it searches a function, set library code aside too.
 
+SDK sample code is set aside the same way (`Console.sdk_sample_code`: the N64's scheduler, sched.c). The port runs
+the game's own copy of it (recompiled where it has no matched C), and that had kept `__scExec` and the rest, named
+from exact signatures, open for agents. Matched copies stay matched. Left: the native libultraship build (Compile
+for PC) has no C for a scheduler function set aside; it could read ultralib's sched.c as it reads the math.
+
 Library code the port compiles from C (`gu*` math, libultra's synthesizer) is set aside too once the user installs
 libultra source (decompals/ultralib at the table's commit, a proprietary pack: its C is SGI's and Nintendo's), and
 the WebAssembly build compiles ultralib's C for it (port/ultralib.py, docs/PORTING.md). On that racing game 15 more

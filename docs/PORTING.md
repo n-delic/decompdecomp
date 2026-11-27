@@ -324,6 +324,10 @@ and the defines of the build the game's copy matched. The units go to `port/wasm
 ultralib's C is SGI's and Nintendo's and never part of a save. The game's own matched C for a function wins. The link
 check lists these as their own group (`ultralib`).
 
+libultra's sample scheduler (sched.c) is neither replaced nor compiled from ultralib: the port runs the game's own
+copy. A scheduler function that library detection names and nobody has matched is set aside as SDK code all the same
+(`Console.sdk_sample_code`), and runs as its recompiled C like any function with no C.
+
 The game's C is the console's: `PORT` is defined only for a file that needs it in WebAssembly (one using
 `<stdarg.h>`, `__builtin_next_arg` or inline assembly), because the native port's `#ifdef PORT` fixes are for a
 64-bit PC and some drop what the console needs (a display list's address written as 0, "no meaning on PC").

@@ -37,6 +37,7 @@ from ...rom import Picked, RomError
 from .. import EXPORT, RECOMMENDED, ROM, Compiler, Console
 from . import emulator, profile_probes, recomp, sdk_assembly, sdk_linked, sdk_shapes
 from .port import KIT as PORT_KIT
+from .port import SCHEDULER
 
 # Store only a digest of the entire body, including the return delay slot.
 _MUL64_LOW_FIRST_SHA256 = "3de77e7c110a869794ff2998de80fb3fd6e4a7fc046d21378dc764a11b1676d0"
@@ -243,6 +244,10 @@ class Nintendo64(Console):
         # name the ultralib rebuild has too is libultra's own, and goes the usual way.
         return (any(_N_AUDIO.search(c) for c in corpora)
                 and not any(c.startswith("built in / decompals/ultralib") for c in corpora))
+
+    def sdk_sample_code(self, name):
+        # libultra's scheduler (sched.c): the port runs the game's copy, but nobody needs to write it again
+        return bool(SCHEDULER.match(name))
 
     def sdk_assembly_identity(self, code, big_endian=True):
         return sdk_assembly.identify(code, big_endian)

@@ -529,6 +529,12 @@ class Console:
         code on the detection alone (app/sdk_assembly._lead), not left to agents."""
         return False
 
+    def sdk_sample_code(self, name: str) -> bool:
+        """Whether a detected routine is SDK sample code that a game builds as its own, so the port kit runs the
+        game's copy (`PortKit.sdk_group` None). It is still the SDK's code: set aside like the rest of the library
+        (app/sdk_assembly._lead), not left to agents."""
+        return False
+
     def scan_sdk(self, net, proj, job=None) -> None:
         """Optional binary SDK evidence, refreshed by the shared background naming task.
 
