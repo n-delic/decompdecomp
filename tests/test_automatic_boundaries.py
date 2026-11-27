@@ -1051,3 +1051,34 @@ def test_global_initializer_falls_through_to_a_closed_frame(case):
         assert result[0].entry_aliases == {BASE+16: f'func_{BASE+16:08X}'}
     else:
         assert any(fn.rom == 16 for fn in result)
+
+
+@pytest.mark.parametrize('case', ['moves', 'not_moves', 'interior', 'head_interior', 'data'])
+def test_called_argument_shuffle_preserves_shared_leaf_entry(case):
+    from decompnet.rom.automatic_boundaries import shared_called_leaf
+
+    words = [0x00a03025, 0x00802825, 0x00a61021, 0x03e00008, 0]
+    if case == 'not_moves':
+        words[0] = 0xaca60000
+    image, functions, segments = fixture(words, cuts=(0, 8, 20))
+    data = [DataSymbol('table', BASE+12, 12, 4, 'data')] if case == 'data' else []
+    entered = {BASE+12} if case == 'interior' else {BASE+4} if case == 'head_interior' else set()
+    assert shared_called_leaf(*functions[:2], image, consoles.get('n64'), 'big', segments, entered, data) == (case == 'moves')
+
+
+def test_shared_called_fpu_entry_does_not_need_a_compiler_prologue():
+    from decompnet.rom.automatic_boundaries import shared_called_leaf
+
+    words = [0x00a03025, 0x00802825, 0x44865000, 0x3c083f80, 0x44888000,
+             0xc4a40000, 0x460a8283, 0xe4840000, 0x03e00008, 0]
+    image, functions, segments = fixture(words, cuts=(0, 8, 40))
+    assert shared_called_leaf(*functions, image, consoles.get('n64'), 'big', segments, set(), [])
+
+
+def test_uncalled_argument_shuffle_keeps_called_tail_entry():
+    words = [0x00a03025, 0x00802825, 0x00a61021, 0x03e00008, 0,
+             0x0c000000 | ((BASE+8) >> 2 & 0x3ffffff), 0, 0x03e00008, 0]
+    image, functions, segments = fixture(words, cuts=(0, 8, 20, 36))
+    result = repair(functions, [], image, consoles.get('n64'), segments)
+    assert result[0].size == 20
+    assert result[0].entry_aliases == {BASE+8: functions[1].name}
