@@ -37,7 +37,9 @@ def audio_spans(image):
                 branches = {word & 0x03ffffff for word in words if word >> 26 in (2, 3)}
                 if (sum(map(_vector, words)) >= _MIN_VECTORS
                         and sum(0x01000400 <= target < 0x01000800 for target in branches) >= 3):
-                    yield start, stop
+                    # The verified vector program follows libultra's 0xd0-byte RSP bootstrap. The bootstrap is
+                    # RSP code too: treating it as CPU text invents a CP0 assembly function before the audio.
+                    yield end, stop
         if end % 16:
             continue
         for start in range(max(0, end - 0x1000), end - 0x100, 16):

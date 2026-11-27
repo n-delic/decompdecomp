@@ -96,6 +96,14 @@ def extend_startup_trap(config: Path, rom: bytes, log=print) -> bool:
         return False
     if not padding and vram + 8 in callers and vram + 4 not in callers:
         skip = 8
+    elif not padding and vram + 4 not in callers:
+        # A startup call can return to a trap followed immediately by RSP audio rather than another CPU entry.
+        # Only the independently verified bootstrap plus vector program establishes that the next bytes are RSP.
+        from .rsp_prefix import audio_spans
+
+        if not any(start == at + 8 for start, _ in audio_spans(rom)):
+            return False
+        skip = 8
     elif (all(32 <= byte < 127 for byte in rom[at+4:at+8])
           and vram+8 in callers and vram+4 not in callers
           and ((vram-4) & 0xf0000000) | ((call & 0x3ffffff) << 2) == vram+8
