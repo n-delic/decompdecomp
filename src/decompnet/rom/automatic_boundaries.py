@@ -835,7 +835,7 @@ def shared_fallthrough_frame(head, tail, image, console, order, segments, entere
             return False
     facts = read(head.vram, image[head.rom:tail.rom], big_endian=console.big_endian, cpu=console.cpu_variant)
     stores = {event['place']['value'] for event in facts['events']
-              if event.get('kind') == 'store' and event.get('place', {}).get('kind') == 'constant'
+              if event.get('kind') == 'store' and (event.get('place') or {}).get('kind') == 'constant'
               and 0x80000000 <= event['place']['value'] < 0x80800000}
     if len(stores) < 2:return False
     if called_extent(image, tail.rom, end, tail.vram, big_endian=console.big_endian,
