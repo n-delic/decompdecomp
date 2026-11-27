@@ -29,9 +29,10 @@ def test_sdk_reference_proof_rechecks_the_complete_object(tmp_path):
     console = consoles.get('n64')
     proof = identities(console, tmp_path, obj)['sample']
     assert proof['name'] == '__osGetSR' and proof['kind'] == 'sdk'
-    assert reverify(console, tmp_path, 'sample', 12, proof)
+    (tmp_path / 'objdiff.json').write_text(json.dumps({'units': [{'name': 'unit', 'target_path': obj.name}]}))
+    assert reverify(console, tmp_path, 'unit', 'sample', 12, proof)
     proj = {'root': str(tmp_path), 'config': json.dumps({'kind': 'fork', 'platform': 'n64'})}
-    fn = {'status': 'asm', 'size': 12, 'meta': json.dumps({'symbol': 'sample', 'verified_assembly': proof})}
+    fn = {'status': 'asm', 'size': 12, 'unit': 'unit', 'meta': json.dumps({'symbol': 'sample', 'verified_assembly': proof})}
     assert source_assembly.verified(proj, fn)
     _object(tmp_path, changed=True)
     assert not source_assembly.verified(proj, fn)
@@ -134,3 +135,19 @@ def test_fork_sync_does_not_reclassify_an_agent_claim(tmp_path):
     net.forks.sync('p', rep=report, log=lambda *_: None)
     row = net.store.one("SELECT status,meta FROM functions WHERE name='sample'")
     assert row['status'] == 'asm' and 'not_c' not in json.loads(row['meta'])
+
+
+def test_sdk_proof_rejects_a_changed_unit_reference(tmp_path):
+    obj = _object(tmp_path)
+    console = consoles.get('n64')
+    proof = identities(console, tmp_path, obj)['sample']
+    other = tmp_path / 'other.o'
+    other.write_bytes(obj.read_bytes())
+    config = tmp_path / 'objdiff.json'
+    config.write_text(json.dumps({'units': [{'name': 'unit', 'target_path': obj.name}]}))
+    assert reverify(console, tmp_path, 'unit', 'sample', 12, proof)
+    config.write_text(json.dumps({'units': [{'name': 'unit', 'target_path': other.name}]}))
+    assert not reverify(console, tmp_path, 'unit', 'sample', 12, proof)
+    config.write_text(json.dumps({'units': [{'name': 'unit', 'target_path': obj.name},
+                                            {'name': 'unit', 'target_path': other.name}]}))
+    assert not reverify(console, tmp_path, 'unit', 'sample', 12, proof)

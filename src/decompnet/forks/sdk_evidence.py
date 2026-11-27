@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from io import BytesIO
 from pathlib import Path
 
@@ -63,11 +64,26 @@ def identities(console, root: Path, target: Path | None) -> dict[str, dict]:
         return {}
 
 
-def reverify(console, root: Path, symbol: str, size: int, proof: dict) -> bool:
-    """Re-read the reference object when the UI or an agent asks whether the proof still holds."""
+def reverify(console, root: Path, unit_name: str, symbol: str, size: int, proof: dict) -> bool:
+    """Re-read the current unit's reference and verify it is the object the proof identified."""
     rel = proof.get('object_path')
-    if not isinstance(rel, str) or Path(rel).is_absolute() or '..' in Path(rel).parts:
+    if (not isinstance(rel, str) or Path(rel).is_absolute() or '..' in Path(rel).parts
+            or proof.get('symbol') != symbol):
         return False
-    current = identities(console, root, root / rel).get(symbol)
-    return bool(current and current.get('bytes') == size and current.get('object_sha256') == proof.get('object_sha256')
-                and current.get('target_sha256') == proof.get('target_sha256') and current.get('names') == proof.get('names'))
+    try:
+        config = json.loads((root / 'objdiff.json').read_text(encoding='utf-8'))
+        units = config.get('units') or config.get('objects') or []
+        matches = [u for u in units if (u.get('name') or u.get('path') or '?') == unit_name]
+        if len(matches) != 1:
+            return False
+        entry = matches[0]
+        target = entry.get('target_path')
+        if not target and config.get('target_dir') and entry.get('path'):
+            target = str(Path(config['target_dir']) / entry['path'])
+        if not isinstance(target, str) or (root / target).resolve() != (root / rel).resolve():
+            return False
+        current = identities(console, root, root / target).get(symbol)
+        return bool(current and current.get('bytes') == size and current.get('object_sha256') == proof.get('object_sha256')
+                    and current.get('target_sha256') == proof.get('target_sha256') and current.get('names') == proof.get('names'))
+    except (OSError, ValueError, TypeError, AttributeError):
+        return False

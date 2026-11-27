@@ -32,7 +32,7 @@ def verified(proj, fn):
             cfg = json.loads(proj['config'])
             symbol = json.loads(fn['meta'] or '{}').get('symbol')
             return (fn['status'] == 'asm' and proof.get('verified') is True and isinstance(symbol, str)
-                    and reverify(consoles.of(cfg), Path(proj['root']), symbol, int(fn['size']), proof))
+                    and reverify(consoles.of(cfg), Path(proj['root']), fn['unit'], symbol, int(fn['size']), proof))
         except (KeyError, TypeError, ValueError):
             return False
     if proof.get('verification_method')=='builtin-sdk-digest':
