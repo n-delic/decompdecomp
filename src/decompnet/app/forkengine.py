@@ -1200,6 +1200,13 @@ class ForkEngine:
                      and (f.get('fuzzy_match_percent') or 0) < 100}
         sdk_evidence = {uname: sdk_identities(console, fp.root, units[uname].target)
                         for uname in sdk_units if uname in units}
+        # Reference-only dispatch tables have no C source; check their complete object
+        # bodies before candidate preparation, and recompute on every measurement.
+        from ..forks.assembly_evidence import dispatches
+        assembly_units = {uname for uname, f in rows if int(f.get('size', 0)) == 8
+                          and (f.get('fuzzy_match_percent') or 0) < 100}
+        assembly_evidence = {uname: dispatches(console, fp.root, units[uname].target)
+                             for uname in assembly_units if uname in units}
         all_rows = self.net.project_store(slug).all("SELECT * FROM functions WHERE project_id=?", proj["id"])
         existing = {(r["unit"], self._meta(r).get("symbol"), self._meta(r).get("nth", 0)): r for r in all_rows}
         used = {r["name"] for r in all_rows}
@@ -1219,7 +1226,7 @@ class ForkEngine:
         with self.net.project_store(slug).tx() as db:
             claimed = ({r['function_id'] for r in db.execute(
                 'SELECT c.function_id FROM claims c JOIN functions f ON f.id=c.function_id WHERE f.project_id=?',
-                (proj['id'],))} if any(sdk_evidence.values()) else set())
+                (proj['id'],))} if any(sdk_evidence.values()) or any(assembly_evidence.values()) else set())
             if fp.scope == GAME:
                 for uname, f in rows:
                     sym = f['name']
@@ -1265,7 +1272,7 @@ class ForkEngine:
                     previous_proof = was.get('verified_assembly')
                     fork_proof = isinstance(previous_proof, dict) and previous_proof.get('verification_method') == 'fork-sdk-digest'
                     meta.update({k: v for k, v in was.items() if k in kept
-                                 and not (k == "asm_code" and was.get("set_aside"))
+                                 and not (k == "asm_code" and (was.get("set_aside") or was.get("fork_dispatch")))
                                  and not (k == 'sdk_identity' and fork_proof)})  # (set aside: decided below)
                 if sym in generated and not meta.get("reopened"):  # set aside as assembly is, whatever the scope
                     meta["asm_code"] = generated[sym]
@@ -1284,6 +1291,13 @@ class ForkEngine:
                     meta['sdk_display'] = {'name': proof['name'], 'names': proof['names'], 'corpora': [proof['corpus']]}
                     meta['asm_code'] = 'Verified SDK assembly; excluded from C matching.'
                     meta['set_aside'] = True
+                    status = 'asm'
+                dispatch = assembly_evidence.get(uname, {}).get(sym)
+                if (status not in ('matched', 'asm') and counts[sym] == 1 and dispatch and dispatch['bytes'] == size
+                        and not meta.get('reopened') and not (old is not None and
+                            (old['id'] in claimed or old['status'] == 'matched' or old['best_source']))):
+                    meta['fork_dispatch'] = dispatch
+                    meta['asm_code'] = dispatch['reason']
                     status = 'asm'
                 if status == "open" and any(meta.get(k) for k in _ASM_KEYS):
                     status = "asm"  # hand-written assembly (here or in its twin elsewhere): not for agents
@@ -3783,8 +3797,8 @@ class ForkEngine:
                 raise NetworkError("autopilot needs m2c, the draft decompiler: install it in Setup")
             from ..forks.scaffold import prepare
 
-            # Refresh exact SDK identities before deciding which source-less units need C.
-            if all_units and console.sdk_assembly_sizes and not (stop is not None and stop.is_set()):
+            # Refresh reference evidence before deciding which source-less units need C.
+            if all_units and not (stop is not None and stop.is_set()):
                 if progress is not None:
                     progress('Checking reference objects')
                 if not (stop is not None and stop.is_set()):
