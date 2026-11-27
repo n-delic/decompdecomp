@@ -265,3 +265,20 @@ On an Apple Silicon Mac, the median of three runs rose from 295 to 338 judged ca
 (about 15%). Both modes ran 64 compiler invocations, recorded 512 trials, and returned the same score digest.
 The batch mode consumed all 512 batch summaries. This controlled workload includes compilation and trial
 history. The speedup depends on how often a real search can compile candidates together.
+
+### Combined compiler objects
+
+The N64 lane now sends the original ELF once per compiler batch. Rust finds the
+candidate entries, rejects file-local references or missing entries as the Python
+splitter does, and links and scores the remaining entries in place. A candidate
+that needs the ordinary judge materializes its renamed object on demand. Unsupported
+ELF inputs and gateways without the combined operation use the Python splitter.
+
+To isolate this change, use the same `--local-batches` command above with
+`DECOMP_N64_BATCH_JUDGE=1` in both modes. Toggle `DECOMP_N64_COMBINED_ELF` from
+`0` to `1`. On an Apple Silicon Mac with the same optimized gateway, medians across
+five runs per mode were 412 and 571 judged candidates per second, a 38.5% increase.
+Both paths used 64 compiler invocations and recorded 512 trials with identical
+score digests. The new path sent 64 combined ELF objects and used 512 batch miss
+summaries. The benchmark uses synthetic candidate bodies and includes compilation
+and trial history. Real projects can have different rates of batch eligibility.

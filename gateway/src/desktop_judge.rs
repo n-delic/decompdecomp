@@ -4,7 +4,7 @@ use std::io::{self, BufRead, Write};
 
 use serde_json::{json, Value};
 
-use crate::{mips_diff, mips_rom, mips_uso, rom_project};
+use crate::{mips_batch, mips_diff, mips_link, mips_rom, mips_uso, rom_project};
 
 struct Reader<'a>(rom_project::View<'a>);
 
@@ -88,21 +88,66 @@ impl Judge {
                 mips_uso::link(&json!({"object": object, "name": request["target"]["name"],
                                       "target": request["target"]["code"], "info": request["overlay"]}))
             };
-            let result = match linked {
-                Ok(link) if link["code"].is_string() => {
-                    match comparison.summary(&link["code"], &link["relocs"], align) {
-                        Ok(score) if score["score"].is_u64() => json!({
-                            "code": link["code"], "relocs": link["relocs"], "exact": link["exact"],
-                            "clean": link["problems"].as_array().is_some_and(Vec::is_empty),
-                            "score": score["score"], "max_score": score["max_score"],
-                            "bytes_match": score["bytes_match"],
-                        }),
-                        _ => Value::Null,
-                    }
+            results.push(batch_summary(linked, &comparison, align));
+        }
+        Ok(json!(results))
+    }
+
+    async fn judge_combined(&mut self, request: &mut Value) -> Result<Value, String> {
+        let count = request["count"]
+            .as_u64()
+            .filter(|&count| (2..=8).contains(&count))
+            .ok_or("invalid combined compiler batch size")? as usize;
+        let name = request["target"]["name"]
+            .as_str()
+            .ok_or("missing batch function name")?;
+        let mut object = mips_link::bytes(&request["object"])?;
+        let Some(entries) = mips_batch::entries(&object, name, count) else {
+            return Ok(Value::Null);
+        };
+        let mut reader = if request["overlay"].is_null() {
+            Some(self.project_view(request)?)
+        } else {
+            None
+        };
+        let Some(comparison) = mips_diff::PreparedComparison::from_value(&request["comparison"])?
+        else {
+            return Ok(Value::Null);
+        };
+        let name = request["target"]["name"]
+            .as_str()
+            .ok_or("missing batch function name")?;
+        let align = request["align_branches"].as_bool().unwrap_or(false);
+        let mut results = Vec::with_capacity(count);
+        for entry in entries {
+            let offset = match entry {
+                mips_batch::Entry::Local => {
+                    results.push(json!({"status": "local"}));
+                    continue;
                 }
-                _ => Value::Null,
+                mips_batch::Entry::Missing => {
+                    results.push(json!({"status": "missing"}));
+                    continue;
+                }
+                mips_batch::Entry::Ready(offset) => offset,
             };
-            results.push(result);
+            // The name prefix is already in the string table. Restore the suffix byte for the next candidate.
+            let suffix = offset + name.len();
+            let old = object[suffix];
+            object[suffix] = 0;
+            let linked = if let Some(reader) = reader.as_mut() {
+                mips_rom::link_bytes(&object, &request["target"], reader).await
+            } else {
+                mips_uso::link_bytes(
+                    &object,
+                    &request["target"]["name"],
+                    &request["target"]["code"],
+                    &request["overlay"],
+                )
+            };
+            object[suffix] = old;
+            results.push(json!({"status": "ready", "suffix": suffix,
+                                "judgment": batch_summary(linked, &comparison, align)}));
         }
         Ok(json!(results))
     }
@@ -130,8 +175,29 @@ impl Judge {
                 mips_rom::link(request, &mut reader).await
             }
             Some("judge_mips_batch") => self.judge_batch(request).await,
+            Some("judge_mips_combined") => self.judge_combined(request).await,
             _ => Err("unknown desktop judge operation".into()),
         }
+    }
+}
+
+fn batch_summary(
+    linked: Result<Value, String>,
+    comparison: &mips_diff::PreparedComparison,
+    align: bool,
+) -> Value {
+    match linked {
+        Ok(link) if link["code"].is_string() => {
+            match comparison.summary(&link["code"], &link["relocs"], align) {
+                Ok(score) if score["score"].is_u64() => json!({
+                    "code": link["code"], "relocs": link["relocs"], "exact": link["exact"],
+                    "clean": link["problems"].as_array().is_some_and(Vec::is_empty),
+                    "score": score["score"], "max_score": score["max_score"],
+                }),
+                _ => Value::Null,
+            }
+        }
+        _ => Value::Null,
     }
 }
 

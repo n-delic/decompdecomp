@@ -178,7 +178,7 @@ class JudgeMixin:
             return None
         return scope, image, scoring.ALIGN_BRANCH_TARGETS
 
-    def _judge_random_batch(self, fn, proj, objects):
+    def _judge_random_batch(self, fn, proj, objects, *, count=None):
         from ...rom.desktop_judge import direct_judge
         from ...rom.verifier_link import PackReader
 
@@ -198,7 +198,11 @@ class JudgeMixin:
             symbols = self.symbols(proj["id"])
             canonical = console.target_object(fn, self.cfg(proj), symbols)
             canonical.cpu = console.cpu_variant
-            results = judge.batch(objects, target, canonical, symbols, PackReader(self, proj, fn), overlay)
+            read = PackReader(self, proj, fn)
+            if count is None:
+                results = judge.batch(objects, target, canonical, symbols, read, overlay)
+            else:
+                results = judge.combined(objects, count, target, canonical, symbols, read, overlay)
         if results is not None and scope == self._random_batch_scope(fn, proj):
             return scope, results
         return None

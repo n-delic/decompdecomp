@@ -129,34 +129,56 @@ class RustJudge:
             self.project_key = key
         return result
 
-    def batch(self, objects, target, canonical, symbols, read, overlay=None):
+    def _batch_request(self, action, payload, target, canonical, symbols, read, overlay):
         if not scoring.native_mips_comparison(canonical, canonical):
             return None
-        known = (lambda name: name == target.name) if overlay is not None else (
-            lambda name: name in symbols.by_name or bool(AUTO_NAME.match(name)))
         plan = asdict(target)
         plan["code"] = target.code.hex()
-        request = {"objects": [unmangle(obj, known).hex() for obj in objects], "target": plan,
-                   "comparison": verifier_link.comparison_input(canonical), "overlay": overlay,
-                   "align_branches": scoring.ALIGN_BRANCH_TARGETS}
+        request = {**payload, "target": plan, "comparison": verifier_link.comparison_input(canonical),
+                   "overlay": overlay, "align_branches": scoring.ALIGN_BRANCH_TARGETS}
         if overlay is None:
             request["rom_offset"] = read.function["rom_offset"]
-            reply = self._project_request("judge_mips_batch", request, symbols, read)
-        else:
-            reply = self._exchange("judge_mips_batch", request)
+            return self._project_request(action, request, symbols, read)
+        return self._exchange(action, request)
+
+    @staticmethod
+    def _summary(row, target, canonical):
+        if row is None:
+            return None
+        candidate = FunctionObj(target.name, canonical.arch, target.big_endian, bytes.fromhex(row["code"]),
+                                [Reloc.from_json(item) for item in row["relocs"]])
+        score = 0 if row["exact"] else max(1, row["score"])
+        diff = scoring.DiffResult(score, row["max_score"], [], row["exact"])
+        return candidate, diff, row["clean"]
+
+    def batch(self, objects, target, canonical, symbols, read, overlay=None):
+        known = (lambda name: name == target.name) if overlay is not None else (
+            lambda name: name in symbols.by_name or bool(AUTO_NAME.match(name)))
+        payload = {"objects": [unmangle(obj, known).hex() for obj in objects]}
+        reply = self._batch_request("judge_mips_batch", payload, target, canonical, symbols, read, overlay)
         if not isinstance(reply, list) or len(reply) != len(objects):
             return None
-        results = []
-        for row in reply:
-            if row is None:
-                results.append(None)
-                continue
-            candidate = FunctionObj(target.name, canonical.arch, target.big_endian, bytes.fromhex(row["code"]),
-                                    [Reloc.from_json(item) for item in row["relocs"]])
-            score = 0 if row["exact"] else max(1, row["score"])
-            diff = scoring.DiffResult(score, row["max_score"], [], row["exact"])
-            results.append((candidate, diff, row["clean"]))
-        return results
+        return [self._summary(row, target, canonical) for row in reply]
+
+    def combined(self, obj, count, target, canonical, symbols, read, overlay=None):
+        payload = {"object": obj.hex(), "count": count}
+        reply = self._batch_request("judge_mips_combined", payload, target, canonical, symbols, read, overlay)
+        if not isinstance(reply, list) or len(reply) != count:
+            return None
+        rows = []
+        for slot, row in enumerate(reply):
+            status = row["status"]
+            if status in ("local", "missing"):
+                rows.append((status, None, None))
+            elif status == "ready":
+                suffix = row["suffix"]
+                expected = f"__b{slot}".encode() + b"\0"
+                if suffix < 0 or obj[suffix:suffix + len(expected)] != expected:
+                    return None
+                rows.append((status, suffix, self._summary(row["judgment"], target, canonical)))
+            else:
+                return None
+        return rows
 
     def data(self, plan, lookup):
         return self._exchange("rom_data_mips", plan, lookup)

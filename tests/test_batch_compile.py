@@ -156,17 +156,32 @@ def test_rust_judges_real_random_rewrite_batches_against_python(project, monkeyp
         ticket.random_rewrite = True
         assert ticket.future.set_running_or_notify_cancel()
         group.append(ticket)
+    native = net._judge_random_batch
+    captured = []
+
+    def capture(fn, proj, obj, *, count=None):
+        result = native(fn, proj, obj, count=count)
+        if count:
+            captured.append((obj, result))
+        return result
+
+    monkeypatch.setattr(net, "_judge_random_batch", capture)
     pool = deep_compilation.Pool(1, maximum=True, remote=False)
     with compile_sessions.session():
         pool._run_batch(group)
 
+    [(combined, _)] = captured
+    reference = batch_compile._split(compiler.CompileResult(True, combined, ""), sources, fn["name"])
+
     outcomes = []
-    for ticket in group:
+    for ticket, expected_object in zip(group, reference, strict=True):
         result = ticket.future.result(timeout=10)
-        assert result.batched and ticket.batch_judgment is not None
+        assert isinstance(result, batch_compile.CombinedCandidate) and ticket.batch_judgment is not None
+        assert "obj" not in result.__dict__  # A consumed miss never needs an individual ELF buffer.
         batch = ticket.batch_judgment
         candidate, diff, clean = batch.candidate, batch.diff, batch.clean
         assert batch.compiled is result and batch.scope == net._random_batch_scope(fn, proj)
+        assert result.obj == expected_object.obj
         original = match.link(result.obj, fn["name"], net._rom_target(fn), net.symbols(pid), net.reader(proj, fn))
         expected = scoring._diff(net._target_obj(fn, proj), original.candidate, details=False)
         assert candidate == original.candidate and clean == (not original.problems)
@@ -175,6 +190,29 @@ def test_rust_judges_real_random_rewrite_batches_against_python(project, monkeyp
         )
         outcomes.append(diff.bytes_match)
     assert outcomes == [True] + [False] * 7
+    with compile_sessions.session():
+        mixed = sources[:2] + ['int reader(int x) { volatile const char *s = "test"; return s[x]; }']
+        token = batch_compile.combined_judge.set(lambda obj, count: capture(fn, proj, obj, count=count))
+        try:
+            fallback = net._compile_batch(proj, "", mixed, fn)
+        finally:
+            batch_compile.combined_judge.reset(token)
+    obj, (_, decisions) = captured[-1]
+    python = batch_compile._split(compiler.CompileResult(True, obj, ""), mixed + ["missing"], fn["name"])
+    missing = native(fn, proj, obj, count=len(mixed) + 1)[1][-1]
+    assert [row[0] for row in decisions] + [missing[0]] == ["ready", "ready", "local", "missing"]
+    assert [candidate is None for candidate in fallback + [None]] == [candidate is None for candidate in python]
+    assert [candidate.obj for candidate in fallback if candidate] == [candidate.obj for candidate in python if candidate]
+    with compile_sessions.session():
+        token = batch_compile.combined_judge.set(lambda *_: None)  # An older gateway declines the operation.
+        try:
+            legacy = net._compile_batch(proj, "", mixed, fn)
+        finally:
+            batch_compile.combined_judge.reset(token)
+    assert [candidate is None for candidate in legacy] == [candidate is None for candidate in fallback]
+    assert [code(candidate, "reader") for candidate in legacy if candidate] == [
+        code(candidate, "reader") for candidate in fallback if candidate
+    ]
     with (root / "game.rom").open("ab") as stream:
         stream.write(b"new image identity")
     assert group[0].batch_judgment.scope != net._random_batch_scope(fn, proj)

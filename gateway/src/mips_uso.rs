@@ -615,15 +615,27 @@ fn verify(obj: &[u8], name: &str, target: &[u8], info: Metadata) -> Option<Value
 
 pub fn link(request: &Value) -> Result<Value, String> {
     let object = bytes(&request["object"])?;
-    let target = bytes(&request["target"])?;
-    let name = request["name"]
-        .as_str()
-        .ok_or("missing overlay function name")?;
-    if request["info"].get("relocs").is_none() {
+    link_bytes(
+        &object,
+        &request["name"],
+        &request["target"],
+        &request["info"],
+    )
+}
+
+pub(crate) fn link_bytes(
+    object: &[u8],
+    name: &Value,
+    target: &Value,
+    info: &Value,
+) -> Result<Value, String> {
+    let target = bytes(target)?;
+    let name = name.as_str().ok_or("missing overlay function name")?;
+    if info.get("relocs").is_none() {
         return Ok(Value::Null);
     }
-    let Ok(info) = serde_json::from_value(request["info"].clone()) else {
+    let Ok(info) = serde_json::from_value(info.clone()) else {
         return Ok(Value::Null);
     };
-    Ok(verify(&object, name, &target, info).unwrap_or(Value::Null))
+    Ok(verify(object, name, &target, info).unwrap_or(Value::Null))
 }
