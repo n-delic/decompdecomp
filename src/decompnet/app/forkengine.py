@@ -43,6 +43,7 @@ from ..forks import (
 )
 from ..forks.objdiff import MappingConflict, ObjdiffError
 from ..forks.project import EDITABLE, GAME, PROGRAM, SCOPES, STATE, ForkError, ForkProject, project_macro
+from ..forks.reference_cache import Cache
 from ..hostenv import NO_WINDOW
 from ..network import (
     GAME_CODE,
@@ -419,18 +420,34 @@ def _headers_defining(fp: ForkProject, rel: str, include_lines: list[str], names
     return out
 
 
+_DATA_SYMBOLS = Cache()
+
+
 def _data_symbols(target: Path | None) -> set[str]:
-    """The data symbols of a target object: objdiff's report counts data in a code section as a function (a DS
-    program's BuildInfo, the SDK's build information with its RSA text, sits in .text), and agents tried to write it
-    as one. Empty when it can't be read (a COFF object: PC, Xbox)."""
+    """Data symbols objdiff must not count as functions; tolerate non-ELF objects."""
+    from io import BytesIO
+
     from elftools.common.exceptions import ELFError
     from elftools.elf.elffile import ELFFile
 
+    from ..forks.reference_cache import ChangedDuringRead, read
+
+    if target is None:
+        return set()
     try:
-        with open(target, "rb") as f:
-            symtab = ELFFile(f).get_section_by_name(".symtab")
-            return {s.name for s in symtab.iter_symbols() if s["st_info"]["type"] == "STT_OBJECT"} if symtab else set()
-    except (OSError, TypeError, ELFError):
+        path = Path(target)
+        if path.stat().st_size > 8 * 1024 * 1024:
+            # Avoid retaining a large object in memory just to cache its symbol names.
+            with path.open('rb') as source:
+                symtab = ELFFile(source).get_section_by_name('.symtab')
+                return {s.name for s in symtab.iter_symbols() if s['st_info']['type'] == 'STT_OBJECT'} if symtab else set()
+        raw = read(path)
+        digest = hashlib.sha256(raw).digest()
+        def parse():
+            symtab = ELFFile(BytesIO(raw)).get_section_by_name('.symtab')
+            return frozenset(s.name for s in symtab.iter_symbols() if s['st_info']['type'] == 'STT_OBJECT') if symtab else frozenset()
+        return set(_DATA_SYMBOLS.get(digest, parse))
+    except (OSError, TypeError, ELFError, ChangedDuringRead):
         return set()
 
 
