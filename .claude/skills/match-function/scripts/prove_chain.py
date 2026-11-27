@@ -8,7 +8,9 @@ those from the chosen families, scores them one by one with the standalone judge
 child that beats the current score. It stops at 0, when no child improves, after --steps, or at --max-judged. Bounded:
 --max-judged caps the variants judged in the whole run (default 400, about 40 seconds of judging; every child, merge
 and lookahead child counts), one judge worker, nothing parallel. --children (default 80) is only the size of a batch: a
-batch with no improving child is followed by the next one. A run stopped by the cap says so and how many it left
+batch with no improving child is followed by the next one. Before a step takes an improving child it judges the first
+few children of every family (decompnet.app.prove_chain.survey: at most half of what the cap leaves, one per family at
+least), so a much larger step from a late family is not missed. A run stopped by the cap says so and how many it left
 unjudged; raise it with --max-judged N, or remove it with --max-judged 0.
 
 With --combine K (default 0: off), a step where no single child improves tries combinations before stopping: children
@@ -43,6 +45,7 @@ import claimlost  # noqa: E402
 import fast_judge  # noqa: E402
 
 from decompnet.app import row_coverage  # noqa: E402
+from decompnet.app.prove_chain import survey  # noqa: E402
 from decomprepair import compose  # noqa: E402
 
 DEFAULT_STEPS = 8
@@ -159,6 +162,7 @@ def prove(source, generate, score, families, steps=DEFAULT_STEPS, children=DEFAU
         scored, cover, bad = [], {}, {}
         parent_rows = rows(current)[1] if rows and combine else None
         parent_bad = row_coverage.bad(parent_rows) if parent_rows else None
+        options, first = survey(options, budget.left())
         offset = 0
         # --children is the size of a batch: a batch with no improving child is not a stall while children are left
         # out (func_8005502C: 528 children, the improving one number 131, stalled at 215 under --children 40 because the
@@ -178,9 +182,10 @@ def prove(source, generate, score, families, steps=DEFAULT_STEPS, children=DEFAU
                 if result is not None:
                     scored.append((result, family, child))
             offset += len(batch)
-            if scored and min(row[0] for row in scored) < best:
+            found = bool(scored) and min(row[0] for row in scored) < best
+            if found and offset >= first:
                 break
-            if offset < len(options) and budget.left():
+            if not found and offset >= first and offset < len(options) and budget.left():
                 log(f"step {step}  note: no child of the first {offset} improves on {best}; judging the other "
                     f"{len(options) - offset} of {len(options)}")
         improved = bool(scored) and min(row[0] for row in scored) < best
@@ -189,8 +194,8 @@ def prove(source, generate, score, families, steps=DEFAULT_STEPS, children=DEFAU
                 budget.stopped(step, f"{len(options) - offset} of {len(options)} children", log)
                 break
             if budget.left():
-                log(f"step {step}  note: {len(options) - offset} of {len(options)} children left out: a batch of "
-                    f"--children {children} already improved (name --families to narrow it)")
+                log(f"step {step}  note: {len(options) - offset} of {len(options)} children left out: one already "
+                    "improved after the first few of every family (name --families to narrow it)")
             else:
                 log(f"step {step}  note: the cap of {budget.cap} judged variants was reached: "
                     f"{len(options) - offset} of {len(options)} children left unjudged")
