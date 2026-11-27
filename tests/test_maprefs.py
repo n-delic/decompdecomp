@@ -151,6 +151,44 @@ def test_an_existing_objdiff_json_is_never_replaced(tmp_path):
     assert (proj.root / "objdiff.json").read_text() == "{}"
 
 
+@pytest.mark.parametrize('asset_has_function', [False, True])
+def test_executable_flagged_assets_do_not_hide_verified_code(tmp_path, asset_has_function):
+    proj = project(tmp_path)
+    symbols = [("foo", FOO, 1, 2, 1), ("bar", BAR, 1, 1, 1), ("asset_data", 0x81000000, 1, 1, 2)]
+    if asset_has_function:
+        symbols.append(("extra_code", 0x81000000, 1, 2, 2))
+    table, strings = symtab(symbols)
+    table = bytearray(table)
+    struct.pack_into(">I", table, 3 * 16 + 8, 4096)  # the data symbol covers the entire asset section
+    (proj.root / "build/us/game.elf").write_bytes(be_elf(
+        [(".main", SHT_PROGBITS, SHF_ALLOC | SHF_EXEC, 0x80000000, LINKED_TEXT * 2, 0, 0, 0),
+         (".assets", SHT_PROGBITS, SHF_ALLOC | SHF_EXEC, 0x81000000, bytes(4096), 0, 0, 0),
+         (".symtab", SHT_SYMTAB, 0, 0, table, 4, 1, 16), (".strtab", SHT_STRTAB, 0, 0, strings, 0, 0, 0)],
+        kind=2, load=(0x80000000, 0x1000, ".main")))
+    if asset_has_function:
+        with pytest.raises(ForkError, match="too little to measure"):
+            maprefs.generate(proj, "us", log=lambda *_: None)
+    else:
+        assert maprefs.generate(proj, "us", log=lambda *_: None)
+
+
+def test_executable_sections_without_function_symbols_are_counted_conservatively():
+    data = be_elf([(".code", SHT_PROGBITS, SHF_ALLOC | SHF_EXEC, 0x80000000, bytes(32), 0, 0, 0),
+                   (".unknown", SHT_PROGBITS, SHF_ALLOC | SHF_EXEC, 0x81000000, bytes(64), 0, 0, 0)], kind=2)
+    elf = ELFFile(io.BytesIO(data))
+    assert maprefs.executable_code_size(elf, {}) == 96
+
+
+def test_unsized_bytes_in_an_executable_section_stay_in_the_coverage_total():
+    table, strings = symtab([("function", 0x80000000, 1, 2, 1), ("data", 0x81000000, 1, 1, 2)])
+    table = bytearray(table)
+    struct.pack_into(">I", table, 2 * 16 + 8, 32)
+    data = be_elf([(".code", SHT_PROGBITS, SHF_ALLOC | SHF_EXEC, 0x80000000, bytes(32), 0, 0, 0),
+                   (".mixed", SHT_PROGBITS, SHF_ALLOC | SHF_EXEC, 0x81000000, bytes(64), 0, 0, 0),
+                   (".symtab", SHT_SYMTAB, 0, 0, table, 4, 1, 16), (".strtab", SHT_STRTAB, 0, 0, strings, 0, 0, 0)], kind=2)
+    assert maprefs.executable_code_size(ELFFile(io.BytesIO(data)), {}) == 64
+
+
 def test_other_consoles_are_not_planned_from_a_map(tmp_path):
     proj = project(tmp_path)
     proj.platform = "ps2"

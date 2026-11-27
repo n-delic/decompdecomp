@@ -395,6 +395,43 @@ def make_variables(project, version: str | None) -> list[str]:
     return []
 
 
+def executable_code_size(elf: ELFFile, addresses: dict) -> int:
+    """Count code and unknown bytes; exclude only bytes covered by sized data symbols in non-code sections."""
+    sections = list(elf.iter_sections())
+    executable = [(i, s) for i, s in enumerate(sections) if s['sh_flags'] & 4 and s['sh_type'] != 'SHT_NOBITS']
+    symbols = elf.get_section_by_name('.symtab')
+    if symbols is None:
+        return sum(s['sh_size'] for _, s in executable)
+    entries = list(symbols.iter_symbols())
+    function_sections = {s['st_shndx'] for s in entries
+                         if s['st_info']['type'] == 'STT_FUNC' and isinstance(s['st_shndx'], int)}
+    if not function_sections:
+        return sum(s['sh_size'] for _, s in executable)
+    text = [(address, address + size) for (_, name), value in addresses.items()
+            if name == '.text' and value and (address := value[0]) is not None and (size := value[1]) > 0]
+    data: dict[int, list[tuple[int, int]]] = {}
+    for symbol in entries:
+        index, start, size = symbol['st_shndx'], symbol['st_value'], symbol['st_size']
+        if isinstance(index, int) and symbol['st_info']['type'] == 'STT_OBJECT' and size:
+            data.setdefault(index, []).append((start, start + size))
+    total = 0
+    for index, section in executable:
+        lo, hi = section['sh_addr'], section['sh_addr'] + section['sh_size']
+        if index in function_sections or any(start < hi and end > lo for start, end in text):
+            total += section['sh_size']
+            continue
+        # Gaps, unsized symbols and sections with no data symbols might be code: count them all.
+        intervals = sorted((max(lo, start), min(hi, end)) for start, end in data.get(index, ())
+                           if start < hi and end > lo)
+        covered, cursor = 0, lo
+        for start, end in intervals:
+            if end > cursor:
+                covered += end - max(start, cursor)
+                cursor = end
+        total += section['sh_size'] - covered
+    return total
+
+
 def generate(project, version: str | None = None, log=print) -> bool:
     """Publish references and objdiff.json for a matching build with no splat config; False when it doesn't apply."""
     root = project.root.resolve()
@@ -408,14 +445,13 @@ def generate(project, version: str | None = None, log=print) -> bool:
     except ForkError:
         return False
     build_dir = inside(root, 'build')
+    addresses = parse_map(map_path.read_text(errors='replace', encoding='utf-8'))
     with elf_path.open('rb') as stream:
         linked = ELFFile(stream)
         if linked.header['e_machine'] != 'EM_MIPS':
             return False
         ranges, globals_ = load_ranges(linked), global_symbols(linked)
-        image_code = sum(section['sh_size'] for section in linked.iter_sections()
-                         if section['sh_flags'] & 4 and section['sh_type'] != 'SHT_NOBITS')  # (SHF_EXECINSTR)
-    addresses = parse_map(map_path.read_text(errors='replace', encoding='utf-8'))
+        image_code = executable_code_size(linked, addresses)
     containers = expand_partial_links(root, addresses)
     objects = sorted({owner for (owner, name) in addresses if name == '.text' and addresses[(owner, name)]
                       and owner not in containers})
