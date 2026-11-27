@@ -18,13 +18,19 @@ def padding_only(target: Path) -> bool:
     to ordinary preparation.
     """
     try:
-        elf = ELFFile(BytesIO(target.read_bytes()))
+        # This check is only for tiny padding objects. Avoid reading an entire
+        # large reference just to decide whether to defer it.
+        with target.open('rb') as stream:
+            raw = stream.read(8 * 1024 * 1024 + 1)
+        if len(raw) > 8 * 1024 * 1024:
+            return False
+        elf = ELFFile(BytesIO(raw))
         if elf['e_machine'] != 'EM_MIPS':
             return False
         table = elf.get_section_by_name('.symtab')
         if table is None:
             return False
-        funcs = [s for s in table.iter_symbols() if s.name and s['st_info']['type'] == 'STT_FUNC']
+        funcs = [s for s in table.iter_symbols() if s['st_info']['type'] == 'STT_FUNC']
         if len(funcs) != 1:
             return False
         sym = funcs[0]
