@@ -11,6 +11,47 @@ STATES=('unreviewed','needs_investigation','confirmed_code','dismissed')
 def key(pid):return f'code-audit:{pid}'
 
 
+def indirect_checkpoint(net,pid,revision_id,image,functions,order):
+    """Persist completed per-function callback traces for an interrupted full scan."""
+    from ..arch import mips_callback_flow, mips_indirect
+
+    store=net.project_store(pid)
+    checkpoint_key=f'code-audit-indirect:{pid}'
+    with open(mips_callback_flow.__file__,'rb') as source:
+        algorithm=hashlib.file_digest(source,'sha256').hexdigest()
+    facts=[1,revision_id,hashlib.sha256(image).hexdigest(),order,algorithm,
+           mips_indirect.MAX_WORDS,mips_indirect.MAX_CALLS,functions]
+    identity=hashlib.sha256(json.dumps(facts,sort_keys=True).encode()).hexdigest()
+
+    def load():
+        row=store.one('SELECT value FROM settings WHERE key=?',checkpoint_key)
+        try:
+            state=json.loads(row['value']) if row else {}
+            index,records,limited=state.get('index'),state.get('records'),state.get('limited')
+            if (state.get('identity')==identity and type(index) is int and 0<=index<=len(functions)
+                    and isinstance(records,list) and type(limited) is bool
+                    and all(isinstance(item,dict) and isinstance(item.get('function'),str)
+                            and type(item.get('address')) is int and isinstance(item.get('load_address'),list)
+                            and len(item['load_address'])==2 and type(item['load_address'][0]) is int
+                            and isinstance(item['load_address'][1],dict)
+                            and all(isinstance(k,str) and type(v) is int for k,v in item['load_address'][1].items())
+                            and isinstance(item.get('evidence_chain',[]),list)
+                            for item in records)):
+                for item in records:
+                    item['load_address']=tuple(item['load_address'])
+                return index,records,limited
+        except (ValueError,TypeError,AttributeError):
+            pass
+        return None
+
+    def save(index,records,limited):
+        with store.tx() as db:
+            db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',
+                       (checkpoint_key,json.dumps({'identity':identity,'index':index,
+                                                   'records':records,'limited':limited})))
+    return {'load':load,'save':save}
+
+
 def runtime_checkpoint(net,pid,revision_id,image):
     """Keep completed breakpoint checks across cancellation, tied to the exact audit input."""
     store=net.project_store(pid)

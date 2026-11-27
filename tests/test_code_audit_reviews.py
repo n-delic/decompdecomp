@@ -82,3 +82,26 @@ def test_runtime_checkpoints_are_scoped_to_image_and_layout(tmp_path):
     assert reviews.runtime_checkpoint(net,pid,'changed',bytes(128))(item) is None
     assert reviews.runtime_checkpoint(net,pid,'layout',b'x'*128)(item) is None
     assert checkpoint({**item,'vram':4100}) is None
+
+
+def test_full_indirect_scan_resumes_completed_functions_and_invalidates_inputs(tmp_path, monkeypatch):
+    from decompnet.arch import mips_callback_flow, mips_indirect
+
+    net,pid,_=fixture(tmp_path)
+    functions=[dict(name=f'f{i}',rom=i*4,size=4,vram=0x80000000+i*4,handwritten=False) for i in range(65)]
+    seen=[]
+    def trace(image,group,order,max_words,max_calls):
+        name=group[0]['name'];seen.append(name)
+        return [dict(function=name,address=group[0]['vram'],load_address=(0x80001000,{}),evidence_chain=[])],False
+    monkeypatch.setattr(mips_callback_flow,'trace',trace)
+    checkpoint=reviews.indirect_checkpoint(net,pid,'layout',bytes(260),functions,'big')
+    def stop():
+        if len(seen)==33:raise RuntimeError('Stopped')
+    with pytest.raises(RuntimeError,match='Stopped'):
+        mips_indirect.calls(bytes(260),functions,'big',full_scan=True,check=stop,checkpoint=checkpoint)
+    assert checkpoint['load']()[0]==32
+    result,limited=mips_indirect.calls(bytes(260),functions,'big',full_scan=True,checkpoint=checkpoint)
+    assert not limited and len(result)==65 and seen.count('f0')==1 and seen.count('f32')==2
+    assert reviews.indirect_checkpoint(net,pid,'changed',bytes(260),functions,'big')['load']() is None
+    assert reviews.indirect_checkpoint(net,pid,'layout',b'x'*260,functions,'big')['load']() is None
+    assert reviews.indirect_checkpoint(net,pid,'layout',bytes(260),functions,'little')['load']() is None

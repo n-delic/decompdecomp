@@ -196,6 +196,29 @@ def test_scan_budget_is_explicit_and_does_not_claim_complete_tracing(monkeypatch
     assert calls(image,[dict(name='f',rom=0x1000,size=16,vram=0x80001000)],'big')==([],True)
 
 
+def test_full_scan_checks_functions_after_the_quick_scan_call_limit(monkeypatch):
+    from decompnet.arch import mips_indirect
+
+    monkeypatch.setattr(mips_indirect, 'MAX_CALLS', 2)
+    body=struct.pack('>4I',0x3c028000,0x8c421100,0x0040f809,0)
+    image=body*3
+    functions=[dict(name=f'f{i}',rom=i*len(body),size=len(body),vram=0x80001000+i*len(body)) for i in range(3)]
+    quick,limited=calls(image,functions,'big')
+    assert limited and [item['function'] for item in quick] == ['f0','f1']
+    complete,limited=calls(image,functions,'big',full_scan=True)
+    assert not limited and [item['function'] for item in complete] == ['f0','f1','f2']
+
+
+def test_full_scan_reports_a_per_function_limit_and_continues(monkeypatch):
+    from decompnet.arch import mips_indirect
+
+    monkeypatch.setattr(mips_indirect,'MAX_WORDS',1)
+    functions=[dict(name=f'f{i}',rom=i*16,size=16,vram=0x80001000+i*16) for i in range(3)]
+    seen=[]
+    _,limited=calls(bytes(48),functions,'big',full_scan=True,check=lambda:seen.append(1))
+    assert limited and len(seen)==3
+
+
 def test_floating_branch_and_table_cases_cannot_bypass_index_guard():
     image,ranges=fixture();image[0x1034:0x1038]=(0x4501fff5).to_bytes(4,'big')
     assert 'bypasses' in jump_table(image,0x1000,0x103c,0x80001000,0x101c,'big',ranges)['reason']

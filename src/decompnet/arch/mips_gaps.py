@@ -137,7 +137,7 @@ def extent(image, start, end, vram, order, cpu="", *, table_ranges=(), mapping_c
 
 
 def audit(image, segments, functions, *, big_endian=True, cpu="", progress=lambda _:None, data_mappings=(),
-          review_ranges=(), full_scan=False, check=lambda:None, entrypoints=()):
+          review_ranges=(), full_scan=False, check=lambda:None, entrypoints=(), callback_checkpoint=None):
     """Frozen image + known code ranges. Even closed direct flow remains review-only."""
     order='big' if big_endian else 'little'
     spans=sorted((s['rom_start'],s['rom_end'],s['vram']) for s in segments)
@@ -326,7 +326,8 @@ def audit(image, segments, functions, *, big_endian=True, cpu="", progress=lambd
     from .mips_indirect import consumers
     unresolved_callbacks=[]
     progress({'phase':'Checking indirect references','step':6,'steps':6})
-    consumer_limit=consumers(image,functions,rows,order,table_ranges,mapping_choices,unresolved_callbacks,check=check)
+    consumer_limit=consumers(image,functions,rows,order,table_ranges,mapping_choices,unresolved_callbacks,check=check,
+                             full_scan=full_scan,progress=progress,checkpoint=callback_checkpoint)
     rows.sort(key=lambda r:(not bool(r['incoming']),not r['direct_flow_closed'],
                             not any(i.get('mapping_relation')=='same' for i in r['incoming']),
                             r['rom_offset'],r['vram']))

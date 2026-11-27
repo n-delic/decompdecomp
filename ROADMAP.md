@@ -156,6 +156,10 @@
   relocatable analysis banks, whose records remain intact. Games with unverified mappings remain for review.
   Planned: equivalent runtime adapters for the other consoles and project-mode targets.
 
+- Full MIPS coverage scans trace indirect calls in every detected function, with a bounded search per function.
+  Completed groups are checkpointed against the image, layout and tracing implementation, so Stop and resume do
+  not discard earlier callback evidence. A function that exceeds its own bound is still reported as incomplete.
+
 - N64 imports also recognize cartridge tables of headerless, chunked MIO0 executables whose back-references can
   reach earlier chunks. A decoded program is included only when a called entry and a long prefix match the game's
   observed RAM; its analysis image is reconstructed from the original cartridge again during export verification.

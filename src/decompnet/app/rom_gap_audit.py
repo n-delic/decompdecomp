@@ -30,10 +30,15 @@ def run(net,slug,log=print,*,full_scan=False):
     mapped_entries={s.vram for s in segments if s.name=='entry' and not s.exclusive_ram_id}
     entries=tuple(dict.fromkeys(([entry] if type(entry) is int else []) +
                                 (list(mapped_entries) if len(mapped_entries)==1 else [])))
+    callback_checkpoint=None
+    if full_scan:
+        from .code_audit_reviews import indirect_checkpoint
+        callback_checkpoint=indirect_checkpoint(net,proj['id'],input_revision,image,functions,
+                                                'big' if proj['big_endian'] else 'little')
     result=audit(image,[vars(s) for s in segments],functions,big_endian=bool(proj['big_endian']),cpu=console.cpu_variant,
                  progress=getattr(log,'progress',lambda _:None),data_mappings=net.cfg(proj).get('audit_data_mappings',[]),
                  full_scan=full_scan,check=getattr(log,'check_cancel',lambda:None),
-                 entrypoints=entries)
+                 entrypoints=entries,callback_checkpoint=callback_checkpoint)
     if full_scan:
         from .code_audit_reviews import runtime_checkpoint
         rom_cfg=net.cfg(proj).get('rom',{})
