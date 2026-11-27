@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from decompnet import seeds
 from decompnet.app import draft_data
 
 BASE = 0x800E1DE8
@@ -169,3 +170,28 @@ def test_guard_cannot_destroy_its_own_index():
            "lui $at, %hi(jtbl_800E1DE8)\naddu $at, $at, $v0\n"
            "lw $v0, %lo(jtbl_800E1DE8)($at)\njr $v0\n")
     assert draft_data.guarded_table_sizes(asm) == {}
+
+
+def test_a_table_spelled_as_an_offset_from_the_symbol_holding_it_is_read_and_renamed():
+    """The disassembler wrote `%lo(func_800E1DC8 + 0x20)` for a table inside the symbol before it, and m2c cut the
+    switch ("jump table is not provided"): the draft had none of its cases."""
+    asm = ASM + ("/* 1 800DF8F0 00000000 */  sltiu $v0, $v1, 0x3\n"
+                 "/* 1 800DF8F4 00000000 */  lui $v0, %hi(func_800E1DC8 + 0x20)\n"
+                 "/* 1 800DF8F8 00000000 */  addiu $v0, $v0, %lo(func_800E1DC8 + 0x20)\n"
+                 "/* 1 800DF8FC 00000000 */  lw $v0, 0x0($v0)\n"
+                 "/* 1 800DF900 00000000 */  jr $v0\n")
+    # a fourth word that is also one of the function's addresses belongs to the next table: the range check bounds it
+    net = SimpleNamespace(symbols=lambda _: SimpleNamespace(by_name={}), cfg=lambda _: {},
+                          reader=lambda *_: _reader((*CASES, CASES[0])), _rom=lambda _: (b"", []))
+    lines = draft_data.read(net, {"id": 1}, {"asm": asm})
+    assert lines[1:] == ["/* table-alias func_800E1DC8+0x20 jtbl_800E1DE8 */", "dlabel jtbl_800E1DE8",
+                         *(".word .L%08X" % w for w in CASES)]
+    renamed = seeds._mips_table_aliases(asm, "\n".join(lines))
+    assert "%hi(jtbl_800E1DE8)" in renamed and "%lo(jtbl_800E1DE8)" in renamed and "+ 0x20" not in renamed
+
+
+def test_an_offset_reference_that_holds_no_case_targets_is_not_a_table():
+    asm = ASM + "lui $v0, %hi(D_800E1DC8 + 0x20)\njr $v0\n"
+    net = SimpleNamespace(symbols=lambda _: SimpleNamespace(by_name={}), cfg=lambda _: {},
+                          reader=lambda *_: _reader((0x3FF00000, 0x3FF00000)), _rom=lambda _: (b"", []))
+    assert draft_data.read(net, {"id": 1}, {"asm": asm}) == [".section .rodata"]
