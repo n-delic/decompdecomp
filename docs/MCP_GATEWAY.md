@@ -207,3 +207,13 @@ uv run pytest -q tests/test_mcp_gateway.py tests/test_mcp_gateway_install.py tes
   or helpers. Use a packaged build or point `DECOMP_MCP_GATEWAY=<path>` at a compatible executable.
   Set `DECOMP_MCP_GATEWAY=0` to explicitly use the app's own MCP endpoint. The test suite uses that opt-out
   (`tests/conftest.py`) and exercises the Rust gateway separately (`tests/test_mcp_gateway.py`).
+
+
+## Desktop N64 judging
+
+The local attempt worker starts the gateway executable in `desktop-judge` mode when it needs to link an
+ordinary N64 ROM candidate or produce MIPS instruction diff rows. This private stdin/stdout process uses the
+same Rust ROM linker, overlay reader and instruction comparison as shared-queue workers. It loads the active
+image from the local project and refreshes the snapshot when the image, overlay data, layout or symbols change.
+Compilation, claims and attempt recording stay with the desktop. The worker falls back to Python when the
+gateway is unavailable, the input requires a different linker, or the instruction decoder is incompatible.

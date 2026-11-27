@@ -193,7 +193,7 @@ class JudgeMixin:
         address_rows = []
         if res.linked_code is not None and res.candidate is not None and not res.problems and proj['arch'] == 'mips':
             from decomprepair.mips_addresses import aligned
-            rows = scoring.diff(self._target_obj(fn, proj), res.candidate).rows
+            rows = self._compare_candidate(proj, self._target_obj(fn, proj), res.candidate, advisory=True).rows
             address_rows = aligned(rows, target.code, res.linked_code, bool(proj['big_endian']))
             checks['address_mismatches'] = [row for row in address_rows
                                            if row['target'] is not None and row['candidate'] is not None
@@ -206,8 +206,10 @@ class JudgeMixin:
             from ..allocation_evidence import diagnose
             from ..allocation_evidence import text as allocation_text
             cpu = self._target_obj(fn,proj).cpu
-            physical = scoring.diff(FunctionObj(fn['name'],proj['arch'],bool(proj['big_endian']),target.code,cpu=cpu),
-                                    FunctionObj(fn['name'],proj['arch'],bool(proj['big_endian']),res.linked_code,cpu=cpu)).rows
+            physical = self._compare_candidate(
+                proj, FunctionObj(fn['name'], proj['arch'], bool(proj['big_endian']), target.code, cpu=cpu),
+                FunctionObj(fn['name'], proj['arch'], bool(proj['big_endian']), res.linked_code, cpu=cpu),
+                advisory=True).rows
             diagnosis = diagnose(physical,proj['arch'])
             if diagnosis['register_only'] and diagnosis['register_cycles']:
                 allocation_rows = physical

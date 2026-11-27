@@ -184,7 +184,7 @@ pub fn decode(function: &Function, code: &[u8]) -> Result<Vec<Insn>, String> {
         };
         result.push(Insn {
             offset,
-            size,
+            encoding: insn.bytes().to_vec(),
             mnemonic: mnemonic.to_owned(),
             operands,
         });

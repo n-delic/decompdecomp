@@ -117,6 +117,7 @@ class Console:
         return tuple(Compiler(c.version, c.name, "your own copy") for c in kits.compilers(self.kits)
                      if not c.like or c.like in mine)
 
+    rust_desktop_judge = False  # ordinary ROM candidates can use the native attempt worker
     id = ""  # what project configs store as their platform ("n64")
     name = ""  # what the app calls it: "Nintendo 64"
     short = ""  # where space is short (the sidebar): "N64"
