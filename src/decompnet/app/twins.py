@@ -333,10 +333,44 @@ def _declared(header_a: str, header_b: str, names: dict[str, str], a_name: str) 
     return "\n".join(decls) + ("\n" if decls else "")
 
 
+# One file-scope declaration of a name as a C object: `extern Unk D_x[];`, `extern u16 D_y;`, `extern u8 *D_z;`
+_OBJECT_DECL = r"^[ \t]*extern[ \t]+(?P<type>[A-Za-z_][\w \t]*?[ \t*]+?){name}(?P<array>(?:\[[^\]\n]*\])?)[ \t]*;[ \t]*\n?"
+
+
+def _merged(source: str, names: dict[str, str]) -> tuple[str, dict[str, str]]:
+    """`source` and `names` for renames that make two of a donor's objects one of this function's.
+
+    A donor that reads one record through `D_A` and its field through another symbol `D_B` can be a look-alike of a
+    function that names one symbol for both: renaming `D_A` to `D_B` then declared `D_B` twice with two types and the
+    transfer didn't build. The renamed-away name keeps its own type as a cast of the surviving symbol, which compiles
+    to the same address."""
+    declared = {}
+    for old, new in names.items():
+        found = re.search(_OBJECT_DECL.format(name=re.escape(old)), source, re.M)
+        if found and old != new:
+            declared.setdefault(new, []).append((old, found))
+    casts = {}
+    for new, olds in declared.items():
+        kept = re.search(_OBJECT_DECL.format(name=re.escape(new)), source, re.M) if new not in names else None
+        if kept is None:
+            kept, olds = olds[0][1], olds[1:]
+        for old, found in olds:
+            kind = " ".join(found["type"].split())
+            if (kind, found["array"]) == (" ".join(kept["type"].split()), kept["array"]):
+                continue  # declared alike: C takes the repeated declaration
+            if found["array"].count("[") > 1:
+                continue
+            casts[old] = f"(({kind} *) {new})" if found["array"] else f"(*({kind} *) &{new})"
+    for old in casts:
+        source = re.sub(_OBJECT_DECL.format(name=re.escape(old)), "", source, flags=re.M)
+    return source, {**names, **casts}
+
+
 def apply(source: str, names: dict[str, str]) -> str:
     """Rename identifiers in C source, all at once (so a -> b, b -> c doesn't make a into c)."""
     if not names:
         return source
+    source, names = _merged(source, names)
     pattern = re.compile(r"\b(" + "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True)) + r")\b")
     return pattern.sub(lambda m: names[m.group(1)], source)
 
@@ -1690,8 +1724,13 @@ class Twins:
     def _why(res: dict) -> str:
         """The gist of a try that didn't match: the compiler's first error, or how close it came."""
         if res.get("score") is None:
-            lines = [ln.strip(" #") for ln in (res.get("text") or "").splitlines()
-                     if re.search(r"undefined|undeclared|expected|illegal|redefin|not a |declaration|conversion", ln)]
+            said = [ln.strip(" #") for ln in (res.get("text") or "").splitlines()]
+            # GCC's errors carry no word in common ("conflicting types for", "request for member"): any message at
+            # a file's line that isn't a warning or a pointer back, else the words other compilers use
+            lines = [ln for ln in said if re.search(r"[\w)]:\d+: ", ln)
+                     and not re.search(r"warning|previous |In function|At top level|each undeclared|for each function", ln)]
+            lines = lines or [ln for ln in said
+                              if re.search(r"undefined|undeclared|expected|illegal|redefin|not a |declaration|conversion", ln)]
             return (lines[0] if lines else "it didn't build")[:WHY_CHARS]
         return (res.get("text") or "").splitlines()[0][:WHY_CHARS] if res.get("text") else f"score {res.get('score')}"
 

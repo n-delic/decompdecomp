@@ -318,7 +318,8 @@ class AutopilotMixin:
                 exact_inputs = capture(self, proj, fn, ctx, source)
             result = self._compile(proj, ctx["header"], source, fn)
             if not result.ok:
-                return {"matched": False, "score": None}
+                # the compiler's own words: without them a look-alike's miss could only say "it didn't build"
+                return {"matched": False, "score": None, "text": result.log}
             cand, verdict, _ = self._evaluate(fn, proj, result.obj)
             if cand is None:
                 return {"matched": False, "score": None}
