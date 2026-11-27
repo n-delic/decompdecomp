@@ -5,8 +5,11 @@ After a manual match, step 5 of the skill asks whether the permuter could have f
 families you name, without the Deep Permuter: at each step it asks the app's own proposal code
 (`draft_repairs.variants`, the path drafts and the permuter's beam use) for every child of the current source, keeps
 those from the chosen families, scores them one by one with the standalone judge (fast_judge.py) and keeps the best
-child that beats the current score. It stops at 0, when no child improves, or after --steps. Bounded: --children caps
-the children scored per step (default 80, about 8 seconds of judging), one judge worker, nothing parallel.
+child that beats the current score. It stops at 0, when no child improves, after --steps, or at --max-judged. Bounded:
+--max-judged caps the variants judged in the whole run (default 400, about 40 seconds of judging; every child, merge
+and lookahead child counts), one judge worker, nothing parallel. --children (default 80) is only the size of a batch: a
+batch with no improving child is followed by the next one. A run stopped by the cap says so and how many it left
+unjudged; raise it with --max-judged N, or remove it with --max-judged 0.
 
 With --combine K (default 0: off), a step where no single child improves tries combinations before stopping: children
 of that step merged two at a time, then three at a time, each merge only when the children's edits touch different
@@ -19,7 +22,7 @@ combined as before after those. At most --combine-limit merges are judged, only 
 by score alone (the older search; docs/learnings/finding/row-coverage-combinations.md has the comparison).
 
     prove_chain.py --slug SLUG --function FUNC [SOURCE.c] [--families a,b,c | all] [--steps 8] [--children 80]
-                   [--combine 10] [--out BEST.c] [--list] [--flags '...' | --fp-flip]
+                   [--max-judged 400] [--combine 10] [--out BEST.c] [--list] [--flags '...' | --fp-flip]
 
 `--flags` / `--fp-flip` judge and propose under another profile (the function's flags with the other `-mfp32`/`-mfp64`):
 the families' children are built and scored under it, as the Deep Permuter's profile climb does.
@@ -44,6 +47,8 @@ from decomprepair import compose  # noqa: E402
 
 DEFAULT_STEPS = 8
 DEFAULT_CHILDREN = 80
+# A whole run's judged variants: --children is only a batch size, and runs meant to judge a few hundred judged 850-1800.
+DEFAULT_MAX_JUDGED = 400
 DEFAULT_COMBINE = 0  # off: on three three-edit learnings neither the score nor the row ranking found one (docs/learnings/finding/draft-start-candidates.md, docs/learnings/experiment/row-coverage-combinations.md)
 DEFAULT_COMBINE_LIMIT = 200
 DEFAULT_LOOKAHEAD = 3  # stalled step: children of the 3 most promising non-improving children are judged too
@@ -100,6 +105,20 @@ def combinations(base, scored, k=DEFAULT_COMBINE, limit=DEFAULT_COMBINE_LIMIT):
     return out
 
 
+class Budget:
+    """The variants a run may still judge: `cap` in all, or any number when it is 0 or None."""
+
+    def __init__(self, cap):
+        self.cap, self.judged = cap or 0, 0
+
+    def left(self):
+        return max(self.cap - self.judged, 0) if self.cap else sys.maxsize
+
+    def stopped(self, step, unjudged, log):
+        log(f"step {step}  stopped at the cap of {self.cap} judged variants: {unjudged} left unjudged "
+            "(raise with --max-judged N, 0: no cap)")
+
+
 def _bad_count(rows):
     """The number of the judge's differing rows (Judge.rows), or None without rows."""
     return len(row_coverage.bad(rows)) if rows else None
@@ -107,7 +126,7 @@ def _bad_count(rows):
 
 def prove(source, generate, score, families, steps=DEFAULT_STEPS, children=DEFAULT_CHILDREN, log=print,
           combine=DEFAULT_COMBINE, combine_limit=DEFAULT_COMBINE_LIMIT, rows=None, lookahead=DEFAULT_LOOKAHEAD,
-          lookahead_children=DEFAULT_LOOKAHEAD_CHILDREN, rank_signal=None):
+          lookahead_children=DEFAULT_LOOKAHEAD_CHILDREN, rank_signal=None, max_judged=DEFAULT_MAX_JUDGED):
     """The greedy chain. `generate(source) -> [(family, child)]`, `score(source) -> int | None` (None: didn't
     compile, never an improvement). A stalled step (no single child improves) searches combined steps when
     `combine` > 0:
@@ -119,12 +138,15 @@ def prove(source, generate, score, families, steps=DEFAULT_STEPS, children=DEFAU
     A combined step is taken when it beats the score, or ties it with fewer differing rows (a plateau move, never
     to a source seen before). `rank_signal(parent, child) -> (penalty, note)` (register_explain.dead_end: a child that
     turns a block-local value global) demotes a child in that ranking; it never stops an improving child.
+    At most `max_judged` variants are judged in all (children, merges and lookahead children; not the start; 0 or None:
+    no cap). At the cap, an improving child already found is still taken; the log says what was left unjudged.
     Returns (final source, final score, [(family, score)])."""
     current, best = source, score(source)
     if best is None:
         raise SystemExit("the starting source doesn't compile with the judge: fix that first (is its name the function's?)")
     best_bad = _bad_count(rows(current)[1]) if rows and combine else None
     chain, visited = [], {current}
+    budget = Budget(max_judged)
     log(f"start  score {best}" + (f", {best_bad} differing rows" if best_bad is not None else ""))
     for step in range(1, steps + 1):
         if best == 0:
@@ -141,8 +163,10 @@ def prove(source, generate, score, families, steps=DEFAULT_STEPS, children=DEFAU
         # --children is the size of a batch: a batch with no improving child is not a stall while children are left
         # out (func_8005502C: 528 children, the improving one number 131, stalled at 215 under --children 40 because the
         # cap's order is one child per family, so a family's later children come after every family's earlier ones).
-        while offset < len(options):
-            for family, child in options[offset:offset + children]:
+        while offset < len(options) and budget.left():
+            batch = options[offset:offset + min(children, budget.left())]
+            budget.judged += len(batch)
+            for family, child in batch:
                 if rows and combine:
                     result, child_rows = rows(child)
                     if result is not None and child_rows:
@@ -153,20 +177,28 @@ def prove(source, generate, score, families, steps=DEFAULT_STEPS, children=DEFAU
                     result = score(child)
                 if result is not None:
                     scored.append((result, family, child))
-            offset += children
+            offset += len(batch)
             if scored and min(row[0] for row in scored) < best:
                 break
-            if offset < len(options):
+            if offset < len(options) and budget.left():
                 log(f"step {step}  note: no child of the first {offset} improves on {best}; judging the other "
                     f"{len(options) - offset} of {len(options)}")
+        improved = bool(scored) and min(row[0] for row in scored) < best
         if offset < len(options):
-            log(f"step {step}  note: {len(options) - offset} of {len(options)} children left out: a batch of "
-                f"--children {children} already improved (name --families to narrow it)")
+            if not improved:  # only the cap ends a step's batches without an improving child
+                budget.stopped(step, f"{len(options) - offset} of {len(options)} children", log)
+                break
+            if budget.left():
+                log(f"step {step}  note: {len(options) - offset} of {len(options)} children left out: a batch of "
+                    f"--children {children} already improved (name --families to narrow it)")
+            else:
+                log(f"step {step}  note: the cap of {budget.cap} judged variants was reached: "
+                    f"{len(options) - offset} of {len(options)} children left unjudged")
         taken = None
-        if (not scored or min(row[0] for row in scored) >= best) and combine and scored:
+        if not improved and combine and scored:
             taken = _combined_step(step, current, best, best_bad, scored, cover, bad, parent_bad, generate, families,
                                    score, rows, combine, combine_limit, lookahead, lookahead_children, rank_signal,
-                                   visited, log)
+                                   visited, log, budget)
         if taken:
             result, family, child, child_bad = taken
             current, best, best_bad = child, result, child_bad
@@ -174,7 +206,7 @@ def prove(source, generate, score, families, steps=DEFAULT_STEPS, children=DEFAU
             chain.append((family, result))
             log(f"step {step}  {family}  {result}  (combined step)")
             continue
-        if not scored or min(row[0] for row in scored) >= best:
+        if not improved:
             log(f"step {step}  no child of {len(options)} improves on {best} (scored {len(scored)}): stopped")
             break
         result, family, child = min(scored, key=lambda row: row[0])
@@ -200,7 +232,7 @@ def _better(result, count, best, best_bad):
 
 
 def _combined_step(step, current, best, best_bad, scored, cover, bad, parent_bad, generate, families, score, rows,
-                   combine, combine_limit, lookahead, lookahead_children, rank_signal, visited, log):
+                   combine, combine_limit, lookahead, lookahead_children, rank_signal, visited, log, budget):
     """A stalled step's search over combined steps (prove's docstring): (score, families, source, rows) or None."""
     notes = {}
     items = sorted(((bad.get(child, 10**6), result, family, child) for result, family, child in scored),
@@ -222,28 +254,42 @@ def _combined_step(step, current, best, best_bad, scored, cover, bad, parent_bad
     merged += [m for m in combinations(current, scored, combine, combine_limit) if m[1] not in have]
     merged = merged[:combine_limit]
     found = []
-    for family, child in merged:
-        if child in visited:
-            continue
+    fresh = [(family, child) for family, child in merged if child not in visited]
+    batch = fresh[:budget.left()]
+    budget.judged += len(batch)
+    for family, child in batch:
         result, count = _judge(child, score, rows)
         if _better(result, count, best, best_bad):
             found.append((result, count if count is not None else 0, family, child))
-    log(f"step {step}  no single child improves; {len(merged)} merges of the best {len(ranked)} judged"
+    judged_merges = len(merged) if len(batch) == len(fresh) else len(batch)
+    log(f"step {step}  no single child improves; {judged_merges} merges of the best {len(ranked)} judged"
         + (f", {len(found)} better" if found else ""))
-    if not found and lookahead:
-        for _, _, family, child in ranked[:lookahead]:
-            judged = 0
-            for second, grandchild in generate(child):
-                if judged >= lookahead_children:
-                    break
-                if (families is not None and second not in families) or grandchild in visited or grandchild == current:
-                    continue
-                judged += 1
+    unjudged = len(fresh) - len(batch)
+    if unjudged and not found:
+        budget.stopped(step, f"{unjudged} of {len(fresh)} merges" + (" and the lookahead" if lookahead else ""), log)
+    if not found and not unjudged and lookahead:
+        parents = ranked[:lookahead]
+        for index, (_, _, family, child) in enumerate(parents):
+            if not budget.left():  # not expanded: proposing a parent's children costs the judge too
+                budget.stopped(step, f"the lookahead of {len(parents) - index} of {len(parents)} children", log)
+                break
+            eligible = [(second, grandchild) for second, grandchild in generate(child)
+                        if (families is None or second in families) and grandchild not in visited
+                        and grandchild != current][:lookahead_children]
+            batch = eligible[:budget.left()]
+            budget.judged += len(batch)
+            for second, grandchild in batch:
                 result, count = _judge(grandchild, score, rows)
                 if _better(result, count, best, best_bad):
                     found.append((result, count if count is not None else 0, f"{family}>{second}", grandchild))
-        log(f"step {step}  lookahead: children of the best {min(lookahead, len(ranked))} non-improving judged"
-            + (f", {len(found)} better" if found else ", none better"))
+            if len(batch) < len(eligible):
+                rest = len(parents) - index - 1
+                budget.stopped(step, f"{len(eligible) - len(batch)} of {len(eligible)} lookahead children"
+                               + (f" and the lookahead of {rest} more" if rest else ""), log)
+                break
+        else:
+            log(f"step {step}  lookahead: children of the best {len(parents)} non-improving judged"
+                + (f", {len(found)} better" if found else ", none better"))
     if not found:
         return None
     result, count, family, child = min(found, key=lambda row: (row[0], row[1]))
@@ -321,7 +367,10 @@ def main(argv=None):
     ap.add_argument("--function", required=True)
     ap.add_argument("--families", default="all", help="comma separated family names, or all")
     ap.add_argument("--steps", type=int, default=DEFAULT_STEPS)
-    ap.add_argument("--children", type=int, default=DEFAULT_CHILDREN)
+    ap.add_argument("--children", type=int, default=DEFAULT_CHILDREN,
+                    help="children judged per batch of a step; not a cap (--max-judged)")
+    ap.add_argument("--max-judged", type=int, default=DEFAULT_MAX_JUDGED,
+                    help=f"variants judged in the whole run (default {DEFAULT_MAX_JUDGED}; 0: no cap)")
     ap.add_argument("--combine", type=int, default=DEFAULT_COMBINE,
                     help="on a stalled step, merge the best K children in pairs and triples (0: off)")
     ap.add_argument("--combine-limit", type=int, default=DEFAULT_COMBINE_LIMIT)
@@ -342,6 +391,8 @@ def main(argv=None):
                     help="the function's own flags with the other floating-point model: -mfp64 <-> -mfp32 "
                          "(fp_fingerprints.flipped, the profile the Deep Permuter's climb tries)")
     a = ap.parse_args(argv)
+    if a.max_judged < 0:
+        ap.error("--max-judged takes a number of variants, or 0 for no cap")
     claimlost.warn()  # a lost claim is said first, before minutes of scoring
     if a.source:
         source = Path(a.source).read_text()
@@ -373,7 +424,8 @@ def main(argv=None):
                             combine=a.combine, combine_limit=a.combine_limit,
                             rows=None if a.no_rows else judge.rows, lookahead=a.lookahead,
                             lookahead_children=a.lookahead_children,
-                            rank_signal=None if a.no_dead_end or not a.combine else dead_end_signal(judge))
+                            rank_signal=None if a.no_dead_end or not a.combine else dead_end_signal(judge),
+                            max_judged=a.max_judged)
         if a.out:
             Path(a.out).write_text(final)
             print(f"final source -> {a.out}")
