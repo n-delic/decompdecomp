@@ -711,3 +711,27 @@ def test_export_removes_shadowed_data_labels_but_keeps_original_bytes(tmp_path):
     source.write_text('nonmatching entry\nalabel entry\n    .word 7\ndlabel other\n    .word 9\n')
     remove_shadowed_bss(tmp_path, [{'name': 'entry'}])
     assert source.read_text() == '    .word 7\ndlabel other\n    .word 9\n'
+
+
+@pytest.mark.parametrize("platform", ["n64", "ps1", "ps2", "psp"])
+def test_export_keeps_backward_delay_slot_address_high(platform):
+    """A loop's delay-slot HI16 uses the LO16 at its backwards branch target."""
+    from decompnet.consoles import get
+
+    console = get(platform)
+    order = 'big' if console.big_endian else 'little'
+    words = [0x8c22e79c, 0x1440fffe, 0x3c01800c]
+    instructions = [
+        'lw $v0, %lo(D_80057698 + (0x67104 & 0xFFFF))($at)',
+        'bnez $v0, target',
+        'lui $at, %hi(D_80057698 + 0x67104)',
+    ]
+    text = ''.join(f'/* {i * 4:06X} {0x80001000 + i * 4:08X} '
+                   f'{word.to_bytes(4, order).hex()} */ {instruction}\n'
+                   for i, (word, instruction) in enumerate(zip(words, instructions)))
+    result = console.export_asm(text)
+    assert '.word 0x3C01800C' in result
+    assert console.export_asm(result) == result
+    assert console.export_asm(text.replace('0x67104 &', '0x67105 &')) == text.replace('0x67104 &', '0x67105 &')
+    forward = text.replace(words[1].to_bytes(4, order).hex(), (0x14400001).to_bytes(4, order).hex())
+    assert console.export_asm(forward) == forward
