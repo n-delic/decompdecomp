@@ -19,7 +19,9 @@ The source change, and the measured result before and after (scores, the judge u
 - both: 0
 - the two tests apart (`if (!A) {T; return;} if (B) {T; return;} work;`) with the argument: also 0
 
-decomp-repair `goto_tail_early_exit` writes both guard forms.
+decomp-repair `goto_tail_early_exit` (0.6.283) writes both guard forms. With it pinned, `prove_chain` from the saved
+best through the app's own proposal code reaches 0 in two steps: `goto_tail_early_exit` (405 to 15), then
+`leading_argument_widen` (0), 8 children judged.
 
 Failed experiments that would otherwise be repeated: copying the tail in place of the `goto` only, keeping the work
 inside `if (A)`, stayed at 390. All families of the previous library release found no child under 390 (160 judged).
