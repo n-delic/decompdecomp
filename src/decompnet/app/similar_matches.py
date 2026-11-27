@@ -34,6 +34,7 @@ MANUAL_REPAIRS = 16
 MAX_ATTEMPTS = 128
 MAX_SECONDS = 120
 MAX_REPAIRS = 8
+SITE_FORMS = 24  # a donor-profile near miss: this many uses of its globals rewritten as the target uses them
 REPAIR_PERCENT = 90  # 318 open N64 functions had donor C compiling to 90-95%: worth the repair families
 MUTATION_DRAWS = 48
 # Consume comments, strings and identifiers whole, so edits never touch a symbol's address or documentation.
@@ -663,6 +664,8 @@ def run(twins, slug: str, job, *, function_ids=None) -> int:
     symbol_state = [(r['name'], r['address']) for r in net.project_store(proj['id']).all(
         'SELECT name,address FROM symbols WHERE project_id=? ORDER BY name', proj['id'])]
     source_cache, ops_cache = {}, {}
+    from decomprepair import global_site_forms
+
     from . import address_repairs, parameter_transfers, regional_layouts, reuse_donors, twin_fields
     donors = reuse_donors.Donors(net, proj, include_self=True)
     layouts = {pid: regional_layouts.learn(net, proj, other) for pid, other in others.items()}
@@ -686,7 +689,7 @@ def run(twins, slug: str, job, *, function_ids=None) -> int:
 
     feedback = {}
 
-    def attempt(a, b, other, score, candidate, settings, kind, names, header, first=None):
+    def attempt(a, b, other, score, candidate, settings, kind, names, header, first=None, search=True):
         nonlocal attempted, matched
         feedback.clear()
         current = net.project_store(proj['id']).one('SELECT status FROM functions WHERE id=?', b['id'])
@@ -719,7 +722,8 @@ def run(twins, slug: str, job, *, function_ids=None) -> int:
             from . import lookalike_profiles
             outcome, why, compiles = lookalike_profiles.trial(
                 net, agent, proj, b, _noted(candidate, a, other, proj), None if kind == 'literals' else settings,
-                first=first, budget=max(0, min(lookalike_profiles.SEARCH_COMPILES, job.reuse_limit - job.reuse_attempts)))
+                first=first, budget=max(0, min(lookalike_profiles.SEARCH_COMPILES, job.reuse_limit - job.reuse_attempts))
+                if search else 0)
             job.reuse_attempts += max(0, compiles - 1)
         else:
             outcome, why = twins._attempt_twin(agent, proj, a, b, candidate,
@@ -957,6 +961,13 @@ def run(twins, slug: str, job, *, function_ids=None) -> int:
                     pair = (a['id'], b['id'])
                     if pair not in repairs or int(close[1]) < repairs[pair][0]:
                         repairs[pair] = (int(close[1]), a, b, other, score, prelude, variant, settings, names, header_b, dict(feedback))
+                # A near miss under the donor's profile is repaired under that profile too: a mirrored sibling's
+                # C has the shape and reads the wrong global or constant at a few places.
+                near = kind == 'profile' and outcome == 'miss' and re.match(r'score (\d+)', why or '')
+                if near and 100 * (1 - int(near[1]) / max(1, (b['n_insns'] or 0) * 100)) >= REPAIR_PERCENT:
+                    pair = (a['id'], b['id'], 'profile')
+                    if pair not in repairs or int(near[1]) < repairs[pair][0]:
+                        repairs[pair] = (int(near[1]), a, b, other, score, prelude, variant, settings, names, header_b, {})
                 if outcome == 'match':
                     break
             if incomplete:
@@ -969,6 +980,17 @@ def run(twins, slug: str, job, *, function_ids=None) -> int:
     # Concrete address evidence goes before speculative cast/order mutations within the repair allowance.
     known = {name for name, _ in symbol_state}
     prepared = []
+    for pair, r in list(repairs.items()):
+        if len(pair) == 3:  # a donor-profile near miss: only the target-guided rewrites, each judged once
+            _, a, b, other, score, prelude, source, settings, names, header, _ = repairs.pop(pair)
+            publish_progress(job, 'Repairing similar donor code', function=b['name'])
+            for _, variant in global_site_forms.variants(prelude + source, b['name'], asm=b['asm'] or '')[:SITE_FORMS]:
+                if exhausted():
+                    if not incomplete:
+                        resume(0)
+                    return matched
+                if attempt(a, b, other, score, variant, settings, 'profile', names, header, search=False)[0] == 'match':
+                    break
     for r in repairs.values():
         if exhausted():
             return matched
