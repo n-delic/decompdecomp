@@ -710,3 +710,35 @@ def test_rescan_after_runtime_emulator_becomes_available(project, monkeypatch):
     available[0] = True
     assert not rom_explorer.run(net, 'game', Log()).get('cached')
     assert rom_explorer.run(net, 'game', Log())['cached']
+
+
+def test_decoded_indexed_image_can_use_a_rom_palette_and_flip_rows(tmp_path, monkeypatch):
+    import base64
+
+    from tests.test_rom_assets import pixels
+
+    texels = zlib.compress(bytes([0, 1, 1, 0]))
+    palette = bytes.fromhex('f80107c1') + bytes(508)
+    image = texels + palette
+    path = tmp_path/'image.z64'
+    path.write_bytes(image)
+    report = {'size': len(image), 'image_hash': hashlib.sha256(image).hexdigest()}
+    row = {'start': 0, 'detected_asset': None}
+    monkeypatch.setattr(rom_explorer, '_current', lambda *args: ({}, {'report': report}, row))
+    monkeypatch.setattr(rom_explorer, '_source', lambda *args: {'path': path})
+    net = SimpleNamespace(console=lambda _: SimpleNamespace(asset_decode=lambda _: None))
+    options = dict(source='decoded', block_offset=0, offset=0, format='ci8', width=2, height=2,
+                   palette_rom_offset=len(texels), palette_offset=0, palette_format='rgba5551-be', flip_y=True)
+    request = dict(region='0', image_hash=report['image_hash'], options=options)
+    result = rom_explorer.asset_preview(net, 'game', request)
+    rgba = pixels(base64.b64decode(result['data_url'].split(',')[1]))
+    assert rgba[:8] == bytes([0, 255, 0, 255, 255, 0, 0, 255])
+    assert result['decoded']['palette']['codec'] == 'ROM bytes'
+    with pytest.raises(NetworkError, match='either'):
+        rom_explorer.asset_preview(net, 'game', request | {'options': options | {'palette_block_offset': 0}})
+    with pytest.raises(NetworkError, match='truncated'):
+        rom_explorer.asset_preview(net, 'game', request | {'options': options | {'palette_rom_offset': len(image)-1}})
+    with pytest.raises(NetworkError, match='vertical orientation'):
+        rom_explorer.asset_preview(net, 'game', request | {'options': options | {'flip_y': 'true'}})
+    with pytest.raises(NetworkError, match='decompressed indexed image'):
+        rom_explorer.asset_preview(net, 'game', request | {'options': options | {'source': 'rom'}})

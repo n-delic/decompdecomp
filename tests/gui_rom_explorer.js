@@ -351,11 +351,19 @@ function setup(){
     assert.equal(t.run("romRows(romView()).map(r=>r.id).join(',')"),'c,a,b');
     t.run("romView().query='stage2.v3s'");assert.equal(t.run("romRows(romView()).map(r=>r.id).join(',')"),'b');
   }
+  // A split region still opens the detected container at its true start.
+  {
+    const t=setup();
+    const html=t.run("romAssetHTML({start:0x2000,size:64,detected_asset:{offset:0x1800,media:'metadata',preview_settings:{format:'auto'}}})");
+    assert.match(html,/data-asset-block_offset value="0x1800"/);
+  }
   // A separate compressed palette is sent only for a decoded indexed image.
   {
     const t=setup(),body=element();t.context.body=body;
     for(const [key,value] of Object.entries({source:'decoded',format:'ci8',palette_block_offset:'0x1200',palette_offset:'0'}))body.querySelector(`[data-asset-${key}]`).value=value;
     assert.equal(t.run('romAssetOptions(body).palette_block_offset'),'0x1200');
+    body.querySelector('[data-asset-palette_rom_offset]').value='0x1000';body.querySelector('[data-asset-flip_y]').value='true';
+    assert.equal(t.run('romAssetOptions(body).palette_rom_offset'),'0x1000');assert.equal(t.run('romAssetOptions(body).flip_y'),true);
     body.querySelector('[data-asset-source]').value='rom';
     assert.equal(t.run('romAssetOptions(body).palette_block_offset'),undefined);
     body.querySelector('[data-asset-source]').value='decoded';body.querySelector('[data-asset-format]').value='rgba5551-be';
