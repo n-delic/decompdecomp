@@ -75,6 +75,8 @@ def brief(net, fn, agent, header):
         lines.append(note)
     lines.append('For a compact working packet with the current C, use get_function(section="work").')
     lines.extend(history(net, fn))
+    from .profile_attempts import brief_lines as other_profile
+    lines += other_profile(net, proj, fn)
     if source:
         from .deep_handoff import brief as deep_brief
         from .search_evidence import repeated_hint

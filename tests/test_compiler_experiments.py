@@ -103,10 +103,13 @@ def test_structured_verdict_stops_only_on_linked_exact_not_score_zero(tmp_path,m
 
 
 @pytest.mark.parametrize('exact',[True,False])
-def test_rom_compiler_api_structured_result_uses_judge_verdict(exact):
+def test_rom_compiler_api_structured_result_uses_judge_verdict(exact, monkeypatch):
     from types import SimpleNamespace
 
+    from decompnet.app import profile_attempts
     from decompnet.app.engine.compilers import CompilerMixin
+    kept=[]
+    monkeypatch.setattr(profile_attempts,'keep',lambda *args:kept.append(args[-2]))
     fn={'name':'f','vram':4096,'best_source':'int f(){return 1;}'}
     cfg={'compiler':{'toolchain':'gcc-2.7.2-kmc','flags':['-O2']}}
     diff=SimpleNamespace(score=0,percent=100,render=lambda **k:'identical displayed instructions')
@@ -115,3 +118,4 @@ def test_rom_compiler_api_structured_result_uses_judge_verdict(exact):
                         rangechecks=SimpleNamespace(tried=lambda *a:None))
     result=CompilerMixin.try_compiler(net,None,'game','f','current',source=fn['best_source'],structured=True)
     assert result['exact'] is exact and result['score']==(0 if exact else 1)
+    assert kept==[result['score']]  # handed to the next worker under this profile

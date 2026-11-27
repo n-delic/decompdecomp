@@ -13,6 +13,7 @@ from ... import arch
 from ...network import CLAIM_ORDERS, Agent, NetworkError
 from ...rom import split
 from ...rom.symbols import IDENT, Symbol, SymbolTable
+from .. import profile_attempts
 from .common import _ADDRESS
 
 
@@ -640,6 +641,7 @@ class EditMixin:
                                 "AND best_source IS NOT NULL", (proj["id"],)).fetchall():
                 if word.search(r["best_source"]):
                     db.execute("UPDATE functions SET best_source=? WHERE id=?", (swap(r["best_source"]), r["id"]))
+            profile_attempts.rewrite(db, proj["id"], swap)
             self._event(db, proj["id"], agent.id, "rename", msg if len(pairs) > 1 else f"{pairs[0][0]} → {pairs[0][1]}")
         self._syms.pop(proj["id"], None)
         guard_note=(f" Builtin optimizations disabled in {len(builtin_guards)} affected function profile(s), verified byte-exact." if builtin_guards else "")

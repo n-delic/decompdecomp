@@ -19,6 +19,7 @@ from collections import Counter
 from .. import seeds, similarity, toolchains
 from ..network import NetworkError
 from ..project import compiler_for
+from . import profile_attempts
 
 PROFILES = 5  # the function's own, the project's default, then the ones most matched functions use
 SHORTLIST = 6  # by saved score per instruction, plus this many small ones that only have a draft
@@ -87,15 +88,17 @@ def worked(net, proj, rows) -> dict[int, float]:
 
 
 def trials(net, proj, fn) -> list[dict]:
-    """The function's best recorded compiler trials under profiles other than its own (compiler_experiments' durable
-    records, where haiku.py keeps a session's near-miss): [{score, toolchain, flags, source}], best first."""
+    """The function's best attempts under profiles other than its own: the one the app keeps from any such compile
+    (app/profile_attempts.py) and compiler_experiments' durable records, where haiku.py keeps a session's near-miss.
+    [{score, toolchain, flags, source}], best first."""
     store = net.project_store(proj["id"])
-    if not store.one("SELECT 1 FROM sqlite_master WHERE name='compiler_trial_evidence'"):
-        return []
-    own = compiler_for(net.cfg(proj), fn["vram"], fn)
     found = {}
-    for row in store.all("SELECT record FROM compiler_trial_evidence WHERE project_id=? AND function_id=? "
-                         "ORDER BY created_at", proj["id"], fn["id"]):
+    if held := profile_attempts.kept(net, fn):
+        found[held["source"], held["toolchain"], tuple(held["flags"])] = held
+    recorded = store.one("SELECT 1 FROM sqlite_master WHERE name='compiler_trial_evidence'")
+    for row in [] if not recorded else store.all(
+            "SELECT record FROM compiler_trial_evidence WHERE project_id=? AND function_id=? ORDER BY created_at",
+            proj["id"], fn["id"]):
         try:
             record = json.loads(row["record"])
             result, source = record["result"], record["source"]
@@ -103,11 +106,15 @@ def trials(net, proj, fn) -> list[dict]:
             toolchain, flags = record["compiler"], str(record.get("flags") or "").split()
         except (ValueError, TypeError, KeyError, AttributeError):
             continue
-        same = toolchain == own.get("toolchain") and flags == list(own.get("flags") or [])
-        if score is not None and source.strip() and not same:
+        if score is not None and source.strip():
             found[source, toolchain, tuple(flags)] = {"score": score, "toolchain": toolchain, "flags": flags,
                                                       "source": source}
-    return sorted(found.values(), key=lambda trial: trial["score"])[:TRIALS]
+    if not found:
+        return []
+    own = compiler_for(net.cfg(proj), fn["vram"], fn)
+    mine = (own.get("toolchain"), list(own.get("flags") or []))
+    return sorted((trial for trial in found.values() if (trial["toolchain"], trial["flags"]) != mine),
+                  key=lambda trial: trial["score"])[:TRIALS]
 
 
 def twin(net, proj, fn, rows) -> dict | None:

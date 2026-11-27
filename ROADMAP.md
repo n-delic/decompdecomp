@@ -787,6 +787,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 
 | Feature | N64 | PS1 | PS2 | PS3 | PS4 | PSP | GBA | GameCube · Wii | Windows PC | Xbox | DS | Public decomps |
 | :-- | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
+| Closest attempt under another compiler profile kept for the next worker | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — project build owns the compiler | ✓ ROM | ✓ ROM | ✓ per-file compiler | ✓ per-file compiler and flags | ✓ as PC | ✓ per-file compiler | — build owns the compiler |
 | Loader/buffer tracing, named contracts and small wrappers | ✓ MIPS / named PI DMA | ✓ MIPS static | ✓ MIPS EE EABI | — | — | ✓ shared MIPS reader | — | — original image adapter | — original image adapter | — | — original image adapter | — original image adapter |
 | Automatic texture banks (CI4/CI8, mixed CI8 palettes, RGBA32, RGBA16 mipmaps, RNC 1/2 and byte-sum RNC banks, named four-block banks, embedded ZIP packs, textures loaded by uncompressed display lists, I64 images in a chunked-RNC filesystem, model textures in a deflated asset table, UVTX files in a UV FORM filesystem, a texture table of back-reference-packed textures with inferred widths, display-list textures and sprites in a table of relocatable VPK0 files, image packs and model bitmaps in a party-game series' main filesystem, FLA2-packed texture banks, zlib RGBA members with stored dimensions, named textures in Iain block archives, RDP textures in paired ROM resource directories; a fork's own splat image segments, JSON asset lists and sno texture sheets) | ✓ ROM | — native formats planned | — native formats planned | — | — | — native formats planned | — | — image adapter | — image adapter | — | — image adapter | ✓ forks with the game file (N64 checked) |
 | Audio browser, filters, sortable samples and explicit WAV preparation | ✓ ROM | ✓ ROM | ✓ ROM | — | — | ✓ ROM | — | — original image adapter | — original image adapter | — | — original image adapter | — original image adapter |
@@ -2414,6 +2415,14 @@ GBA ROM projects have no compiler choice to detect yet.
 Rules are learnt only from the Deep Permuter's matches whose starting C is still saved (`app/mined_rules.py`), and only
 for C (the rewrites leave C++ classes alone). Next: learn from agents' and hand matches, from changes in two places, and
 check the pass on each console in the table, GBA, PS4 and project mode included.
+
+### Closer attempts under another profile: what is left
+
+The app keeps each open function's closest compile under another compiler profile and the briefs hand it on
+(`app/profile_attempts.py`). Not covered yet: PS4 and public decomps, whose own build owns the compiler and flags, so
+there is no other profile to try; carrying the attempt in saves, rooms and hosted projects (it stays in this computer's
+project database); compiles by the app's own background profile searches (profile probes, Deep Permuter sweeps), which
+keep their own records; and judging an ordinary compile_and_diff under other profiles unasked.
 
 ### Profile probes for project mode
 

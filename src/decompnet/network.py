@@ -2167,6 +2167,8 @@ class Network:
             elif fn["seed"]:
                 lines += ["", "### Machine draft (m2c): its control flow and arithmetic are usually right, its types "
                               "and names usually wrong. Start from it and fix those", "```c", fn["seed"].strip(), "```"]
+        from .app import profile_attempts
+        lines += profile_attempts.brief_lines(self, proj, fn)
         notes = self.notes_for_brief(fn)
         if notes:
             lines += ["", "### Notes from previous agents on this function", *notes]
@@ -2898,6 +2900,8 @@ class Network:
                 for r in db.execute("SELECT id, best_source FROM functions WHERE project_id=? AND status='open' "
                                     "AND best_source IS NOT NULL", (proj["id"],)).fetchall():
                     db.execute("UPDATE functions SET best_source=? WHERE id=?", (word.sub(new, r["best_source"]), r["id"]))
+                from .app import profile_attempts
+                profile_attempts.rewrite(db, proj["id"], lambda text: word.sub(new, text))
                 self._event(db, proj["id"], agent.id, "context", f"{msg} ({len(changed)} header(s))")
             unchecked = "".join(f"\n(Not rechecked: {why})" for why in dict.fromkeys(skipped.values()))
             return (f"✅ renamed `{old}` -> `{new}` in {len(changed)} header(s) and in {len(rewritten)} matched "

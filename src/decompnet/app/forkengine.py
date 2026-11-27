@@ -61,6 +61,7 @@ from ..request_timing import build as timed_build
 from ..rom import RomError
 from ..scoring import percent_text
 from ..textedit import replace_once
+from . import profile_attempts
 
 _REPO = re.compile(r"^(https://(github\.com|gitlab\.com|codeberg\.org|git\.[\w.-]+)/[\w.-]+/[\w.-]+?)(\.git)?/?$")
 # A match has to come from C/C++: no inline assembly, asm functions, asm includes or embedded binaries.
@@ -2773,6 +2774,7 @@ class ForkEngine:
             elif seed:
                 lines += ["", "### Machine draft: a starting point, often wrong in types and details", "```c",
                           self._method_draft(fp, cfg, fn, seed).strip(), "```"]
+        lines += profile_attempts.brief_lines(self.net, proj, fn)
         lines += self._class_brief(fp, cfg, fn) + self._struct_brief(fp, cfg, fn)
         lines += self._debug_brief(fp, cfg, fn)
         from .knowledge import service
@@ -3615,6 +3617,9 @@ class ForkEngine:
                                 rel = console.set_file_compiler(fp, unit.source, c)
                             changed = True
                         res = self._attempt(agent, slug, function, source, keep=False, quiet=0, **({"diagnostic":True} if not keep_match else {}))
+                        if c != own and (not res["matched"] or not keep_match):  # (a kept match needs no hand-off)
+                            profile_attempts.keep(self.net, proj, fn, c, console.file_flags(fp, unit.source),
+                                                  res.get("held_score", res["score"]), source)
                         if res["matched"] and c == own:
                             return f"{c}: {res['text']}\nThat's {unit.source}'s own compiler: nothing to switch."
                         if res["matched"]:
@@ -3690,6 +3695,9 @@ class ForkEngine:
                             return f"{shown(flags)}: {res['text']}\n{unit.source} is built with them from now on."
                         why = "breaks the file's matched functions" if res.get("broken") else \
                             "doesn't build" if res["score"] is None else f"score {res['score']}"
+                        if flags != own:
+                            profile_attempts.keep(self.net, proj, fn, console.file_compiler(fp, unit.source) or "",
+                                                  flags, res.get("held_score", res["score"]), source)
                         results.append((res["score"] if res["score"] is not None and not res.get("broken") else None,
                                         flags, why))
                 finally:

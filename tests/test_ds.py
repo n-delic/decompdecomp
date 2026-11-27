@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from decompnet import consoles, toolchains
+from decompnet.app import profile_attempts
 from decompnet.app.engine import RomNetwork
 from decompnet.consoles import Compiler
 from decompnet.consoles.n64 import N64
@@ -166,6 +167,9 @@ def test_a_compiler_that_doesnt_match_leaves_the_file_as_it_was(per_file):
     rows = {r["name"]: r for r in net.function_map(slug)}
     assert rows["lerp"]["status"] == "open" and rows["clamp_s32"]["status"] == "matched"
     assert net.store.one("SELECT COUNT(*) AS n FROM attempts")["n"] == 0  # tried, recorded nowhere
+    kept = profile_attempts.kept(net, net._function("lerp", slug))  # but handed to the next worker
+    assert kept["toolchain"] == BAD and kept["source"] == lerp and kept["score"] > 0
+    assert BAD in net.get_function("lerp", slug, agent)
     with pytest.raises(NetworkError, match="already"):
         net.try_compiler(agent, slug, "lerp", GOOD, source=lerp)
     with pytest.raises(NetworkError, match="flags"):

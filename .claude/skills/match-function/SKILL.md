@@ -18,7 +18,9 @@ description: Match one function by hand against the running decompdecomp app, th
   an app change; follow the flow in AGENTS.md: decomp-repair PR, release tag, then the pin PR the library-pin workflow
   opens), so the Deep Permuter finds the match by itself next time. Step 5 below is that flow.
 - No `try_compiler` and no compiler ranges. The app's `compiler_experiments` trials plus `suggest` (First moves) are the
-  way to change a function's profile.
+  way to change a function's profile. The brief's "Closer attempt under another compiler profile" is where to start
+  when it is there; before giving up on C that is closer under another profile (`fast_judge.py` records nothing), run it
+  through one `compiler_experiments` trial so the app keeps it for the next worker.
 - At most 2 parallel judge runs, and one agent runs ONE judge or compile process at a time (parallel grids overloaded the
   machine twice).
 - zsh does not split a flag string held in a variable: pass flags literally.

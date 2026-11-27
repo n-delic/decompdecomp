@@ -790,7 +790,7 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
                       ranges=st("address ranges it built, when not the whole game: 0x10BFD0-0x10CD40, ..."),
                       source=st("the C to check it with (default: the best attempt)"),
                       trial_id=st("exact local ROM trial receipt; supply function and omit source, compiler, flags and ranges"))),
-        "try_compiler": ("Compile a function's C with another compiler and flags, recording nothing: test before suggesting.",
+        "try_compiler": ("Compile a function's C with another compiler and flags, recording no attempt (the closest is kept for the next worker): test before suggesting.",
                          s(function=st("function", True), compiler=st("toolchain id", True), flags=st("flags"),
                            source=st("the C (default: the best attempt)"))),
         "search_notes": ("Search notes.", s(query=st("text", True))),
