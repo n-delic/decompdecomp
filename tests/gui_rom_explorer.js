@@ -351,5 +351,15 @@ function setup(){
     assert.equal(t.run("romRows(romView()).map(r=>r.id).join(',')"),'c,a,b');
     t.run("romView().query='stage2.v3s'");assert.equal(t.run("romRows(romView()).map(r=>r.id).join(',')"),'b');
   }
+  // A separate compressed palette is sent only for a decoded indexed image.
+  {
+    const t=setup(),body=element();t.context.body=body;
+    for(const [key,value] of Object.entries({source:'decoded',format:'ci8',palette_block_offset:'0x1200',palette_offset:'0'}))body.querySelector(`[data-asset-${key}]`).value=value;
+    assert.equal(t.run('romAssetOptions(body).palette_block_offset'),'0x1200');
+    body.querySelector('[data-asset-source]').value='rom';
+    assert.equal(t.run('romAssetOptions(body).palette_block_offset'),undefined);
+    body.querySelector('[data-asset-source]').value='decoded';body.querySelector('[data-asset-format]').value='rgba5551-be';
+    assert.equal(t.run('romAssetOptions(body).palette_block_offset'),undefined);
+  }
   console.log('ROM Explorer lifecycle, sorting and notes passed');
 })().catch(error=>{console.error(error);process.exitCode=1;});

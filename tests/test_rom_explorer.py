@@ -665,3 +665,35 @@ def test_scoped_splat_data_symbols_only_cover_their_matching_overlay():
                  for symbol in row['symbols'] if symbol['name'] == symbols[1]['name']]
     assert scoped == [(40,False)]
     assert ambiguous == [(16,True),(48,True)]
+
+
+def test_indexed_preview_reads_palette_from_a_separate_compressed_block(tmp_path, monkeypatch):
+    """The palette offset is relative to the second decoded block, not the texels."""
+    import base64
+
+    from tests.test_rom_assets import pixels
+
+    texels = zlib.compress(bytes([0, 1, 1, 0]))
+    palette = zlib.compress(bytes.fromhex('f80107c1') + bytes(508))
+    image = texels + palette
+    path = tmp_path/'image.z64'
+    path.write_bytes(image)
+    report = {'size': len(image), 'image_hash': hashlib.sha256(image).hexdigest()}
+    row = {'start': 0, 'detected_asset': None}
+    monkeypatch.setattr(rom_explorer, '_current', lambda *args: ({}, {'report': report}, row))
+    monkeypatch.setattr(rom_explorer, '_source', lambda *args: {'path': path})
+    console = SimpleNamespace(asset_decode=lambda _: None)
+    net = SimpleNamespace(console=lambda _: console)
+    options = dict(source='decoded', block_offset=0, offset=0, format='ci8', width=2, height=2,
+                   palette_block_offset=len(texels), palette_offset=0, palette_format='rgba5551-be')
+    request = dict(region='0', image_hash=report['image_hash'], options=options)
+    result = rom_explorer.asset_preview(net, 'game', request)
+    rgba = pixels(base64.b64decode(result['data_url'].split(',')[1]))
+    assert rgba[:8] == bytes([255, 0, 0, 255, 0, 255, 0, 255])
+    assert result['decoded']['palette']['block_offset'] == len(texels)
+    assert result['settings']['palette_offset'] == 0
+    assert result['settings']['palette_block_offset'] == len(texels)
+    with pytest.raises(NetworkError, match='Palette offset'):
+        rom_explorer.asset_preview(net, 'game', request | {'options': options | {'palette_offset': 512}})
+    with pytest.raises(NetworkError, match='decompressed indexed image'):
+        rom_explorer.asset_preview(net, 'game', request | {'options': options | {'source': 'rom'}})
