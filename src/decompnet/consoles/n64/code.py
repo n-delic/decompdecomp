@@ -739,6 +739,11 @@ def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_rep
         log('Recovered overlapping code-bank addresses from their independent internal calls.')
     kib = sum(en - st for st, en, _ in found) // 1024
     log(f"found {len(found)} more code segment{'s' if len(found) != 1 else ''} the game loads later ({kib} KiB)")
+    if not packed and loaded.get('decoded_programs'):
+        from . import runtime_zlib
+        if result := runtime_zlib.add(config, workdir, original, original_rom, taken+found,
+                                      loaded['decoded_programs'], log):
+            return result
     return image
 
 

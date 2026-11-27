@@ -66,6 +66,7 @@ def test_runtime_program_add_keeps_cartridge_and_records_verified_image(tmp_path
     config.write_text(yaml.safe_dump(dict(options={'target_path':'game.z64'},segments=[
         dict(name='main',type='code',start=0,vram=0x80000400,subsegments=[[0,'c','main']]),[len(rom)]])))
     (tmp_path/'game.z64').write_bytes(rom)
+    (tmp_path/'analysis-coverage.json').write_text('["Existing coverage note."]')
     def bodies(image, segments, banks, taken, log, **kwargs):
         start,_,vram = banks[0]
         return [(start+i*16,start+i*16+8,vram+i*16) for i in range(4)]
@@ -79,3 +80,90 @@ def test_runtime_program_add_keeps_cartridge_and_records_verified_image(tmp_path
     assert program['vram'] == base
     assert expanded[program['start']:program['start']+len(payload)] == payload
     assert (tmp_path/runtime_zlib.MANIFEST).is_file()
+    assert 'Existing coverage note.' in (tmp_path/'analysis-coverage.json').read_text()
+
+
+def _refpack_literal(payload):
+    out = bytearray(b'\x10\xfb' + len(payload).to_bytes(3, 'big'))
+    at = 0
+    while len(payload)-at >= 4:
+        size = min(112, (len(payload)-at)//4*4)
+        out.append(0xe0 + size//4-1)
+        out.extend(payload[at:at+size])
+        at += size
+    rest = payload[at:]
+    out.append(0xfc + len(rest))
+    out.extend(rest)
+    return bytes(out)
+
+
+def test_refpack_program_requires_runtime_and_unique_source():
+    from decompnet.consoles.n64 import runtime_refpack
+
+    rng = random.Random(73)
+    payload = rng.randbytes(0x12000)
+    encoded = _refpack_literal(payload)
+    rom = bytes(0x200) + encoded + bytes(0x100)
+    base = 0x80010000
+    ram = bytearray(0x40000)
+    ram[base & 0x1fffffff:(base & 0x1fffffff)+len(payload)] = payload
+    targets = {base+0x100, base+0x500, base+0x1000}
+    rows = runtime_refpack.find(rom, [bytes(ram)], targets)
+    assert rows == [dict(offset=0x200, size=len(encoded), vram=base, calls=sorted(targets),
+                         codec='refpack', expanded=len(payload))]
+    assert not runtime_refpack.find(rom, [bytes(ram)], set(list(targets)[:2]))
+    changed = bytearray(ram);changed[(base & 0x1fffffff)+0x8000] ^= 1
+    assert not runtime_refpack.find(rom, [bytes(changed)], targets)
+    duplicate = rom + (b'\0' if len(rom) % 2 else b'') + encoded
+    assert not runtime_refpack.find(duplicate, [bytes(ram)], targets)
+    expanded = rom + bytes(-len(rom)%16+16) + payload
+    expanded += bytes(-len(expanded)%16)
+    assert runtime_zlib.verify_analysis(rom, expanded, rows)
+    bad = bytearray(expanded);bad[-16] ^= 1
+    assert not runtime_zlib.verify_analysis(rom, bad, rows)
+    assert not runtime_zlib.verify_analysis(rom, expanded, [dict(rows[0], codec='unknown')])
+
+
+def test_runtime_program_may_begin_with_observed_data(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import loader_code
+
+    rom,payload,ram,targets,base,_ = _example()
+    rows = runtime_zlib.find(rom,[ram],targets)
+    config = tmp_path/'game.yaml'
+    config.write_text(yaml.safe_dump(dict(options={'target_path':'game.z64'},segments=[
+        dict(name='main',type='code',start=0,vram=0x80000400,subsegments=[[0,'c','main']]),[len(rom)]])))
+    (tmp_path/'game.z64').write_bytes(rom)
+    def bodies(image, segments, banks, taken, log, **kwargs):
+        start,_,vram = banks[0]
+        return [(start+16+i*16,start+24+i*16,vram+16+i*16) for i in range(4)]
+    monkeypatch.setattr(loader_code,'complete',bodies)
+    result = runtime_zlib.add(config,tmp_path,'game.z64',rom,[(0,0x100,0x80000400)],rows,lambda *_:None)
+    assert result
+    program, = [s for s in yaml.safe_load(config.read_text())['segments']
+                if isinstance(s,dict) and s.get('name') == 'runtime_program_0000']
+    assert program['subsegments'][0][1] == 'bin'
+    assert program['subsegments'][1][0] == program['start']+16
+
+
+def test_distinct_refpack_programs_can_share_one_analysis_image():
+    from decompnet.consoles.n64 import runtime_refpack
+
+    first = random.Random(1).randbytes(0x12000)
+    second = random.Random(2).randbytes(0x12000)
+    a, b = _refpack_literal(first), _refpack_literal(second)
+    pad = bytes(-(0x200+len(a)) % 2)
+    rom = bytes(0x200)+a+pad+b+bytes(16)
+    bases = (0x80010000, 0x80030000)
+    ram = bytearray(0x50000)
+    for base, payload in zip(bases, (first, second)):
+        at = base & 0x1fffffff
+        ram[at:at+len(payload)] = payload
+    targets = {base+offset for base in bases for offset in (0x100, 0x500, 0x1000)}
+    rows = runtime_refpack.find(rom, [bytes(ram)], targets)
+    assert [r['vram'] for r in rows] == list(bases)
+    expanded = bytearray(rom + bytes(-len(rom)%16+16))
+    for payload in (first, second):
+        expanded.extend(bytes(-len(expanded)%16))
+        expanded.extend(payload)
+    expanded.extend(bytes(-len(expanded)%16))
+    assert runtime_zlib.verify_analysis(rom, bytes(expanded), rows)
