@@ -201,3 +201,20 @@ def test_repeated_full_bodies_at_a_coherent_other_mapping_defer_the_bank():
     ram[0x2080:0x20a0] = third
     bodies.append((0x1080, 0x10a0, 0x80001080))
     assert loaded_code.moved_banks(rom, [bank], bodies, [], [bytes(ram)] * 2) == [(bank, 0x80001000, 2)]
+
+
+def test_observed_partial_range_recovers_word_aligned_frame_before_it(tmp_path, monkeypatch):
+    rom = _rom()
+    first = _function(30)
+    second = _function(12)
+    start = 0x3008  # the frame is not 16-byte aligned
+    rom[start:start+len(first)+len(second)] = first+second
+    ram = bytearray(0x400000)
+    base = 0x201008
+    ram[base:base+len(first)+len(second)] = first+second
+    _setup(tmp_path, monkeypatch, bytes(ram))
+    (tmp_path / 'rom.z64').write_bytes(rom)
+    seam = start+len(first)
+    inferred = [(seam, seam+len(second), 0x80201008+len(first))]
+    result = loaded_code.find(tmp_path/'rom.z64', bytes(rom), [], inferred, log=lambda *_: None)
+    assert (start, seam, 0x80201008) in result['segments']

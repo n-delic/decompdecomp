@@ -161,6 +161,12 @@ def _region(rom: bytes, dump: bytes, target: int) -> tuple[int, int, int] | None
         lo -= 16
     while hi + 16 <= len(rom) and hi + 16 + shift <= len(dump) and dump[hi + shift:hi + 16 + shift] == rom[hi:hi + 16]:
         hi += 16
+    # A run can begin or end between 16-byte boundaries. Keep complete words
+    # at the edge so a frame is not lost to an unrelated changed word.
+    while lo - 4 >= 0x1000 and lo - 4 + shift >= 0x400 and dump[lo - 4 + shift:lo + shift] == rom[lo - 4:lo]:
+        lo -= 4
+    while hi + 4 <= len(rom) and hi + 4 + shift <= len(dump) and dump[hi + shift:hi + 4 + shift] == rom[hi:hi + 4]:
+        hi += 4
     return lo, hi, 0x80000000 + lo + shift  # the whole overlay as RAM holds it: find() cuts it to code
 
 
@@ -217,14 +223,17 @@ def find(rom_path: Path, rom: bytes, taken, found=(), *, log=print, stop=lambda:
         inspect_dumps(dumps)
     added: list[tuple[int, int, int]] = []
     moved, moved_ranges, decoded, seen = [], set(), set(), set()
-    todo = _targets(rom, known)
-    called = set(todo)  # every call into code no segment has, for where a segment starts
+    calls = _targets(rom, known)
+    seeds = {v for _, _, v in found}  # inspect partial inferred ranges against the captured load
+    todo = calls | seeds
+    called = set(calls)  # every call into code no segment has, for where a segment starts
     while todo:
         target = todo.pop()
         if target in seen:
             continue
         seen.add(target)
-        if any(v <= target < v + e - s for s, e, v in known + added):
+        seed = target in seeds
+        if not seed and any(v <= target < v + e - s for s, e, v in known + added):
             continue
         region, code = None, False
         for dump in dumps:
@@ -241,6 +250,8 @@ def find(rom_path: Path, rom: bytes, taken, found=(), *, log=print, stop=lambda:
             continue
         s, e, v = region
         shift = v - s  # a ROM offset's load address is the offset plus this
+        if seed and not any(v0 == target and v0-s0 == shift for s0, _, v0 in found):
+            continue  # a different bank happened to occupy this inferred address
         overlapping = [(ks, ke, kv) for ks, ke, kv in known + added if ks < e and s < ke]
         for ks, ke, kv in overlapping:  # the split's own segment here: the run says where the game runs it
             if kv - ks != shift and not any(m["rom"] == max(s, ks) for m in moved):
