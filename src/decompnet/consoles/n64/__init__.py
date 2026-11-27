@@ -13,7 +13,7 @@
 - level_overlay_table.py: shared-slot level banks and adjacent helpers verified from loader instructions.
 - inferred_overlays.py: overlapping code-bank mappings supported by independently called local entries.
 - inline_data.py: verified constants and alignment bytes embedded among code.
-- boot_gzip.py, boot_raw_deflate.py, boot_brs.py, boot_refpack.py: compressed programs placed by the boot loader.
+- boot_gzip.py, boot_raw_deflate.py, boot_brs.py, boot_refpack.py, boot_rnc2.py: compressed programs placed by the boot loader.
 - boot_mapping.py: returning TLB boot stubs separated from code with a strongly supported later load mapping.
 - sdk_assembly.py: exact self-contained libultra body fingerprints, classified before C claims.
 - profile_probes.py: the per-function compiler profiles its open functions are judged under automatically (SN 2.7.2 builds, KMC for libultra).

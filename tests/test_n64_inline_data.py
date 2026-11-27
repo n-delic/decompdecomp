@@ -182,3 +182,18 @@ def test_leading_code_pointer_table_requires_mapped_targets_and_a_frame(tmp_path
     assert not list(inline_data._leading_code_pointer_tables(bytes(changed), ranges))
     changed = bytearray(image); struct.pack_into('>I', changed, 16, 0)
     assert not list(inline_data._leading_code_pointer_tables(bytes(changed), ranges))
+
+
+def test_unentered_call_word_between_return_and_frame_is_data():
+    import struct
+
+    image = bytearray(64)
+    struct.pack_into('>4I', image, 16, 0x03e00008, 0x27bd0018, 0x0c000100, 0x27bdffe0)
+    ranges = [(0, len(image), 0x80000000)]
+    assert list(inline_data._unentered_call_words(image, ranges)) == [(24, 28)]
+    struct.pack_into('>I', image, 0, 0x0c000006)
+    assert not list(inline_data._unentered_call_words(image, ranges))
+    struct.pack_into('>I', image, 0, 0x80000018)
+    assert not list(inline_data._unentered_call_words(image, ranges))
+    struct.pack_into('>2I', image, 0, 0x3c048000, 0x24840018)
+    assert not list(inline_data._unentered_call_words(image, ranges))

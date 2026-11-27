@@ -235,11 +235,49 @@ def _leading_code_pointer_tables(image, ranges):
             yield start, at
 
 
+def _unentered_call_words(image, ranges):
+    """Keep an unreachable call-shaped word between a return and a framed entry as data."""
+    from ...arch.mips import is_frame
+    from ...arch.mips_references import references
+
+    candidates = {}
+    for start, end, base in ranges:
+        for at in range(start+8, min(end, len(image))-7, 4):
+            if (int.from_bytes(image[at-8:at-4], 'big') != 0x03e00008
+                    or image[at] >> 2 != 3 or not is_frame(int.from_bytes(image[at+4:at+8], 'big'))):
+                continue
+            address = base+at-start
+            if sum(lo <= at < hi for lo, hi, _ in ranges) != 1 or address.to_bytes(4, 'big') in image:
+                continue
+            candidates.setdefault(address, []).append(at)
+    if not candidates:
+        return
+    for lo, hi, base in ranges:
+        for target, _, kind in references(image, lo, min(hi, len(image)), base):
+            if kind == 'address':
+                candidates.pop(target, None)
+        for at in range(lo, min(hi, len(image))-3, 4):
+            word = int.from_bytes(image[at:at+4], 'big')
+            op = word >> 26
+            pc = base+at-lo
+            if op in (2, 3):
+                target = ((pc+4) & 0xf0000000) | ((word & 0x3ffffff) << 2)
+            elif op in (1, 4, 5, 6, 7, 20, 21, 22, 23) or op == 17 and (word >> 21) & 31 == 8:
+                immediate = word & 0xffff
+                target = pc+4+(immediate-0x10000 if immediate & 0x8000 else immediate)*4
+            else:
+                continue
+            candidates.pop(target, None)
+    for offsets in candidates.values():
+        if len(offsets) == 1:
+            yield offsets[0], offsets[0]+4
+
+
 def apply(config, image, log=print):
     """Split mapped text subsegments at verified inline data boundaries."""
     code = split.code_ranges(config)
     regions = sorted([*spans(image), *_startup_padding(image, code), *_stack_padding(image, code),
-                      *_leading_code_pointer_tables(image, code)])
+                      *_leading_code_pointer_tables(image, code), *_unentered_call_words(image, code)])
     if not regions:
         return
     ranges = {start: end for start, end, _ in code}
