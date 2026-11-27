@@ -14,6 +14,11 @@ def git(root, *args):
     return subprocess.check_output(['git', '-C', str(root), *args]).decode().strip()
 
 
+def test_recovery_format_keeps_split_metadata_in_repository_checkpoints():
+    manifest = {'format': saves.RECOVERY_FORMAT, 'functions': {}, 'headers': {}}
+    assert set(saves.SIDE_FILES.values()) <= repository_progress.owned(manifest)
+
+
 @pytest.fixture(params=['n64', 'ps1', 'ps2', 'psp'])
 def progress(tmp_path, request):
     if not shutil.which('git'):pytest.skip('needs git')

@@ -24,6 +24,39 @@ def test_direct_leaf_and_adjacent_quiet_frame_are_found_in_entire_bank():
     assert complete(image,[],banks,taken)==[(0x4000,0x4010,BASE),(0x4010,0x4028,BASE+16)]
 
 
+def test_directly_called_trapping_stack_frame_is_recovered_as_a_complete_body():
+    # ADDI, unlike ADDIU, traps on overflow; it is real assembly rather than a C frame.
+    body=[0x23bdfff8,0xafbf0000,0x8fbf0000,0x03e00008,0x23bd0008]
+    image,taken,banks=setup(body,[BASE])
+    assert complete(image,[],banks,taken)==[(0x4000,0x4014,BASE)]
+    image,taken,banks=setup(body)
+    assert complete(image,[],banks,taken)==[]
+
+
+def test_trapping_frame_needs_a_balanced_return_and_no_external_interior_entry():
+    body=[0x23bdfff8,0xafbf0000,0x8fbf0000,0x03e00008,0x23bd0008]
+    image,taken,banks=setup(body,[BASE,BASE+8])
+    assert complete(image,[],banks,taken)==[]
+    body[-1]=0x23bd0010
+    image,taken,banks=setup(body,[BASE])
+    assert complete(image,[],banks,taken)==[]
+
+
+def test_trapping_frame_with_calls_must_save_and_restore_its_return_address():
+    body=[0x23bdfff8,jal(0x80001000),0,0x03e00008,0x23bd0008]
+    image,taken,banks=setup(body,[BASE])
+    assert complete(image,[],banks,taken)==[]
+
+
+def test_trapping_frame_needs_a_call_not_just_an_address_pattern():
+    body=[0x23bdfff8,0xafbf0000,0x8fbf0000,0x03e00008,0x23bd0008]
+    image,taken,banks=setup(body)
+    image=bytearray(image)
+    for i,w in enumerate((0x3c048010,0x24840000,0x03e00008,0)):
+        image[0x1000+i*4:0x1004+i*4]=w.to_bytes(4,'big')
+    assert complete(bytes(image),[],banks,[(0x1000,0x1010,0x80001000)])==[]
+
+
 def test_new_calls_are_followed_to_completion_in_other_banks():
     words=[0x27bdffe8,0xafbf0014,jal(BASE+64),0,0x8fbf0014,0x03e00008,0x27bd0018]+[0]*9+LEAF
     image,taken,banks=setup(words,[BASE])

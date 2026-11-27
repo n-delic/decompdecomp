@@ -8,13 +8,75 @@ MAX_STEPS = 4096
 MAX_CANDIDATES = 128
 
 
-def extent(image, start, end, vram, order, cpu="", *, table_ranges=(), mapping_choices=(), max_steps=MAX_STEPS):
-    """Follow direct flow and reviewed bounded table edges; other indirects remain unresolved."""
+def _entry_calls(image, spans, entry, order, cpu, check):
+    """Direct calls reachable from one uniquely mapped entry, bounded to its code mapping."""
+    import rabbitizer
+
+    owners = [(lo, hi, vram) for lo, hi, vram in spans if vram <= entry < vram + hi - lo]
+    if len(owners) != 1:
+        return []
+    lo, _, vram = owners[0]
+    mapping = vram - lo
+    ranges = [(a, b) for a, b, v in spans if v - a == mapping]
+    pending = [entry - mapping]
+    seen, calls = set(), []
+    while pending and len(seen) < MAX_STEPS:
+        at = pending.pop()
+        if at in seen or at < 0 or at + 4 > len(image) or not any(a <= at < b for a, b in ranges):
+            continue
+        if not len(seen) % 128:
+            check()
+        word = int.from_bytes(image[at:at + 4], order)
+        insn = rabbitizer.Instruction(word, 0, rabbitizer_category(cpu))
+        if not insn.isValid():
+            continue
+        seen.add(at)
+        op = word >> 26
+        regimm = op == 1 and (word >> 16) & 31 in (0, 1, 2, 3, 16, 17, 18, 19)
+        conditional = regimm or op in (4, 5, 6, 7, 20, 21, 22, 23) or op == 17 and (word >> 21) & 31 == 8
+        indirect = op == 0 and word & 63 in (8, 9)
+        transfer = conditional or op in (2, 3) or indirect
+        if not transfer:
+            # Exception instructions stop a bootstrap path; treating following data as code would create false leads.
+            if not (op == 0 and word & 63 in (12, 13)):
+                pending.append(at + 4)
+            continue
+        if at + 8 > len(image) or not any(a <= at + 4 and at + 8 <= b for a, b in ranges):
+            continue
+        delay = rabbitizer.Instruction(int.from_bytes(image[at + 4:at + 8], order), 0, rabbitizer_category(cpu))
+        if not delay.isValid() or delay.hasDelaySlot():
+            continue
+        pc = at + mapping
+        if op in (2, 3):
+            target = ((pc + 4) & 0xf0000000) | ((word & 0x3ffffff) << 2)
+            if op == 3:
+                calls.append((target, pc))
+                pending.append(at + 8)
+            else:
+                pending.append(target - mapping)
+        elif conditional:
+            delta = word & 0xffff
+            pending.extend((at + 8, at + 4 + (delta - 0x10000 if delta & 0x8000 else delta) * 4))
+        elif word & 63 == 9:  # an indirect call returns; an indirect jump ends this path
+            pending.append(at + 8)
+    return calls
+
+
+def extent(image, start, end, vram, order, cpu="", *, table_ranges=(), mapping_choices=(), max_steps=MAX_STEPS,
+           resolved_indirect=None):
+    """Follow direct flow and proven table edges; callers must independently validate supplied indirect edges."""
     import rabbitizer
 
     from .mips_indirect import jump_table
 
-    pending=[start];seen=set();returns=0;unknown=False;highest=start;indirect=[];tables=[]
+    edges = resolved_indirect or {}
+    if (not isinstance(edges, dict) or (edges and table_ranges) or len(edges) > 8
+            or any(type(site) is not int or site % 4 or not 0 <= site < end-start
+                   or not isinstance(targets, (tuple, list)) or not targets or len(targets) > 256
+                   or any(type(t) is not int or t % 4 or not 0 <= t < end-start for t in targets)
+                   for site, targets in edges.items())):
+        raise ValueError('Resolved indirect edges must be aligned offsets inside the function.')
+    pending=[start];seen=set();returns=0;unknown=False;highest=start;indirect=[];tables=[];resolved=[]
     while pending and len(seen)<max_steps:
         at=pending.pop()
         if at in seen:continue
@@ -38,6 +100,12 @@ def extent(image, start, end, vram, order, cpu="", *, table_ranges=(), mapping_c
         if op==3 or (op==0 and w&63==9):  # calls return; the callee is a separate audit seed
             pending.append(at+8);continue
         if op==0:
+            if at-start in edges:
+                destinations = edges[at-start]
+                resolved.append({'state':'validated','address':vram+at-start,
+                                 'targets':[vram+t for t in destinations], 'source':'loader relocation'})
+                pending.extend(start+t for t in destinations)
+                continue
             table=jump_table(image,start,end,vram,at,order,table_ranges,mapping_choices) if len(tables)<8 else None
             if table:
                 tables.append(table)
@@ -62,13 +130,14 @@ def extent(image, start, end, vram, order, cpu="", *, table_ranges=(), mapping_c
                for source_table in validated for dest in source_table['targets']):
             unknown=True;target_table['state']='unresolved'
             target_table['reason']='a table edge bypasses this guard'
-    return {'decoded_instructions':len(seen),'return_sites':returns,'direct_flow_closed':bool(returns and not unknown and not pending and not tables),
+    return {'decoded_instructions':len(seen),'return_sites':returns,'direct_flow_closed':bool(returns and not unknown and not pending and not tables and not resolved),
             'flow_closed':bool(returns and not unknown and not pending),'flow_bounded':not unknown and not pending,
-            'jump_tables':tables,
+            'jump_tables':tables+resolved,
             'extent_bytes':highest-start,'step_limit':bool(pending),'unresolved_transfers':indirect}
 
 
-def audit(image, segments, functions, *, big_endian=True, cpu="", progress=lambda _:None, data_mappings=(), review_ranges=()):
+def audit(image, segments, functions, *, big_endian=True, cpu="", progress=lambda _:None, data_mappings=(),
+          review_ranges=(), full_scan=False, check=lambda:None, entrypoints=()):
     """Frozen image + known code ranges. Even closed direct flow remains review-only."""
     order='big' if big_endian else 'little'
     spans=sorted((s['rom_start'],s['rom_end'],s['vram']) for s in segments)
@@ -88,12 +157,13 @@ def audit(image, segments, functions, *, big_endian=True, cpu="", progress=lambd
         end=max(end,hi)
     if end<len(image):gaps.append((end,len(image)))
     # Do not infer a mapping from data. Reuse only mappings established by code segments.
-    mapping_choices=[m for m,_ in mappings.most_common(8)]
+    mapping_choices=[m for m,_ in mappings.most_common(None if full_scan else 8)]
     # Unowned bytes inside code parents include splat's data/rodata children and
     # undisassembled text. They are review regions, never evidence of executable code.
     covered=sorted((f['rom'],f['rom']+f['size']) for f in functions)
     interiors=[]
     for lo,hi,_ in spans:
+        check()
         pos=lo
         for a,b in covered:
             if b<=pos or a>=hi:continue
@@ -116,12 +186,36 @@ def audit(image, segments, functions, *, big_endian=True, cpu="", progress=lambd
         region=region_at(offset)
         if not region or offset%4:return None
         key=(offset,target)
-        if key not in candidates and len(candidates)>=MAX_CANDIDATES:
+        if not full_scan and key not in candidates and len(candidates)>=MAX_CANDIDATES:
             overflow=True;return None
         return candidates.setdefault(key,dict(rom_offset=offset,vram=target,gap_start=region[0],gap_end=region[1],
                                               region=region[2],evidence=evidence,incoming=[],pointer_references=[]))
+    for entry in entrypoints:
+        if type(entry) is not int:
+            raise ValueError('Entry points must be integer addresses.')
+        owners = [(a, b, v) for a, b, v in spans if v <= entry < v + b - a]
+        if len(owners) != 1:
+            continue
+        mapping = owners[0][2] - owners[0][0]
+        for target, pc in _entry_calls(image, spans, entry, order, cpu, check):
+            offset = target - mapping
+            region = region_at(offset)
+            if region is None:
+                continue
+            info = extent(image, offset, min(region[1], offset + 0x10000), target, order, cpu)
+            if not info['direct_flow_closed'] or info['decoded_instructions'] < 4:
+                continue
+            row = seed(offset, target, 'direct call reached from configured entry')
+            if row is not None:
+                references += 1
+                witness = {'function': 'configured entry', 'source_kind': 'entry', 'address': pc,
+                           'kind': 'call', 'mapping_relation': 'same'}
+                if witness not in row['incoming'] and len(row['incoming']) < 8:
+                    row['incoming'].append(witness)
     boundary_candidates=[]
-    for fn in functions:
+    for index,fn in enumerate(functions):
+        check()
+        if not index % 128:progress({'phase':'Checking detected function boundaries','step':1,'steps':6,'done':index,'total':len(functions)})
         if fn.get('handwritten'):continue
         reason=boundary_reason(image[fn['rom']:fn['rom']+fn['size']],big_endian)
         if not reason:continue
@@ -132,8 +226,11 @@ def audit(image, segments, functions, *, big_endian=True, cpu="", progress=lambd
         if row is not None:
             row['incomplete_function']=fn['name']
             row['incoming'].append({'function':fn['name'],'address':target-4,'kind':'fallthrough'})
-    for fn in functions:
+    for index,fn in enumerate(functions):
+        check()
+        if not index % 128:progress({'phase':'Following direct transfers','step':2,'steps':6,'done':index,'total':len(functions)})
         if fn.get('handwritten'):continue  # microcode and kernel register conventions are not CPU-call evidence
+        ordered_mappings=sorted(mapping_choices,key=lambda m:m != fn['vram']-fn['rom'])
         for at in range(fn['rom'],fn['rom']+fn['size']-3,4):
             w=int.from_bytes(image[at:at+4],order);op=w>>26
             pc=fn['vram']+at-fn['rom']
@@ -141,17 +238,28 @@ def audit(image, segments, functions, *, big_endian=True, cpu="", progress=lambd
             elif op in (1,4,5,6,7,20,21,22,23) or (op==17 and (w>>21)&31==8):
                 d=w&0xffff;target=pc+4+(d-0x10000 if d&0x8000 else d)*4
             else:continue
-            for mapping in mapping_choices:
+            for mapping in ordered_mappings:
                 row=seed(target-mapping,target,'incoming direct transfer')
                 if row is None:continue
                 references+=1
-                if len(row['incoming'])<8:row['incoming'].append({'function':fn['name'],'address':pc,'kind':'call' if op==3 else 'branch'})
+                relation='same' if mapping==fn['vram']-fn['rom'] else 'alternative'
+                incoming={'function':fn['name'],'address':pc,'kind':'call' if op==3 else 'branch',
+                          'mapping_relation':relation}
+                if len(row['incoming'])<8:
+                    row['incoming'].append(incoming)
+                elif relation=='same' and not any(ref.get('mapping_relation')=='same' for ref in row['incoming']):
+                    row['incoming'][-1]=incoming  # retain a same-bank witness even after eight other calls
     # Aligned words outside known function bodies can be callbacks or jump tables.
     # Test an apparent pointer's destination before consuming a candidate slot. A
     # value resembling an address is weaker evidence than an incoming CPU transfer.
     pointer_count=0;pointer_probes=0;pointer_limit=False
+    total_bytes=sum(hi-lo for lo,hi,_ in regions);completed_bytes=0
     for lo,hi,_ in regions:
+        check()
+        progress({'phase':'Checking possible references','step':3,'steps':6,'done':completed_bytes,'total':total_bytes})
         for at in range((lo+3)&~3,hi-3,4):
+            if not at & 0xffff:
+                check();progress({'phase':'Checking possible references','step':3,'steps':6,'done':completed_bytes+at-lo,'total':total_bytes})
             value=int.from_bytes(image[at:at+4],order)
             if value%4:continue
             for mapping in mapping_choices:
@@ -160,7 +268,7 @@ def audit(image, segments, functions, *, big_endian=True, cpu="", progress=lambd
                 key=(offset,value)
                 if key not in candidates:
                     if not is_frame(int.from_bytes(image[offset:offset+4],order)):continue
-                    if pointer_probes>=512:
+                    if not full_scan and pointer_probes>=512:
                         pointer_limit=True;continue
                     pointer_probes+=1
                     info=extent(image,offset,min(region[1],offset+0x10000),value,order,cpu)
@@ -169,6 +277,7 @@ def audit(image, segments, functions, *, big_endian=True, cpu="", progress=lambd
                 if row is None:continue
                 pointer_count+=1
                 if len(row['pointer_references'])<8:row['pointer_references'].append({'rom_offset':at,'value':value})
+        completed_bytes+=hi-lo
     # A small complete gap between known bodies can hold an uncalled leaf with
     # no frame. Keep this weaker, ABI-compatible evidence review-only: data can
     # also encode instructions. Never scan arbitrary offsets as leaf starts.
@@ -176,10 +285,11 @@ def audit(image, segments, functions, *, big_endian=True, cpu="", progress=lambd
     known_starts={f['rom'] for f in functions}
     leaf_hints=0
     for lo,hi,kind in regions:
-        if hi-lo>0x1000 or lo not in known_ends or hi not in known_starts or leaf_hints>=32:continue
+        check()
+        if hi-lo>0x1000 or lo not in known_ends or hi not in known_starts or (not full_scan and leaf_hints>=32):continue
         leaf_start=lo
         while leaf_start+4<=min(hi,lo+12) and not any(image[leaf_start:leaf_start+4]):leaf_start+=4
-        for mapping in mapping_choices[:1]:
+        for mapping in (mapping_choices if full_scan else mapping_choices[:1]):
             info=extent(image,leaf_start,hi,leaf_start+mapping,order,cpu)
             size=info['extent_bytes'];body=image[leaf_start:leaf_start+size]
             if not info['direct_flow_closed'] or size<12 or hi-leaf_start-size>12 or any(image[leaf_start+size:hi]):continue
@@ -190,28 +300,37 @@ def audit(image, segments, functions, *, big_endian=True, cpu="", progress=lambd
             if row is not None:leaf_hints+=1
     # Quiet framed bodies with no incoming transfer are weaker hints; cap them separately.
     hints=0;hint_limit=False
+    completed_bytes=0
     for lo,hi,region_name in regions:
-        progress({'phase':'Auditing binary gaps','start':lo,'end':hi})
+        check()
+        progress({'phase':'Auditing binary gaps','step':4,'steps':6,'done':completed_bytes,'total':total_bytes})
         for at in range((lo+3)&~3,hi-3,4):
-            if hints>=32:hint_limit=True;break
+            if not at & 0xffff:check()
+            if not full_scan and hints>=32:hint_limit=True;break
             w=int.from_bytes(image[at:at+4],order)
             if not is_frame(w):continue
-            for mapping in mapping_choices[:1]:
+            for mapping in (mapping_choices if full_scan else mapping_choices[:1]):
                 key=(at,at+mapping)
-                if key in candidates or len(candidates)>=MAX_CANDIDATES:continue
+                if key in candidates or (not full_scan and len(candidates)>=MAX_CANDIDATES):continue
                 info=extent(image,at,min(hi,at+0x10000),at+mapping,order,cpu)
                 if info['return_sites'] and info['decoded_instructions']>=4:
                     candidates[key]=dict(rom_offset=at,vram=at+mapping,gap_start=lo,gap_end=hi,
                                          region=region_name,evidence='frame/return pattern only',incoming=[],pointer_references=[],**info);hints+=1
+        completed_bytes+=hi-lo
     rows=[]
-    for row in candidates.values():
+    for index,row in enumerate(candidates.values()):
+        check()
+        if not index % 128:progress({'phase':'Checking candidate flow','step':5,'steps':6,'done':index,'total':len(candidates)})
         info=extent(image,row['rom_offset'],min(row['gap_end'],row['rom_offset']+0x10000),row['vram'],order,cpu,table_ranges=table_ranges,mapping_choices=mapping_choices)
         rows.append({**row,**info,'review_only':True})
     from .mips_indirect import consumers
     unresolved_callbacks=[]
-    consumer_limit=consumers(image,functions,rows,order,table_ranges,mapping_choices,unresolved_callbacks)
-    rows.sort(key=lambda r:(not bool(r['incoming']),not r['direct_flow_closed'],r['rom_offset'],r['vram']))
+    progress({'phase':'Checking indirect references','step':6,'steps':6})
+    consumer_limit=consumers(image,functions,rows,order,table_ranges,mapping_choices,unresolved_callbacks,check=check)
+    rows.sort(key=lambda r:(not bool(r['incoming']),not r['direct_flow_closed'],
+                            not any(i.get('mapping_relation')=='same' for i in r['incoming']),
+                            r['rom_offset'],r['vram']))
     return {'review_ranges':list(review_ranges),'partial':bool(review_ranges),'gaps':len(gaps),'gap_bytes':sum(b-a for a,b in gaps),'candidates':rows,'incoming_references':references,
             'unresolved_callbacks':unresolved_callbacks,'callback_scan_limit':consumer_limit,'boundary_candidates':boundary_candidates,'interior_bytes':sum(b-a for a,b in interiors),'interior_regions':len(interiors),'pointer_references':pointer_count,'pointer_probe_limit':pointer_limit,
-            'hint_scan_limit':hint_limit,'candidate_limit':overflow,'mapping_limit':len(mappings)>8,
+            'hint_scan_limit':hint_limit,'candidate_limit':overflow,'mapping_limit':not full_scan and len(mappings)>8,
             'note':'Review evidence only. Valid instructions, calls and returns can occur in data or microcode. No targets, statuses, source or compiler settings changed.'}

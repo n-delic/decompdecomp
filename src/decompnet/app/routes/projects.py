@@ -64,7 +64,7 @@ def register(app: App) -> None:
                     if request.url.path in ('/api/priority', '/api/variants'):
                         return fn(slug, request, data)  # Metadata is published by autosave, without another recheck here.
                     if request.method == "POST" and request.url.path in (
-                        '/api/try', '/api/cross-game/run', '/api/reconcile-matches', '/api/reimport',
+                        '/api/try', '/api/cross-game/run', '/api/reconcile-matches', '/api/reimport', '/api/code-audit', '/api/missed-functions',
                         '/api/permuter/function', '/api/deep-permuter', '/api/play', '/api/play-export', '/api/port-export-options', '/api/recompile',
                     ):
                         return fn(slug, request, data)  # The worker synchronizes; return its job without waiting.
@@ -641,10 +641,41 @@ def register(app: App) -> None:
 
     def p_code_audit(slug, request, data):
         from .. import rom_gap_audit
-        return {"job": jobs.start("code-audit",lambda log:rom_gap_audit.run(net,slug,log))}
+        kinds = ('code-audit', 'code-audit-full')
+        if request.method == 'GET':
+            return {'job':jobs.active(kinds,project=slug)}
+        full_scan = data.get('full_scan', False)
+        if not isinstance(full_scan, bool):
+            raise NetworkError('Choose whether to run the full code audit.')
+        with jobs._lock:
+            active = jobs.active(kinds,project=slug)
+            if active and (not full_scan or active['kind'] == 'code-audit-full'):
+                return {'job':active['id']}
+            predecessor = active['id'] if active else None
+
+            def work(log):
+                if predecessor:
+                    log('Waiting for the current coverage scan before starting the full scan.')
+                    while True:
+                        log.check_cancel()
+                        with jobs._lock:
+                            waiting = jobs.jobs.get(predecessor,{}).get('state') == 'running'
+                        if not waiting:
+                            break
+                        time.sleep(.25)
+                return rom_gap_audit.run(net,slug,log,full_scan=full_scan)
+
+            return {'job':jobs.start('code-audit-full' if full_scan else 'code-audit',work,
+                                     project=slug,cancel_message='Code audit stopped.')}
 
     def p_missed_functions(slug, request, data):
-        return {"job": jobs.start("missed-functions", lambda log: net.find_missed_functions(slug, log), project=slug)}
+        if request.method == 'GET':
+            return {'job': jobs.active(('missed-functions',), project=slug)}
+        with jobs._lock:
+            if active := jobs.active(('missed-functions',), project=slug):
+                return {'job': active['id']}
+            return {'job': jobs.start('missed-functions', lambda log: net.find_missed_functions(slug, log),
+                                      project=slug, cancel_message='Finding missed functions stopped.')}
 
     def donor_recovery(slug, request, data):
         from .. import donor_reanalysis
@@ -680,7 +711,7 @@ def register(app: App) -> None:
 
     def p_code_audit_review(slug, request, data):
         from ..code_audit_reviews import review
-        return review(net,slug,data.get('review_id'),data.get('state'),data.get('notes',''))
+        return review(net,slug,data.get('review_id'),data.get('state'),data.get('notes',''),compact=data.get('compact') is True)
 
     reimport_lock = threading.RLock()
 
@@ -1558,8 +1589,8 @@ def register(app: App) -> None:
         "/api/compiler/compare": (p_compiler_compare, ["POST"]),
         "/api/compiler/unverified": (p_unverified_profiles, ["GET", "POST"]), "/api/export": (p_export, ["POST"]),
         "/api/project-layout": (p_project_layout, ["POST"]), "/api/open": (p_open, ["POST"]),
-        "/api/reimport": (p_reimport, ["GET", "POST"]), "/api/code-audit": (p_code_audit, ["POST"]),
-        "/api/recover-code": (p_recover_code, ["POST"]), "/api/missed-functions": (p_missed_functions, ["POST"]),
+        "/api/reimport": (p_reimport, ["GET", "POST"]), "/api/code-audit": (p_code_audit, ["GET", "POST"]),
+        "/api/recover-code": (p_recover_code, ["POST"]), "/api/missed-functions": (p_missed_functions, ["GET", "POST"]),
         "/api/donor-code": (donor_recovery, ["GET", "POST"]),
         "/api/data-regions": (p_data_regions, ["GET", "POST"]),
         "/api/agent-reviews": (g_agent_reviews, ["GET"]), "/api/agent-review": (p_agent_review, ["POST"]),

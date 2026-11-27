@@ -14,6 +14,9 @@ MANIFEST = 'runtime-zlib.json'
 
 
 def _payload(rom, row):
+    if row.get('codec') == 'chunked_mio0':
+        from .runtime_mio_chunks import decode
+        return decode(rom, row)
     if (type(row.get('offset')) is not int or type(row.get('size')) is not int
             or not 0 <= row['offset'] < row['offset']+row['size'] <= len(rom)):
         return None

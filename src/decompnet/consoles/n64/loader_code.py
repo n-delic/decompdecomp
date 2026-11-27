@@ -7,8 +7,48 @@ from bisect import bisect_right
 from collections import defaultdict
 
 from ...arch.mips import is_frame
-from ...arch.mips_code_recovery import called_extent, leaf_extent
+from ...arch.mips_code_recovery import MAX_BYTES, called_extent, leaf_extent
+from ...arch.mips_gaps import extent
 from ...arch.mips_references import references
+
+
+def _called_trapping_frame(image, start, end, vram, table_ranges):
+    """Validate a directly called assembly body whose stack adjustment traps on overflow.
+
+    A game's exception-vector installer uses ADDI for both stack adjustments;
+    the ordinary C-shaped frame reader deliberately accepts only ADDIU. Validate
+    its original flow, then reuse the same stack checks on a private copy with
+    just those two encodings changed. This establishes an extent, not C code.
+    """
+    if start + 8 > end or int.from_bytes(image[start:start + 4], 'big') >> 16 != 0x23bd:
+        return None
+    amount = 0x10000 - (int.from_bytes(image[start:start + 4], 'big') & 0xffff)
+    if not amount or amount % 8 or amount > 0x1000:
+        return None
+    end = min(end, start + MAX_BYTES)
+    info = extent(image, start, end, vram, 'big', table_ranges=table_ranges, max_steps=MAX_BYTES // 4)
+    if not info['direct_flow_closed'] or info['step_limit']:
+        return None
+    size = info['extent_bytes']
+    body = bytearray(image[start:start + size])
+    words = [int.from_bytes(body[at:at + 4], 'big') for at in range(0, size, 4)]
+    calls = [i for i, w in enumerate(words) if w >> 26 == 3 or w & 0xfc1f003f == 0x00000009]
+    if calls:
+        saved = {w & 0xffff for w in words[1:calls[0]]
+                 if w >> 16 == 0xafbf and (w & 0xffff) <= amount - 4 and not (w & 3)}
+        restored = {w & 0xffff for w in words[calls[-1] + 1:] if w >> 16 == 0x8fbf}
+        if not saved & restored:
+            return None
+    body[:4] = (0x27bd0000 | (0x10000 - amount)).to_bytes(4, 'big')
+    pop = (0x23bd0000 | amount).to_bytes(4, 'big')
+    replacements = 0
+    for at in range(4, size, 4):
+        if body[at:at + 4] == pop:
+            body[at:at + 4] = (0x27bd0000 | amount).to_bytes(4, 'big')
+            replacements += 1
+    if not replacements:
+        return None
+    return called_extent(bytes(body), 0, size, vram, asm_check=lambda _: None)
 
 
 def complete(image, segments, banks, taken=(), log=print, *, table_ranges=(), what='full verified loader ranges', entries=()):
@@ -34,7 +74,9 @@ def complete(image, segments, banks, taken=(), log=print, *, table_ranges=(), wh
             incoming[target].add(at)
             if kind=='call':calls.add(target)
             if kind in ('call','address'):entries.add(target)
-    for a,b,v in spans:read_calls(a,b,v)
+    for a,b,v in spans:
+        check()
+        read_calls(a,b,v)
     def independent(a,b,v):
         return any(v<t<v+b-a and any(not a<=at<b for at in sites) for t,sites in incoming.items())
     # Validate all frames, not just the first N hits or most common mappings.
@@ -79,6 +121,8 @@ def complete(image, segments, banks, taken=(), log=print, *, table_ranges=(), wh
             if at not in bodies:
                 size=(called_extent(image,at,gaps[i][1],target,table_ranges=table_ranges)
                       or leaf_extent(image,at,gaps[i][1],target,table_ranges=table_ranges))
+                if not size and target in calls:
+                    size=_called_trapping_frame(image,at,gaps[i][1],target,table_ranges)
                 if size:bodies[at]=(at,at+size,target)
         # Grow anchored runs in either direction. Padding is allowed only when
         # it is zero and no direct call names an interior instruction.

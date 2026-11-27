@@ -87,7 +87,7 @@ def test_gap_audit_uses_analysis_identity_before_reading_function_evidence(tmp_p
     net=SimpleNamespace(project_row=lambda _:proj,is_rom=lambda _:True,_rom=lambda _:(image,[]),
                         cfg=lambda _:cfg,console=lambda _:get('n64'),project_store=lambda _:store)
     monkeypatch.setattr(code_audit_reviews,'revision',lambda *a:'revision')
-    monkeypatch.setattr(code_audit_reviews,'record',lambda n,p,r,i:dict(r,image_sha1=sha(i)))
+    monkeypatch.setattr(code_audit_reviews,'record',lambda n,p,r,i,**kwargs:dict(r,image_sha1=sha(i)))
     assert rom_gap_audit.run(net,'game',log=lambda *_:None)['image_sha1'] == sha(image)
     assert len(read)==1
     cfg['rom']['analysis_sha1']=sha(b'wrong')

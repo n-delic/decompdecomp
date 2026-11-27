@@ -320,6 +320,15 @@ def test_export_moves_data_boundary_past_known_function_tail():
     assert _export_segments(config, [{'vram': 0x80000010, 'size': 8}])['segments'] == config['segments']
 
 
+def test_export_split_uses_its_generated_symbol_file():
+    from decompnet.rom.export import _export_segments
+
+    config = {'options': {'symbol_addrs_path': ['custom/game-symbols.txt']}, 'segments': [[0]]}
+    result = _export_segments(config, [])
+    assert result['options']['symbol_addrs_path'] == ['symbol_addrs.txt']
+    assert config['options']['symbol_addrs_path'] == ['custom/game-symbols.txt']
+
+
 def test_export_refuses_to_consume_an_entire_data_segment():
     from decompnet.rom.export import ExportError, _export_segments
 
@@ -572,7 +581,7 @@ def test_export_preserves_bss_extent_when_text_owns_its_labels(tmp_path):
 
 
 def test_export_symbols_use_rom_scopes_for_overlapping_banks():
-    from decompnet.rom.export import _symbol_lines
+    from decompnet.rom.export import ExportError, _symbol_lines
 
     class Symbols:
         by_name = {}
@@ -590,6 +599,29 @@ def test_export_symbols_use_rom_scopes_for_overlapping_banks():
         'first = 0x80001000; // type:func size:0x8 rom:0x100 segment:bank_a',
         'second = 0x80001000; // type:func size:0xC rom:0x200 segment:bank_b',
     ]
+    banks[0].pop('exclusive_ram_id')
+    with pytest.raises(ExportError, match='first.*ROM offset 0x100.*Review its ROM-to-memory mapping'):
+        _symbol_lines(Network(),{'id':1},rows,segments=banks)
+
+
+def test_export_uses_the_current_function_address_when_a_stale_symbol_has_the_same_name():
+    from types import SimpleNamespace
+
+    from decompnet.rom.export import _symbol_lines
+
+    stale = SimpleNamespace(name='moved_function', address=0x80002000)
+    other = SimpleNamespace(name='other_data', address=0x80003000)
+    class Symbols:
+        by_name = {stale.name: stale, other.name: other}
+        def name_at(self, address):
+            return (next(s.name for s in self.by_name.values() if s.address == address),)
+    class Network:
+        def symbols(self, project):
+            return Symbols()
+
+    rows = [dict(name='moved_function', vram=0x80001000, rom_offset=0x100, size=8)]
+    assert _symbol_lines(Network(), {'id': 1}, rows) == [
+        'moved_function = 0x80001000; // type:func size:0x8', 'other_data = 0x80003000;']
 
 
 def test_export_gap_objects_are_scoped_to_their_rom_bank(tmp_path):
@@ -697,6 +729,23 @@ def test_export_removes_foreign_bank_labels_only(tmp_path):
                                           dict(name='real', rom_offset=0x204)])
     assert source.read_text() == ('/* 000200 80001000 00000000 */ .word 0\n'
                                   'nonmatching real\nglabel real\n/* 000204 80001004 03E00008 */ jr $ra\n')
+
+
+def test_export_keeps_scoped_local_labels_only_in_their_rom_bank(tmp_path):
+    from decompnet.rom.export import remove_foreign_bank_labels
+
+    folder = tmp_path/'asm'/'nonmatchings'
+    folder.mkdir(parents=True)
+    source = folder/'bank.s'
+    source.write_text('nonmatching .L80001004_code_80001000\nalabel .L80001004_code_80001000\n'
+                      '/* 000204 80001004 00000000 */ .word 0\n'
+                      'nonmatching .L80001004_code_80001000\nalabel .L80001004_code_80001000\n'
+                      '/* 000104 80001004 00000000 */ .word 0\n')
+    segments = [dict(type='code', name='code_80001000', start=0x100, end=0x110, vram=0x80001000)]
+    remove_foreign_bank_labels(tmp_path, [], segments)
+    assert source.read_text() == ('/* 000204 80001004 00000000 */ .word 0\n'
+                                  'nonmatching .L80001004_code_80001000\nalabel .L80001004_code_80001000\n'
+                                  '/* 000104 80001004 00000000 */ .word 0\n')
 
 
 def test_export_removes_shadowed_data_labels_but_keeps_original_bytes(tmp_path):

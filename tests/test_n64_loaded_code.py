@@ -135,3 +135,69 @@ def test_runtime_moved_segment_exposes_its_byte_verified_range(tmp_path, monkeyp
     (start,end,address),=found['moved_ranges']
     assert start<=0x3000<0x3000+len(overlay)<=end
     assert address+0x3000-start==0x80201000
+
+
+def test_directly_called_ordered_trap_table_is_found_in_verified_ram(tmp_path, monkeypatch):
+    rom = _rom()
+    main = _words(FRAME, _jal(0x80201020), 0, JR_RA, 0x27BD0018)
+    table = b''.join(_words(8, 0x24080000 | i) for i in range(24))
+    rom[0x1000:0x1000 + len(main)] = main
+    rom[0x3000:0x3000 + len(table)] = table
+    ram = bytearray(0x400000)
+    ram[0x201000:0x201000 + len(table)] = table
+    _setup(tmp_path, monkeypatch, bytes(ram))
+    (tmp_path / 'rom.z64').write_bytes(rom)
+    found = loaded_code.find(tmp_path / 'rom.z64', bytes(rom),
+                             [(0x1000, 0x1000 + len(main), 0x80000400)], log=lambda *_: None)
+    assert found['segments'] == [(0x3000, 0x3000 + len(table), 0x80201000)]
+    symbols = loaded_code.trap_symbols(bytes(rom), found['segments'])
+    assert len(symbols) == 24
+    assert symbols[0] == 'func_80201000 = 0x80201000; // type:func size:0x8'
+    assert symbols[-1].startswith('func_802010B8 =')
+
+
+def test_trap_table_requires_order_and_a_call_into_an_entry():
+    table = b''.join(_words(8, 0x24080000 | i) for i in range(12))
+    assert loaded_code._called_trap_table(table, 0, len(table), []) is None
+    assert loaded_code._called_trap_table(table, 0, len(table), [4]) is None
+    assert loaded_code._called_trap_table(table[:56], 0, 56, [0]) is None
+    broken = table[:32] + _words(8, 0x24080001) + table[40:]
+    assert loaded_code._called_trap_table(broken, 0, len(broken), [0]) is None
+    assert loaded_code.trap_symbols(broken, [(0, len(broken), 0x80201000)]) == []
+
+
+def test_trap_table_mapping_rejects_duplicate_or_different_rom_bytes():
+    table = b''.join(_words(8, 0x24080000 | i) for i in range(24))
+    dump = bytearray(0x400000)
+    dump[0x201000:0x201000 + len(table)] = table
+    rom = bytearray(0x8000)
+    rom[0x3000:0x3000 + len(table)] = table
+    rom[0x5000:0x5000 + len(table)] = table
+    assert loaded_code._region(bytes(rom), bytes(dump), 0x80201000) is None
+    rom[0x5000:0x5000 + len(table)] = bytes(len(table))
+    rom[0x3000] = 1
+    assert loaded_code._region(bytes(rom), bytes(dump), 0x80201000) is None
+
+
+def test_repeated_full_bodies_at_a_coherent_other_mapping_defer_the_bank():
+    rom = bytearray(0x2000)
+    first = bytes(range(32))
+    second = bytes(range(32, 64))
+    rom[0x1000:0x1020] = first
+    rom[0x1040:0x1060] = second
+    ram = bytearray(0x4000)
+    ram[0x2000:0x2020] = first
+    ram[0x2040:0x2060] = second
+    bank = (0x1000, 0x1100, 0x80001000)
+    bodies = [(0x1000, 0x1020, 0x80001000), (0x1040, 0x1060, 0x80001040)]
+    assert loaded_code.moved_banks(rom, [bank], bodies, [], [bytes(ram)] * 2) == [
+        (bank, 0x80001000, 2)]
+    assert not loaded_code.moved_banks(rom, [bank], bodies[:1], bodies[:1], [bytes(ram)] * 2)
+    assert not loaded_code.moved_banks(rom, [bank], bodies, [], [bytes(ram)])
+    ram[0x1000:0x1020] = first
+    assert not loaded_code.moved_banks(rom, [bank], bodies, [], [bytes(ram)] * 2)
+    third = bytes(range(64, 96))
+    rom[0x1080:0x10a0] = third
+    ram[0x2080:0x20a0] = third
+    bodies.append((0x1080, 0x10a0, 0x80001080))
+    assert loaded_code.moved_banks(rom, [bank], bodies, [], [bytes(ram)] * 2) == [(bank, 0x80001000, 2)]

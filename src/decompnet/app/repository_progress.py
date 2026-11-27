@@ -37,7 +37,7 @@ def owned(manifest, folder=None):
             or any(not isinstance(name, str) for name in manifest['headers'].values())):
         raise NetworkError('Fix the saved progress manifest before committing its files.')
     paths = {saves.MANIFEST, 'README.md', 'decompdecomp-progress.svg'}
-    if manifest.get('format') == saves.FORMAT:  # (an older save holds them inside its manifest)
+    if manifest.get('format') in saves.SPLIT_FORMATS:  # (format 1 holds them inside its manifest)
         paths.update(saves.SIDE_FILES.values())
     paths.update(('src/' if 'matched_by' in value else 'best/') + saves._source_file(name)
                  for name, value in manifest['functions'].items())
@@ -52,7 +52,7 @@ def committed_manifest_text(root, manifest_path, rev='HEAD'):
     """A commit's joined progress manifest: a format 2 save's notes and verification records are files beside it."""
     text = repository_git.git(root, 'show', f'{rev}:{manifest_path}')
     try:
-        split = json.loads(text).get('format') == saves.FORMAT
+        split = json.loads(text).get('format') in saves.SPLIT_FORMATS
     except (ValueError, AttributeError):
         split = False
     if not split:

@@ -268,6 +268,8 @@ class RoomMixin:
                 continue
             owners = [r for r in local.values() if r["vram"] < f["vram"] < r["vram"] + r["size"]]
             if len(owners) != 1 or owners[0]["status"] == "matched":
+                # A room layout alone does not carry the image fingerprint and verified mapping needed to
+                # recreate a newly discovered body outside a local function (ROADMAP: recovered room entries).
                 continue
             owner = owners[0]
             try:

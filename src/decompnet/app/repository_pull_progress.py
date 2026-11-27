@@ -237,7 +237,7 @@ def _merged_metadata(root, prefix, entries, conflicts, manifests, functions, win
                     revision=max(side.get('revision', 0) for side in manifests) + 1,
                     notes=_merge_notes(*(side.get('notes', []) for side in manifests)),
                     verification=_merge_proof(manifests, winners))
-    if manifest.get('format') != saves.FORMAT:
+    if manifest.get('format') not in saves.SPLIT_FORMATS:
         # Format 1 keeps notes and verification in the manifest itself.
         blobs = {prefix + saves.MANIFEST: (json.dumps(manifest, indent=1) + '\n').encode()}
     else:

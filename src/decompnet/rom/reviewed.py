@@ -16,7 +16,10 @@ def extend_config(config, functions):
         owner=next((s for s in parents if s.get('type')=='code' and 'vram' in s and s['end'] is not None
                     and s['vram']<=fn['vram']<s['vram']+s['end']-s['start']
                     and (rom is None or rom == s['start'] + fn['vram'] - s['vram'])),None)
-        if owner is None:raise ExportError('The reviewed function has no existing code parent.')
+        if owner is None:
+            name = dict(fn).get('name') or f"function at 0x{fn['vram']:X}"
+            where = f' at ROM offset 0x{rom:X}' if isinstance(rom, int) else ''
+            raise ExportError(f'{name}{where} has no matching code segment. Review its ROM-to-memory mapping.')
         end=owner['start']+fn['vram']-owner['vram']+fn['size']
         if end<=owner['end']:continue
         raw=result['segments'];i=next(i for i,s in enumerate(raw) if isinstance(s,dict) and s.get('start')==owner['start'])

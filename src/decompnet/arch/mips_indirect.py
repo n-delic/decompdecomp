@@ -374,10 +374,11 @@ def calls(image,functions,order):
     return trace(image,functions,order,MAX_WORDS,MAX_CALLS)
 
 
-def consumers(image,functions,rows,order,ranges,mappings,unresolved=None):
+def consumers(image,functions,rows,order,ranges,mappings,unresolved=None,*,check=lambda:None):
     traced,limited=calls(image,functions,order)
     linked=set()
     for row in rows:
+        check()
         found=[]
         for ref in row['pointer_references']:
             cells={(s['vram']+ref['rom_offset']-s['rom_start'],True) for s in ranges if s['rom_start']<=ref['rom_offset']<s['rom_end']}

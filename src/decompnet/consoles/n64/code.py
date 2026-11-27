@@ -22,6 +22,7 @@ Majora's Mask's). Such code is unpacked and appended to a working copy of the RO
 from __future__ import annotations
 
 import collections
+import hashlib
 import json
 import re
 import struct
@@ -29,7 +30,7 @@ import zlib
 from pathlib import Path
 
 from ...arch.mips import JR_RA, SCAN_BLOCK, code_before, is_frame, jal_targets, place
-from ...rom import split
+from ...rom import RomError, split
 
 BLOCK = SCAN_BLOCK
 # where code can run: KSEG0 (RAM), or mapped through the TLB (GoldenEye's game code runs at 0x7F000000). A jal keeps
@@ -288,6 +289,8 @@ def complete_gaps(rom, taken, found, declared=(), entries=(), log=print):
     game has been run for what it loads (loaded_code): what that finds by following calls stays as it was."""
     from .loader_code import complete as loaded_code
 
+    check = getattr(log, 'check_cancel', lambda: None)
+    check()
     spans=sorted(list(taken)+list(found))
     banks=mapped_gaps(spans)
     # A gap between code on two mappings (two overlays side by side) has no address the code on both sides agrees
@@ -296,14 +299,14 @@ def complete_gaps(rom, taken, found, declared=(), entries=(), log=print):
     for (s0,e0,v0),(s1,_,v1) in zip(spans,spans[1:]):
         if e0<s1 and v0-s0!=v1-s1 and s1-e0<=0x10000 and any(v0+e0-s0<=a<v0+s1-s0 for a in entries):
             banks.append((e0,s1,v0+e0-s0))
-    slack=aligned_gaps(rom,spans)
+    slack=aligned_gaps(rom,spans,check=check)
     banks+=slack
     table=mapped_data(spans,declared,len(rom))+[dict(rom_start=a,rom_end=b,vram=v) for a,b,v in slack]
     return loaded_code(rom,list(found),sorted(banks),taken,log,table_ranges=table,
                        what='gaps between code on one mapping',entries=entries)
 
 
-def aligned_gaps(rom,spans,reach=0x100):
+def aligned_gaps(rom,spans,reach=0x100,*,check=lambda:None):
     """(rom_start, rom_end, vram) of each gap between two code ranges on different mappings whose first bytes the
     code before it places a few bytes later than its own mapping does: an overlay's next function starts on an
     alignment boundary (16 bytes), so the bytes after its last listed function sit that much further on. Counted
@@ -317,9 +320,11 @@ def aligned_gaps(rom,spans,reach=0x100):
     if not gaps:return []
     targets=set()
     for a,b,v in spans:
+        check()
         targets.update(t for t,_,kind in references(rom,a,b,v) if kind=='call')
     out=[]
     for lo,hi,vram in gaps:
+        check()
         best=None
         for d in range(0,reach,4):
             hits={t for t in targets if vram+d<=t<vram+d+hi-lo
@@ -728,6 +733,14 @@ def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_rep
         import copy
         unscoped_cfg = copy.deepcopy(cfg)
     insert_segments(config, cfg, found, len(rom))
+    # The runtime scan proved both the mapping and a called ordered trap table. Splat otherwise emits only
+    # the entries it sees called and silently leaves the rest as data.
+    if loaded.get('segments'):
+        from .loaded_code import trap_symbols
+
+        symbols = trap_symbols(rom, set(loaded['segments']) & set(found))
+        if symbols:
+            split._add_symbols(workdir / 'symbol_addrs.txt', symbols)
     if scoped:
         cfg = yaml.safe_load(config.read_text(encoding='utf-8'))
         inferred_overlays.scope(cfg, found, scoped)
@@ -815,11 +828,40 @@ def bridge_loaded_prologues(image, found, loaded, taken=(), log=print):
     return result
 
 
-def insert_segments(config: Path, cfg: dict, found, size: int) -> None:
+def insert_segments(config: Path, cfg: dict, found, size: int, *, scopes=None) -> None:
     """Write `found` (rom_start, rom_end, vram) into splat's config `cfg` as code segments of their own, each
     followed by raw bytes up to the next segment, and save it to `config`. Used by the import, and by
     missed_functions on a project that already exists."""
     import yaml
+
+    # Several import paths also discover code in a raw child of a code parent. Keep it in that
+    # parent: a top-level insertion would cut off the parent's later children and lose their mappings.
+    parents = split.segments_from_config_data(cfg)
+    children, outside = [], []
+    for body in found:
+        lo, hi, _ = body
+        overlaps = [s for s in parents if s.rom_start < hi and lo < s.rom_end]
+        if overlaps:
+            parent = overlaps[0]
+            if len(overlaps) == 1 and parent.rom_start <= lo < hi <= parent.rom_end and _cut_ok(cfg, body):
+                children.append(body)
+                continue
+            if len(overlaps) == 1 and _replaceable_parent_tail(cfg, body):
+                outside.append(body)
+                continue
+            raw = next((s for s in cfg.get('segments', []) if isinstance(s, dict)
+                        and s.get('start') == parent.rom_start and s.get('type') == 'code'), {})
+            later = any(isinstance(s, list) and s and s[0] >= lo for s in raw.get('subsegments', []))
+            if len(overlaps) == 1 and parent.rom_start < lo < parent.rom_end < hi and not later:
+                # Import can replace a guessed tail when no configured child would be lost.
+                outside.append(body)
+            else:
+                raise RomError('Recovered code crosses an existing bank or has a different mapping. Review it before importing.')
+        else:
+            outside.append(body)
+    if children:
+        _cut_inside(cfg, sorted(children))
+    found = outside
 
     def start_of(seg):
         return seg[0] if isinstance(seg, list) else seg.get("start")
@@ -833,7 +875,9 @@ def insert_segments(config: Path, cfg: dict, found, size: int) -> None:
                                        for sub in raw.get("subsegments", [])):
             bss_ends[seg.rom_start] = seg.vram + seg.rom_end - seg.rom_start + raw["bss_size"]
 
+    scopes = scopes or {}
     starts = {st for st, _, _ in found}
+    names = {s.get('name') for s in cfg['segments'] if isinstance(s, dict) and s.get('name')}
     # A discovered code span can straddle an old bin marker created by splat.
     # Keeping it would cut the verified span and truncate an otherwise complete function.
     segs = [s for s in cfg["segments"] if not (isinstance(s, dict) and s.get("type") == "bin"
@@ -842,7 +886,16 @@ def insert_segments(config: Path, cfg: dict, found, size: int) -> None:
     for st, en, vram in found:
         duplicate = sum(base == vram for _, _, base in found) > 1
         name = f"code_{vram:08X}_{st:X}" if duplicate else f"code_{vram:08X}"
-        segs.append({"name": name, "type": "code", "start": st, "vram": vram, "subsegments": [[st, "c", name]]})
+        if name in names:
+            name = f"code_{vram:08X}_{st:X}"
+        if name in names:
+            raise ValueError(f"A code segment named {name} already exists")
+        names.add(name)
+        segment = {"name": name, "type": "code", "start": st, "vram": vram, "subsegments": [[st, "c", name]]}
+        if scope := scopes.get(st):
+            segment.update(exclusive_ram_id=scope, symbol_name_format=f'$VRAM_{name}',
+                           symbol_name_format_no_rom=f'$VRAM_{name}')
+        segs.append(segment)
         if en < size and en not in starts and not any(start_of(s) == en for s in segs if not isinstance(s, list)):
             segs.append({"type": "bin", "start": en})
     segs.sort(key=lambda s: start_of(s) if start_of(s) is not None else -1)
@@ -856,28 +909,256 @@ def insert_segments(config: Path, cfg: dict, found, size: int) -> None:
     config.write_text(yaml.safe_dump(cfg, sort_keys=False, default_flow_style=None), encoding="utf-8")
 
 
-def missed_functions(config: Path, rom: bytes, log=print, known_functions=()) -> list[tuple[int, int, int]]:
+def missed_functions(config: Path, rom: bytes, log=print, known_functions=(), *, prepare_split=None,
+                     checkpoint=None, expected_config=None) -> list[tuple[int, int, int]]:
     """In a project that exists, the functions its split left as data that an import would now find (complete_gaps,
     with the addresses the game was seen running in the project's folder): written into splat's `config` as code
     segments, as an import writes them, and returned as (rom_start, rom_end, vram), one function each. Lets a
     project gain them without being imported again, which would reopen its work."""
     import yaml
 
+    initial_text = config.read_text(encoding='utf-8')
+    if expected_config is not None and initial_text != expected_config:
+        raise RomError('The split configuration changed before the search began. Retry with the current project.')
     taken = split.code_ranges(config)
     if not taken:
         return []
     known = split.segments_from_config(config)
     declared = tuple((s.rom_start, s.rom_end, s.vram) for s in known)
     found = complete_gaps(rom, taken, [], declared, runtime_entries(config.parent), log=log)
-    new = sorted({r for r in found if not any(a < r[1] and r[0] < b for a, b, _ in taken)})
-    cfg = yaml.safe_load(config.read_text(encoding="utf-8"))
+    cfg = yaml.safe_load(initial_text)
     inside = _bodies_inside_code(cfg, rom, taken, known_functions, log) if known_functions else []
-    if new:
-        insert_segments(config, cfg, new, len(rom))
-        cfg = yaml.safe_load(config.read_text(encoding="utf-8"))
-    if inside and _cut_inside(cfg, inside):
-        config.write_text(yaml.safe_dump(cfg, sort_keys=False, default_flow_style=None), encoding="utf-8")
-    return sorted(set(new) | {b for b in inside if _cut_ok(cfg, b)})
+    # Existing projects can predate the runtime import scan. A mapped trap table contains independently
+    # bounded entries even when most are never called during the sample run. Other runtime code ranges
+    # need function-boundary analysis before they can be added here.
+    from . import emulator, loaded_code, runtime_scoped
+
+    image = config.parent / (cfg.get('options', {}).get('target_path') or 'rom.z64')
+    samples = []
+    if emulator.installed() and image.is_file() and image.read_bytes() == rom:
+        log('Running the game to check for directly called code missing from its mappings.')
+        cancel = getattr(log, 'cancel_event', None)
+        reviews = []
+
+        def inspect(dumps):
+            reviews.extend(loaded_code.moved_banks(rom, declared, found + inside, known_functions, dumps,
+                                                   getattr(log, 'check_cancel', lambda: None)))
+            if any(s.exclusive_ram_id for s in known):
+                samples.append(dumps)
+
+        observed = loaded_code.find(image, rom, taken, found, log=log,
+                                    stop=cancel.is_set if cancel is not None else lambda: False, inspect_dumps=inspect)
+        getattr(log, 'check_cancel', lambda: None)()
+        if any(0x80400000 <= vram < 0x80800000 for _, _, vram in found + inside):
+            log('Checking the proposed high-memory code with an Expansion Pak as well.')
+            loaded_code.find(image, rom, taken, found, log=log,
+                             stop=cancel.is_set if cancel is not None else lambda: False, inspect_dumps=inspect,
+                             expansion_pak=True, vis=1800, dumps_at=(*loaded_code.DUMPS, 1500, 1790))
+            getattr(log, 'check_cancel', lambda: None)()
+        reviews = sorted(set(reviews))
+        for (start, end, address), shift, count in reviews:
+            log(f'Deferred code in ROM {start:#x}–{end:#x}: {count} bodies were also observed at '
+                f'{start + shift:#x}, while its existing mapping is {address:#x}. Review the bank before adding them.')
+        if reviews:
+            def safe(body):
+                return not any(start <= body[0] < body[1] <= end and address + body[0] - start == body[2]
+                               for (start, end, address), _, _ in reviews)
+            found = [body for body in found if safe(body)]
+            inside = [body for body in inside if safe(body)]
+        for start, end, vram in observed['segments']:
+            if loaded_code.trap_symbols(rom, [(start, end, vram)]):
+                found.extend((at, at + 8, vram + at - start) for at in range(start, end, 8))
+    new = sorted({r for r in found if not any(a < r[1] and r[0] < b for a, b, _ in taken)})
+    # A raw child of a code parent is absent from code_ranges, but it is still inside that parent.
+    # Inserting another top-level segment there truncates the parent's later children and breaks its split.
+    children = [body for body in new if _owner(cfg, body[0], body[1]) is not None
+                and not _replaceable_parent_tail(cfg, body)]
+    cuttable = [body for body in children if _cut_ok(cfg, body)]
+    rejected = len(children) - len(cuttable)
+    if rejected:
+        log(f'Deferred {rejected} candidate bodies whose parent mapping or raw boundary needs review.')
+    inside = sorted(set(inside + cuttable))
+    new = [body for body in new if body not in children]
+    ambiguous = [body for body in new if any(
+                     s.exclusive_ram_id and s.vram - s.rom_start == body[2] - body[0] or
+                     s.vram - s.rom_start != body[2] - body[0] and
+                     s.vram < body[2] + body[1] - body[0] and body[2] < s.vram + s.rom_end - s.rom_start
+                     for s in known) and not runtime_scoped.inherited_scope(body, known)]
+    if ambiguous:
+        log(f'Deferred {len(ambiguous)} candidate bodies whose overlay scope is ambiguous.')
+        new = [body for body in new if body not in ambiguous]
+    inherited = [dict(rom_start=lo, rom_end=hi, vram=vram, scope=scope)
+                 for lo, hi, vram in new if (scope := runtime_scoped.inherited_scope((lo, hi, vram), known))]
+    scoped = runtime_scoped.closure(rom, known, known_functions, samples, reserved=new + inside,
+                                    check=getattr(log, 'check_cancel', lambda: None)) if samples else []
+    bodies = [(e['rom_start'], e['rom_end'], e['vram']) for e in scoped]
+    candidates = [dict(rom_start=lo, rom_end=hi, vram=vram) for lo, hi, vram in sorted(set(new + inside + bodies))]
+    if candidates:
+        import tempfile
+
+        from . import runtime_staging
+
+        log(f'Checking {len(candidates)} recovered bodies in a temporary split.')
+        with tempfile.TemporaryDirectory(prefix='decomp-overlay-config-') as tmp:
+            staged = Path(tmp) / 'game.yaml'
+            scopes = {e['rom_start']: e['scope'] for e in inherited + scoped}
+            original = initial_text
+            new_bodies = set(new + bodies)
+            inside_bodies = set(inside)
+            baseline_failed = False
+            baseline_cache = {}
+            verified_anchors = {}
+
+            def verify(selected, *, quiet=False):
+                nonlocal baseline_failed
+                baseline_failed = False
+                if config.read_text(encoding='utf-8') != original:
+                    raise RomError('The split configuration changed during the search. Retry with the current project.')
+
+                def failed(before):
+                    nonlocal baseline_failed
+                    baseline_failed = before
+
+                selected = sorted(selected, key=lambda item: (item['rom_start'], item['vram']))
+                chosen = {(e['rom_start'], e['rom_end'], e['vram']) for e in selected}
+                staged.write_text(original, encoding='utf-8')
+                proposed = yaml.safe_load(original)
+                if inserts := sorted(new_bodies & chosen):
+                    insert_segments(staged, proposed, inserts, len(rom), scopes=scopes)
+                    proposed = yaml.safe_load(staged.read_text(encoding='utf-8'))
+                if cuts := sorted(inside_bodies & chosen):
+                    _cut_inside(proposed, cuts)
+                anchors, attempted, conflicts, errors = [], set(), [], []
+
+                def check_split():
+                    conflicts.clear()
+                    return runtime_staging.verify(config, rom, proposed, selected, log, prepare=prepare_split,
+                                                  quiet=True, on_failure=failed, cache=baseline_cache,
+                                                  on_conflict=conflicts.extend, on_error=errors.append)
+
+                okay = check_split()
+                while not okay and conflicts and not baseline_failed:
+                    # A new file boundary can make Splat read later existing functions as one data block.
+                    # Anchor the first affected entry per source unit, then verify every old and new body again.
+                    first = {}
+                    for row in sorted(conflicts, key=lambda item: item['rom_offset']):
+                        body = (row['rom_offset'], row['rom_offset'] + row['size'], row['vram'])
+                        owner = _owner(proposed, body[0], body[1])
+                        if body in attempted or owner is None or not _cut_ok(proposed, body):
+                            continue
+                        subs = [s for s in owner.get('subsegments', []) if isinstance(s, list) and len(s) >= 2
+                                and s[0] <= body[0]]
+                        if not subs:
+                            continue
+                        unit = max(subs, key=lambda sub: sub[0])[0]
+                        first.setdefault((owner['start'], unit), body)
+                    changed = False
+                    for body in first.values():
+                        attempted.add(body)
+                        if _cut_inside(proposed, [body]):
+                            anchors.append(body)
+                            changed = True
+                    if not changed:
+                        break
+                    okay = check_split()
+                if okay:
+                    verified_anchors[tuple(sorted(chosen))] = tuple(anchors)
+                elif not quiet:
+                    detail = errors[-1] if errors else 'the staged split could not be verified'
+                    log(f'Recovered candidates remain for review: {detail}.')
+                return okay
+
+            selected = candidates
+            if not verify(candidates):
+                # One ambiguous body must not block every other bank. Check all groups and subdivide a
+                # failed one down to individual bodies; each accepted set is checked together before use.
+                if baseline_failed:
+                    selected, deferred = [], candidates
+                else:
+                    fingerprint = hashlib.sha256(rom)
+                    fingerprint.update(hashlib.sha256(original.encode('utf-8')).digest())
+                    inputs = json.dumps({'known': sorted(known_functions, key=lambda item: item[0]),
+                                         'candidates': candidates}, sort_keys=True).encode('utf-8')
+                    fingerprint.update(hashlib.sha256(inputs).digest())
+                    fingerprint_key = fingerprint.hexdigest()
+                    by_identity = {(e['rom_start'], e['rom_end'], e['vram']): e for e in candidates}
+                    cached, cached_ids = [], set()
+                    if checkpoint:
+                        saved = checkpoint['load'](fingerprint_key)
+                        if isinstance(saved, list):
+                            for item in saved:
+                                if isinstance(item, list) and len(item) == 3 and all(type(value) is int for value in item):
+                                    identity = tuple(item)
+                                    if identity in by_identity and identity not in cached_ids:
+                                        cached_ids.add(identity)
+                                        cached.append(by_identity[identity])
+                    if cached and not verify(cached, quiet=True):
+                        if baseline_failed:
+                            raise RomError('The original split could no longer be checked. Retry the search.')
+                        cached = []
+                        cached_ids = set()
+                    if cached:
+                        log(f'Resuming with {len(cached)} previously checked bodies, verified against the current split.')
+                    groups = {}
+                    for item in candidates:
+                        body = (item['rom_start'], item['rom_end'], item['vram'])
+                        if body in cached_ids:
+                            continue
+                        owner = _owner(cfg, body[0], body[1]) if body in inside_bodies else None
+                        key = ('inside', owner['start']) if owner else ('new', body[2] - body[0], scopes.get(body[0], ''))
+                        groups.setdefault(key, []).append(item)
+                    log('Checking the proposed banks separately to retain every safe recovery.')
+
+                    def verify_group(group):
+                        okay = verify(group, quiet=True)
+                        if baseline_failed:
+                            raise RomError('The original split could no longer be checked. Retry the search.')
+                        return okay
+
+                    def save_checked(items):
+                        if checkpoint:
+                            checkpoint['save'](fingerprint_key, [[e['rom_start'], e['rom_end'], e['vram']] for e in items])
+
+                    selected, deferred = runtime_staging.isolate(list(groups.values()), verify_group, log,
+                                                                  initial=cached, checkpoint=save_checked)
+                if deferred:
+                    log(f'{len(deferred)} candidate bod{"y" if len(deferred) == 1 else "ies"} could not be added safely '
+                        f'and remain{"s" if len(deferred) == 1 else ""} for review.')
+            chosen = {(e['rom_start'], e['rom_end'], e['vram']) for e in selected}
+            anchors = verified_anchors.get(tuple(sorted(chosen)), ())
+            new = sorted(new_bodies & chosen)
+            inside = sorted(inside_bodies & chosen)
+            if checkpoint and not baseline_failed:
+                checkpoint['finished'] = True
+    else:
+        scopes = {}
+        anchors = ()
+        if checkpoint:
+            checkpoint['finished'] = True
+    if not new and not inside:
+        return []
+    import tempfile
+
+    # Build the complete configuration away from the project. A cancelled scan or a concurrent edit must
+    # not leave half its cuts behind or overwrite a newer configuration.
+    with tempfile.TemporaryDirectory(prefix='decomp-missed-config-') as tmp:
+        staged = Path(tmp) / 'game.yaml'
+        staged.write_text(initial_text, encoding='utf-8')
+        cfg = yaml.safe_load(initial_text)
+        if new:
+            insert_segments(staged, cfg, new, len(rom), scopes=scopes)
+            cfg = yaml.safe_load(staged.read_text(encoding='utf-8'))
+        if inside:
+            _cut_inside(cfg, inside)
+        for anchor in anchors:
+            _cut_inside(cfg, [anchor])
+        result = sorted(set(new) | {b for b in inside if _cut_ok(cfg, b)})
+        text = yaml.safe_dump(cfg, sort_keys=False, default_flow_style=None)
+    getattr(log, 'check_cancel', lambda: None)()
+    if config.read_text(encoding='utf-8') != initial_text:
+        raise RomError('The split configuration changed during the search. Retry with the current project.')
+    split.write_config_atomic(config, text)
+    return result
 
 
 def _bodies_inside_code(cfg, rom, taken, known, log):
@@ -905,25 +1186,75 @@ def _owner(cfg, lo, hi):
 
 
 def _cut_ok(cfg, body):
-    return _owner(cfg, body[0], body[1]) is not None
+    lo, hi, vram = body
+    seg = _owner(cfg, lo, hi)
+    if (seg is None or seg.get('type') != 'code' or not isinstance(seg.get('vram'), int)
+            or seg['vram'] + lo - seg['start'] != vram):
+        return False
+    subs = [s for s in seg.get('subsegments', []) if isinstance(s, list) and len(s) >= 2]
+    containing = max((s for s in subs if s[0] <= lo), key=lambda s: s[0], default=None)
+    return (containing is not None and containing[1] in ('c', 'bin') and
+            not any(lo < s[0] < hi and s[1] != containing[1] for s in subs))
+
+
+def _replaceable_parent_tail(cfg, body):
+    """A guessed data tail may be split when it has no later ROM-backed children to lose."""
+    lo, hi, vram = body
+    seg = _owner(cfg, lo, hi)
+    if (seg is None or seg.get('type') != 'code' or not isinstance(seg.get('vram'), int)
+            or seg['vram'] + lo - seg['start'] != vram):
+        return False
+    subs = [s for s in seg.get('subsegments', []) if isinstance(s, list) and len(s) >= 2]
+    source = max((s for s in subs if s[0] <= lo), key=lambda s: s[0], default=None)
+    return (source is not None and source[1] in ('data', '.data', 'rodata', '.rodata')
+            and not any(s[0] >= lo for s in subs))
 
 
 def _cut_inside(cfg, bodies):
     """Give each body its own C subsegment (cuts at its start and end) in the code segment that holds it."""
     changed = False
-    for lo, hi, _ in bodies:
+    # Pick the original parent, not a subsegment created for an earlier body. Repeatedly appending to the
+    # newest name makes a long run of recovered functions exceed the filesystem's filename limit.
+    originals = {id(seg): [list(s) for s in seg.get('subsegments', []) if isinstance(s, list) and len(s) >= 2]
+                 for seg in cfg.get('segments', []) if isinstance(seg, dict)}
+    ordered = [s for s in cfg.get('segments', [])
+               if (isinstance(s, list) and s) or (isinstance(s, dict) and 'start' in s)]
+    ordered.sort(key=lambda s: s[0] if isinstance(s, list) else s['start'])
+    ends = {id(seg): (after[0] if isinstance(after, list) else after['start'])
+            for seg, after in zip(ordered, ordered[1:]) if isinstance(seg, dict)}
+    for lo, hi, vram in bodies:
+        if not _cut_ok(cfg, (lo, hi, vram)):
+            continue
         seg = _owner(cfg, lo, hi)
         if seg is None:
             continue
         subs = seg["subsegments"]
         existing = {s[0] for s in subs if isinstance(s, list) and s}
-        parent = max((s for s in subs if isinstance(s, list) and len(s) > 2 and s[1] == "c" and s[0] <= lo),
+        source = max((s for s in originals[id(seg)] if s[0] <= lo), key=lambda s: s[0], default=None)
+        parent = max((s for s in originals[id(seg)] if s[0] <= lo and s[1] == 'c' and len(s) > 2),
                      key=lambda s: s[0], default=None)
-        if parent is None:
+        if source is None:
             continue
         for at in (lo, hi):
-            if at not in existing:
-                subs.append([at, "c", f"{parent[2]}_{at:06X}"])
+            if at == hi and at == ends.get(id(seg)):
+                continue  # The next parent already closes this segment; a child there is out of bounds.
+            previous = next((s for s in subs if isinstance(s, list) and s and s[0] == at), None)
+            if previous is None or at == lo and previous[1] == 'bin':
+                prefix = str(parent[2] if parent else seg.get('name', 'code'))
+                directory, _, basename = prefix.rpartition('/')
+                basename = basename[:180]
+                stem = f'{basename}_{at:06X}'
+                name = f'{directory}/{stem}' if directory else stem
+                used = {s[2] for s in subs if isinstance(s, list) and len(s) > 2 and isinstance(s[2], str)}
+                suffix = 1
+                while name in used:
+                    name = f'{directory}/{stem}_{suffix}' if directory else f'{stem}_{suffix}'
+                    suffix += 1
+                kind = source[1] if at == hi else 'c'
+                if previous is None:
+                    subs.append([at, kind, name])
+                else:
+                    previous[1:] = [kind, name]
                 existing.add(at)
                 changed = True
         subs.sort(key=lambda s: s[0] if isinstance(s, list) and s else s.get("start", 0))

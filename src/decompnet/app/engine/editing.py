@@ -146,6 +146,27 @@ class EditMixin:
         return f"✅ new function {new_name} at 0x{new.vram:08X}, {new.size} bytes."
 
     def find_missed_functions(self, slug: str, log=print) -> dict:
+        """Keep searching as newly recovered callers make more code discoverable."""
+        added = []
+        check_cancel = getattr(log, 'check_cancel', lambda: None)
+        while True:
+            check_cancel()
+            result = self._find_missed_functions_pass(slug, log)
+            added.extend(result['added'])
+            if not result['added']:
+                if not added:
+                    log(result['message'])
+                    return result
+                kib = sum(item['size'] for item in added) / 1024
+                message = (f"Added {len(added)} function{'s' if len(added) != 1 else ''} the split had left as data "
+                           f"({kib:.1f} KB). Recognized SDK and assembly code is set aside. "
+                           "No further functions passed this search; some code may still need review.")
+                log(message)
+                return {'added': added, 'message': message}
+            log(result['message'])
+            log('Checking again for code reachable from the newly recovered functions.')
+
+    def _find_missed_functions_pass(self, slug: str, log=print) -> dict:
         """The user's "Find missed functions": what an import would now find in the bytes the split left as data
         (the console's missed_functions; N64: functions only a pointer the code builds reaches, frameless leaves,
         switches, and the addresses Play saw the game run), added to the project as it is, as open functions. A
@@ -164,15 +185,93 @@ class EditMixin:
             raise NetworkError("this project has no splat configuration to look for missed functions in")
         config = configs[0]
         before = config.read_text(encoding="utf-8")
+        applied = None
+
+        def restore():
+            if applied is not None and applied != before:
+                try:
+                    if config.read_text(encoding='utf-8') == applied:
+                        split.write_config_atomic(config, before)
+                except FileNotFoundError:
+                    pass  # A concurrent removal is not ours to undo.
         image, _ = self._rom(proj)
         try:
-            rows = self.project_store(proj["id"]).all(
-                "SELECT rom_offset,size,vram FROM functions WHERE project_id=? AND rom_offset IS NOT NULL", proj["id"])
-            found = console.missed_functions(config, image, log, [(r["rom_offset"], r["rom_offset"] + r["size"], r["vram"]) for r in rows])
+            selected_store = self.project_store(proj["id"])
+            rows = selected_store.all(
+                "SELECT name,rom_offset,size,vram,target FROM functions WHERE project_id=? AND rom_offset IS NOT NULL", proj["id"])
+            original_entries = sorted((r['name'], r['rom_offset'], r['size'], r['vram'], r['target']) for r in rows)
+            original_symbols = sorted(tuple(row) for row in selected_store.all(
+                'SELECT name,address,size,kind FROM symbols WHERE project_id=?', proj['id']))
+            original_cfg = self.cfg(proj)
+            banks = original_cfg.get('donor_overlays') or {}
+            if not isinstance(banks, dict) or any(type(offset) is not int for offset in banks.values()):
+                raise NetworkError('The project analysis banks have invalid offsets. Check its code mappings before searching.')
+            from ...rom.export import _analysis_only_names
+            analysis_only = _analysis_only_names(original_cfg, rows)
+            split_rows = [row for row in rows if row['name'] not in analysis_only]
+            native_end = min(banks.values(), default=len(image))
+            if not isinstance(native_end, int) or not 0 <= native_end <= len(image):
+                raise NetworkError('The project analysis banks have invalid offsets. Check its code mappings before searching.')
+            if any(row['rom_offset'] + row['size'] > native_end for row in split_rows):
+                raise NetworkError('A function crosses into an analysis-only bank. Review its mapping before searching.')
+            scan_image = image[:native_end]
+            checkpoint_name = f'missed-functions-checkpoint:{proj["id"]}'
+            checkpoint = {'finished': False}
+
+            def load_checkpoint(key):
+                row = selected_store.one('SELECT value FROM settings WHERE key=?', checkpoint_name)
+                try:
+                    value = json.loads(row['value']) if row else {}
+                    return value.get('accepted', []) if value.get('key') == key else []
+                except (ValueError, TypeError, AttributeError):
+                    return []
+
+            def save_checkpoint(key, accepted):
+                with selected_store.tx() as db:
+                    db.execute('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+                               (checkpoint_name, json.dumps({'key': key, 'accepted': accepted})))
+
+            checkpoint.update(load=load_checkpoint, save=save_checkpoint)
+
+            def prepare_split(staged, candidates):
+                # Validate the same names, extents and symbol file the rebuildable export will use. A fresh
+                # Splat run alone may guess several fragments inside one already matched database function.
+                from ...rom.export import ExportError, _export_segments, _fallthrough_entries, _segments, _symbol_lines
+
+                population = [dict(row) for row in split_rows]
+                if any(not isinstance(row['vram'], int) or not isinstance(row['size'], int) or row['size'] <= 0
+                       or not 0 <= row['rom_offset'] < row['rom_offset'] + row['size'] <= len(image)
+                       or row['target'] != image[row['rom_offset']:row['rom_offset'] + row['size']]
+                       for row in rows):
+                    raise ValueError('an existing function does not match its original image bytes')
+                names = {row['name'] for row in population} | set(self.symbols(proj['id']).by_name)
+                for item in candidates:
+                    lo, hi, vram = item['rom_start'], item['rom_end'], item['vram']
+                    name = f'func_{vram:08X}'
+                    if name in names:
+                        name = f'func_{vram:08X}_{lo:X}'
+                    while name in names:
+                        name += '_'
+                    names.add(name)
+                    population.append({'name': name, 'rom_offset': lo, 'vram': vram,
+                                       'size': hi - lo, 'target': image[lo:hi]})
+                try:
+                    staged = _export_segments(staged, population)
+                    lines = _symbol_lines(self, proj, population, excluded=analysis_only, segments=_segments(staged),
+                                          unsized=_fallthrough_entries(population, console))
+                except ExportError as error:
+                    raise ValueError(str(error)) from error
+                return staged, lines, [dict(row) for row in split_rows]
+
+            found = console.missed_functions(config, scan_image, log,
+                [(r["rom_offset"], r["rom_offset"] + r["size"], r["vram"]) for r in split_rows],
+                prepare_split=prepare_split, checkpoint=checkpoint, expected_config=before)
+            applied = config.read_text(encoding='utf-8')
         except Exception:
-            config.write_text(before, encoding="utf-8")
+            restore()
             raise
         if found is None:
+            restore()
             raise NetworkError(f"finding missed functions isn't supported for {console.name} yet (ROADMAP.md)")
         store = self.project_store(proj["id"])
         rows = store.all("SELECT name,vram,rom_offset,size FROM functions WHERE project_id=?", proj["id"])
@@ -180,36 +279,84 @@ class EditMixin:
         fresh = [(lo, hi, vram) for lo, hi, vram in found
                  if not any(r["rom_offset"] is not None and r["rom_offset"] < hi and lo < r["rom_offset"] + r["size"]
                             for r in rows)]
-        syms = self.symbols(proj["id"])
+        try:
+            original_syms = self.symbols(proj["id"])
+            syms = SymbolTable(list(original_syms.by_addr.values()))
+            for sym in original_syms.by_name.values():
+                syms.alias(sym)
+            units = split.source_units(config)
+            mappings = split.segments_from_config(config)
+        except Exception:
+            restore()
+            raise
         added = []
+        check_cancel = getattr(log, 'check_cancel', lambda: None)
         try:
             with store.tx() as db:
                 cfg = json.loads(db.execute("SELECT config FROM projects WHERE id=?", (proj["id"],)).fetchone()["config"])
+                current_entries = sorted(tuple(row) for row in db.execute(
+                    'SELECT name,rom_offset,size,vram,target FROM functions WHERE project_id=? AND rom_offset IS NOT NULL',
+                    (proj['id'],)).fetchall())
+                current_symbols = sorted(tuple(row) for row in db.execute(
+                    'SELECT name,address,size,kind FROM symbols WHERE project_id=?', (proj['id'],)).fetchall())
+                if (current_entries != original_entries or cfg.get('segments') != original_cfg.get('segments')
+                        or cfg.get('rom') != original_cfg.get('rom')
+                        or cfg.get('donor_overlays') != original_cfg.get('donor_overlays')
+                        or current_symbols != original_symbols):
+                    raise NetworkError('The project code or mappings changed during the search. Retry with the current project.')
                 for lo, hi, vram in fresh:
+                    check_cancel()
                     name = f"func_{vram:08X}"
                     if name in names or name in syms.by_name:
                         name = f"func_{vram:08X}_{lo:X}"
-                    unit = f"code_{vram:08X}"
+                    while name in names or name in syms.by_name:
+                        name += '_'
+                    names.add(name)
+                    owners = [name for start, end, address, name in units
+                              if start <= lo < hi <= end and address + lo - start == vram]
+                    unit = owners[0] if len(owners) == 1 else f"code_{vram:08X}"
                     fn = split.function_from_bytes(name, image[lo:hi], lo, vram, unit, bool(proj["big_endian"]))
-                    syms.add(Symbol(name, vram, fn.size, "func"))
+                    sym = Symbol(name, vram, fn.size, "func")
+                    if vram in syms.by_addr:
+                        # Another overlay may already have a name at this address. Both names must
+                        # continue to resolve while constructing this and later recovered targets.
+                        syms.alias(sym)
+                    else:
+                        syms.add(sym)
                     target = self._make_target(proj, fn, syms)
+                    relocs = json.dumps(target.to_json())
+                    meta = {"found_after_split": True}
+                    status = console.function_status(fn)
+                    from ..sdk_assembly import classify_recovered
+                    status, meta = classify_recovered(console, {"config": json.dumps(cfg)},
+                        {"name": name, "vram": vram, "rom_offset": lo, "size": fn.size,
+                         "target": target.code, "relocs": relocs}, status, meta)
                     db.execute("INSERT INTO functions(project_id,name,size,n_insns,target,relocs,asm,seed,unit,vram,"
                                "rom_offset,status,meta) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                               (proj["id"], name, fn.size, len(fn.lines), target.code, json.dumps(target.to_json()),
-                                console.function_asm(fn), None, unit, vram, lo, console.function_status(fn),
-                                json.dumps({"found_after_split": True})))
+                               (proj["id"], name, fn.size, len(fn.lines), target.code, relocs,
+                                console.function_asm(fn), None, unit, vram, lo, status, json.dumps(meta)))
                     db.execute("INSERT OR REPLACE INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)",
                                (proj["id"], name, vram, fn.size, "func"))
-                    cfg.setdefault("segments", []).append(vars(split.Segment(unit, lo, hi, vram)))
+                    # A body recovered inside an existing code parent already has a ROM-to-RAM mapping.
+                    # Adding a nested mapping makes reads ambiguous and scales the segment table with functions.
+                    if not any(s['rom_start'] <= lo < hi <= s['rom_end']
+                               and s['vram'] + lo - s['rom_start'] == vram for s in cfg.setdefault('segments', [])):
+                        parents = [s for s in mappings if s.rom_start <= lo < hi <= s.rom_end
+                                   and s.vram + lo - s.rom_start == vram]
+                        scope = parents[0].exclusive_ram_id if len(parents) == 1 else ''
+                        cfg['segments'].append(vars(split.Segment(unit, lo, hi, vram, scope)))
                     added.append({"name": name, "vram": vram, "size": fn.size})
+                check_cancel()
                 cfg["segments"].sort(key=lambda s: s["rom_start"])
                 db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), proj["id"]))
                 if added:
                     self._event(db, proj["id"], None, "boundary",
                                 f"found {len(added)} missed function{'s' if len(added) != 1 else ''}: "
                                 + ", ".join(a["name"] for a in added[:20]))
+                if checkpoint['finished']:
+                    db.execute('DELETE FROM settings WHERE key=?', (checkpoint_name,))
         except Exception:
-            config.write_text(before, encoding="utf-8")
+            restore()
             raise
         for cache in (self._roms, self._syms, self._sym_override, self._xrefs, self._asm_names, self._ops,
                       self._warmed, self._cmaps):
@@ -221,10 +368,9 @@ class EditMixin:
             self.progress.sync(slug, force=True)
         kib = sum(a["size"] for a in added) / 1024
         message = (f"Added {len(added)} function{'s' if len(added) != 1 else ''} the split had left as data "
-                   f"({kib:.1f} KB). They're open for agents; nothing else changed." if added else
-                   "No missed functions found: every gap between code that an import would now recover is "
-                   "already a function. Playing the game in Play records more evidence for next time.")
-        log(message)
+                   f"({kib:.1f} KB). Recognized SDK and assembly code is set aside." if added else
+                   "No functions were added. Some may need review; this scan cannot rule out missing code. "
+                   "Playing the game in Play can record more evidence for next time.")
         return {"added": added, "message": message}
 
     def split_rom_by_you(self, slug: str, function: str, at: str, new_name: str = "") -> str:

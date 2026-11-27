@@ -462,6 +462,20 @@ def known_proof(console, proj, fn):
             'alias_schema': 1, 'fingerprint': fingerprint(proj, fn), 'evidence': evidence, 'at': time.time()}
 
 
+def classify_recovered(console, proj, fn, status, meta):
+    """Classify a new target before it can enter the agents' claim queue."""
+    if proof := known_proof(console, proj, fn):
+        meta['verified_assembly'] = proof
+        meta['sdk_display'] = {'name': proof['name'], 'names': proof['names'], 'corpora': [proof['corpus']]}
+        meta['asm_code'] = (proof['evidence'] if proof.get('from_c') else
+                            'Verified handwritten SDK assembly; no C matching required.')
+        return 'asm', meta
+    if why := console.asm_reason(fn['target']):
+        meta['asm_code'] = why
+        return 'asm', meta
+    return status, meta
+
+
 def discover_known(net, proj, *, function_id=None, check_cancel=None):
     """Backfill local ROM targets without SDK files, compiling code or starting agents."""
     if proj['slug'] in net.links or not net.is_rom(proj) or net.fork_slug(proj['slug']):

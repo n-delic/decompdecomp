@@ -96,6 +96,24 @@ class Segment:
         return self.vram <= address and address + length <= self.vram + (self.rom_end - self.rom_start)
 
 
+def write_config_atomic(path: Path, text: str) -> None:
+    """Replace a split configuration without exposing a partially written file."""
+    import os
+    import tempfile
+
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=path.parent,
+                                         prefix='.decomp-split-', delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(text)
+        os.chmod(temporary, path.stat().st_mode & 0o777)
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 @dataclass
 class SplitResult:
     functions: list[RomFunction]
@@ -267,6 +285,24 @@ def code_ranges(path: Path) -> list[tuple[int, int, int]]:
             if len(sub) > 1 and sub[1] in ("c", "asm", "hasm"):
                 end = next((int(t[0]) for t in subs[i + 1:]), seg.rom_end)
                 out.append((int(sub[0]), end, seg.vram + int(sub[0]) - seg.rom_start))
+    return out
+
+
+def source_units(path: Path) -> list[tuple[int, int, int, str]]:
+    """Named C subsegments with their ROM and RAM bounds, for functions recovered inside an existing parent."""
+    import yaml
+
+    cfg = yaml.safe_load(path.read_text(encoding='utf-8'))
+    out = []
+    for seg in segments_from_config_data(cfg):
+        raw = next(s for s in cfg['segments'] if isinstance(s, dict) and s.get('type') == 'code'
+                   and s.get('start') == seg.rom_start)
+        subs = [s for s in raw.get('subsegments', []) or [] if isinstance(s, list) and s]
+        for i, sub in enumerate(subs):
+            if len(sub) < 3 or sub[1] != 'c' or not isinstance(sub[2], str):
+                continue
+            end = int(subs[i+1][0]) if i+1 < len(subs) else seg.rom_end
+            out.append((int(sub[0]), end, seg.vram + int(sub[0]) - seg.rom_start, sub[2]))
     return out
 
 

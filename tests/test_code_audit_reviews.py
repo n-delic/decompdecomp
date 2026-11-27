@@ -20,6 +20,9 @@ def test_reviews_persist_and_refresh_only_for_identical_image_and_extent(tmp_pat
     net,pid,report=fixture(tmp_path)
     first=reviews.record(net,pid,copy.deepcopy(report),bytes(64));key=first['candidates'][0]['review_id']
     reviews.review(net,'demo',key,'confirmed_code','Checked caller and return.')
+    compact=reviews.review(net,'demo',key,'confirmed_code','Checked caller and return.',compact=True)
+    assert compact['candidate']['review_id']==key and compact['candidate']['review']['state']=='confirmed_code'
+    assert 'candidates' not in compact
     again=reviews.record(net,pid,copy.deepcopy(report),bytes(64))
     assert again['candidates'][0]['review']['state']=='confirmed_code'
     assert reviews.decorated(reviews.load(net,pid))==again
@@ -47,3 +50,35 @@ def test_layout_changes_expire_saved_results_and_decisions(tmp_path):
         db.execute("INSERT INTO functions(project_id,name,vram,size) VALUES(?,'new_target',4096,8)",(pid,))
     assert reviews.decorated(reviews.load(net,pid))['stale']
     with pytest.raises(NetworkError,match='expired'):reviews.review(net,'demo',key,'confirmed_code','old layout')
+
+
+def test_cancelled_report_does_not_replace_saved_audit(tmp_path):
+    net, pid, report = fixture(tmp_path)
+    first = reviews.record(net, pid, copy.deepcopy(report), bytes(64))
+    calls = 0
+
+    def check():
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError('Stopped')
+
+    changed = copy.deepcopy(report)
+    changed['gaps'] = 2
+    with pytest.raises(RuntimeError, match='Stopped'):
+        reviews.record(net, pid, changed, bytes(64), check=check)
+    saved = reviews.decorated(reviews.load(net, pid))
+    assert saved['gaps'] == first['gaps']
+
+
+def test_runtime_checkpoints_are_scoped_to_image_and_layout(tmp_path):
+    net,pid,_=fixture(tmp_path)
+    item={'rom_start':16,'rom_end':80,'vram':4096,'executed':True,'execution_retrace':58,'direct_call_site':8192}
+    checkpoint=reviews.runtime_checkpoint(net,pid,'layout',bytes(128))
+    assert checkpoint(item) is None
+    checkpoint(item,save=True)
+    assert reviews.runtime_checkpoint(net,pid,'layout',bytes(128))(item)=={
+        'executed':True,'execution_retrace':58,'direct_call_site':8192}
+    assert reviews.runtime_checkpoint(net,pid,'changed',bytes(128))(item) is None
+    assert reviews.runtime_checkpoint(net,pid,'layout',b'x'*128)(item) is None
+    assert checkpoint({**item,'vram':4100}) is None

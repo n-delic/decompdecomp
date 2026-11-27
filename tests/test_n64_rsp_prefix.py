@@ -183,3 +183,30 @@ def test_graphics_boot_marker_after_return_is_not_cpu_code():
     assert list(graphics_spans(image)) == [(0x20, len(image))]
     image[0x120:0x220] = bytes(0x100)
     assert not list(graphics_spans(image))
+
+
+def test_standard_boot_and_vector_setup_needs_rsp_body_evidence(tmp_path):
+    import yaml
+
+    from decompnet.consoles.n64.inline_data import apply
+    from decompnet.consoles.n64.port import RSPBOOT
+    from decompnet.consoles.n64.rsp_prefix import graphics_spans
+    from decompnet.rom.split import code_ranges
+
+    image = bytearray(0xd0 + 0x1000)
+    image[:len(RSPBOOT)] = RSPBOOT
+    image[0xd0:0xdc] = bytes.fromhex('4a00002cc81f201bc81e201c')
+    for i in range(64):
+        struct.pack_into('>I', image, 0x100 + 4*i, 0x4a000000)
+    for i in range(3):
+        struct.pack_into('>I', image, 0x300 + 4*i, 0x0c000400 + i)
+    assert list(graphics_spans(image)) == [(0, len(image))]
+    padded = bytes(0x100) + image + bytes(0x100)
+    config = tmp_path / 'game.yaml'
+    config.write_text(yaml.safe_dump({'segments': [
+        {'type': 'code', 'start': 0, 'vram': 0x80000000, 'subsegments': [[0, 'c', 'text']]}, [len(padded)]]}))
+    apply(config, padded, lambda *_: None)
+    assert code_ranges(config) == [(0, 0x100, 0x80000000),
+                                   (0x11d0, len(padded), 0x800011d0)]
+    image[0x300:0x30c] = bytes(12)
+    assert not list(graphics_spans(image))
