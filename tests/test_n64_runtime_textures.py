@@ -106,3 +106,29 @@ def test_observation_tries_menu_input_if_no_texture_is_visible(tmp_path, monkeyp
     monkeypatch.setattr(detector, 'regions', lambda image, snapshots: [b'asset'] if b'menus' in snapshots else [])
     assert runtime_textures.observe(b'image', rom, sha1(rom.read_bytes()).hexdigest()) == [b'asset']
     assert len(calls) == 2 and calls[1]['inputs'] and not calls[1]['expansion_pak']
+
+
+def test_packed_title_assets_do_not_skip_gameplay_and_merge_banks(tmp_path, monkeypatch):
+    from decompassets.n64 import runtime_packed_graphics
+
+    rom = tmp_path / 'game.z64'
+    rom.write_bytes(bytes.fromhex('80371240') + b'original')
+    monkeypatch.setattr(runtime_textures.emulator, 'installed', lambda: tmp_path)
+    calls = []
+
+    def run(path, vis, *, dumps, **kwargs):
+        calls.append(kwargs)
+        for dump in dumps.values():
+            dump.write_bytes(b'game' if kwargs.get('inputs') else b'title')
+        return runtime_textures.emulator.Run(vis=vis)
+
+    def packed(image, snapshots, *, progress):
+        value = 2 if b'game' in snapshots else 1
+        return [dict(offset=100, layout='packed', textures=[dict(preview_settings=dict(offset=value))])]
+
+    monkeypatch.setattr(runtime_textures.emulator, 'run', run)
+    monkeypatch.setattr(detector, 'regions', lambda image, snapshots: [])
+    monkeypatch.setattr(runtime_packed_graphics, 'regions', packed)
+    assets = runtime_textures.observe(b'image', rom, sha1(rom.read_bytes()).hexdigest())
+    assert len(calls) == 2 and len(assets) == 1
+    assert [t['preview_settings']['offset'] for t in assets[0]['textures']] == [1, 2]

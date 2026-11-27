@@ -10,7 +10,7 @@ VIS = (1200, 2400, 4000, 5000)
 
 def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _: None, status=None):
     """Return assets backed by captured RAM and unique bytes in the analysis image."""
-    from decompassets.n64 import runtime_textures
+    from decompassets.n64 import runtime_packed_graphics, runtime_textures
 
     status = status if status is not None else {}
     status['state'] = 'unavailable'
@@ -35,19 +35,32 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
         with tempfile.TemporaryDirectory(prefix='decomp-runtime-textures-') as folder:
             dumps = {vi: Path(folder)/f'{vi}.ram' for vi in VIS}
             run, expansion = emulator.run_for_observation(rom, VIS[-1], dumps=dumps, timeout=120, log=log)
-            snapshots = (path.read_bytes() for path in dumps.values() if path.is_file())
-            assets = runtime_textures.regions(image, snapshots)
-            if not assets and not run.timed_out:
+            snapshots = [path.read_bytes() for path in dumps.values() if path.is_file()]
+            direct = runtime_textures.regions(image, snapshots)
+            packed = runtime_packed_graphics.regions(image, snapshots, progress=progress)
+            if not direct and not run.timed_out:
                 log('No textures were visible at rest; observing the title and menus with scripted input.')
                 for path in dumps.values():
                     path.unlink(missing_ok=True)
                 run = emulator.run(rom, VIS[-1], inputs=loaded_code.inputs(VIS[-1]), dumps=dumps,
                                    timeout=120, expansion_pak=expansion)
-                snapshots = (path.read_bytes() for path in dumps.values() if path.is_file())
-                assets = runtime_textures.regions(image, snapshots)
+                snapshots = [path.read_bytes() for path in dumps.values() if path.is_file()]
+                direct += runtime_textures.regions(image, snapshots)
+                packed += runtime_packed_graphics.regions(image, snapshots, progress=progress)
+            merged = {}
+            for asset in packed:
+                key = asset['offset'], asset.get('layout')
+                if key in merged and asset.get('textures'):
+                    previous = merged[key]['textures']
+                    known = {tuple(item['preview_settings'].items()) for item in previous}
+                    previous.extend(item for item in asset['textures']
+                                    if tuple(item['preview_settings'].items()) not in known)
+                else:
+                    merged[key] = asset
+            assets = direct + list(merged.values())
         if run.timed_out:
             log('Runtime observation timed out; any completed snapshots are still included.')
-        log(f'Found {len(assets)} textures backed by runtime commands and unique cartridge bytes.')
+        log(f'Found {len(assets)} graphics regions backed by runtime commands and cartridge bytes.')
         status['state'] = 'failed' if run.timed_out else 'complete'
         progress(dict(phase='Observing runtime textures', done=1, total=1))
         return assets
