@@ -65,3 +65,17 @@ def test_entry_extraction_refuses_unmapped_or_ambiguous_pool_reads(tmp_path,monk
     export_entry.write(tmp_path,manifest,fn,path)
     path.write_bytes(object_file());manifest['data_mappings'].append(dict(rom_start=8,rom_end=16,vram=0x80001000))
     with pytest.raises(ValueError,match='disagree'):export_entry.write(tmp_path,manifest,fn,path)
+
+
+def test_export_entry_requires_standalone_mappings_for_all_judge_reads():
+    from decompnet.rom.export import _entry_reads_available
+
+    image = bytes(range(64))
+    segments = [{'type': 'code', 'start': 0, 'end': 16, 'vram': 0x80001000}]
+    reads = [(0x80001000, 4, image[:4]), (0x80002000, 4, image[32:36])]
+    assert not _entry_reads_available(reads, image, segments, [])
+    mappings = [{'rom_start': 32, 'rom_end': 40, 'vram': 0x80002000}]
+    assert _entry_reads_available(reads, image, segments, mappings)
+    assert not _entry_reads_available(reads, image, segments, mappings + [
+        {'rom_start': 40, 'rom_end': 48, 'vram': 0x80002000}])
+    assert not _entry_reads_available([(0x80002000, 4, b'wrong')], image, segments, mappings)

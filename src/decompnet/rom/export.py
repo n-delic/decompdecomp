@@ -36,6 +36,19 @@ DISCARD = ["*(.reginfo)", "*(.MIPS.abiflags)", "*(.MIPS.options)", "*(.pdr)", "*
            "*(.gnu.attributes)", "*(.note*)", "*(.gptab.*)"]
 
 
+def _entry_reads_available(reads, image, segments, mappings):
+    """Only extract entries whose judge reads the standalone image can reproduce."""
+    ranges = [dict(rom_start=s['start'], rom_end=s['end'] or len(image), vram=s['vram'])
+              for s in segments if s.get('type') == 'code'] + list(mappings)
+    for addr, size, expected in reads:
+        offsets = {s['rom_start'] + addr - s['vram'] for s in ranges
+                   if 0 <= s['rom_start'] < s['rom_end'] <= len(image)
+                   and s['vram'] <= addr and addr + size <= s['vram'] + s['rom_end'] - s['rom_start']}
+        if len(offsets) != 1 or image[next(iter(offsets)):next(iter(offsets)) + size] != expected:
+            return False
+    return True
+
+
 def _auto_addresses(texts, defined) -> dict[str, int]:
     """The automatic names (func_8C000000, D_800A1234) these sources use that nothing defines, each at the address
     its name carries, so the standalone link can resolve them."""
@@ -444,6 +457,8 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
         except toolchains.ToolchainError as error:
             return row, unit, hdr, None, error
 
+    entry_segments = _segments(_export_segments(split_config, known))
+    entry_mappings = cfg.get("audit_data_mappings") or []
     objects, private, as_fallback = [], [], []
     check = getattr(log, 'check_cancel', lambda: None)
     candidates = (matched_rows[(f["vram"], f["rom"])] for f in functions if (f["vram"], f["rom"]) in matched_rows)
@@ -474,7 +489,13 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
                 as_fallback.append((f["name"], "its C also defines other functions; split their bodies into separate source files"))
                 f["kind"] = "asm"
                 continue
-            linked = match.link(compiled.obj, row["name"], net._rom_target(row), net.symbols(proj["id"]), net.reader(proj, row))
+            reader = net.reader(proj, row)
+            reads = []
+            def record_read(addr, size, reader=reader, reads=reads):
+                data = reader(addr, size)
+                reads.append((addr, size, data))
+                return data
+            linked = match.link(compiled.obj, row["name"], net._rom_target(row), net.symbols(proj["id"]), record_read)
             if not linked.exact:
                 as_fallback.append((f["name"], "no longer matches"))
                 f["kind"] = "asm"
@@ -483,6 +504,10 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
             if problem or predecessor or donor_unit:
                 # Recompile and judge this entry every build; the builder can retain
                 # scattered original pools without pretending they share one base.
+                if not _entry_reads_available(reads, image, entry_segments, entry_mappings):
+                    as_fallback.append((f['name'], 'its constant data cannot be verified in the exported image'))
+                    f['kind'] = 'asm'
+                    continue
                 from .export_entry import object_for
                 try:object_for(compiled.obj,row['name'],linked.linked_code)
                 except (ValueError,TypeError):
@@ -646,6 +671,7 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
         "big_endian": console.big_endian, "asm_preamble": console.asm_preamble,
         "as_flags": [*console.as_flags, "-G0", "-no-pad-sections", "-I", "include"],
         "ld_flags": ["-EB" if console.big_endian else "-EL", "--no-check-sections"],
+        "data_mappings": entry_mappings,
         "assembly": objects, "segments": layout, "functions": fn_json, "overlay_functions": overlays, "overlay_total": len(excluded),
         "data": [{k: d[k] for k in ("name", "src", "obj", "vram", "size")} for d in data_c],
         # every named datum's address, for the judge steps (export_entry, `build.py check`): names the assembly
