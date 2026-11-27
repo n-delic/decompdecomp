@@ -2,7 +2,7 @@
 title: returned cursor record typed draft
 kind: finding
 compiler: sn-n64-281 -G0 -mips3 -O2 -mgas -meb -mcpu=VR4300 -mhard-float -mfp32
-evidence: one function
+evidence: observation
 date: 2026-11-27
 ---
 
