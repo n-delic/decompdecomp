@@ -20,6 +20,7 @@ from . import (
     compile_timing,
     limits,
     m2c_call_tails,
+    m2c_delay_slot,
     m2c_fp64,
     m2c_jump_tables,
     m2c_shared_hi,
@@ -1044,6 +1045,7 @@ def _run_m2c(asm_text: str, name: str, target: str, context_header: str = "", da
         from .rom.split import draft_asm
 
         asm_text = m2c_shared_hi.split(m2c_fp64.pair_free(abi_register_names(asm_text)))
+        asm_text = m2c_delay_slot.hoist(asm_text)
         if data_asm:
             asm_text = m2c_jump_tables.inline_tables(asm_text, data_asm)
         if data_asm:
