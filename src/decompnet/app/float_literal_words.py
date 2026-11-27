@@ -91,8 +91,8 @@ def _read(net, proj, fn, names):
         return {}
     out = {}
     for name, size in names:
-        symbol = symbols.by_name.get(name)
-        address = getattr(symbol, 'address', None)
+        # An automatic name (D_800042C0) may have no symbol: data the import never listed, its address in its name.
+        address = symbols.resolve(name)
         if not isinstance(address, int) or used_by.get(address, set()) - {fn['vram']}:
             continue
         try:

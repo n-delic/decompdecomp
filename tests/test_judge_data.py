@@ -104,3 +104,24 @@ def test_raw_bytes_the_switches_dont_prove_stay_unread():
     assert split.trailing_data(cfg, rom) == []
     rom, cfg = _game([0x80200014, 0x80200018], next_vram=0x80200800)  # another segment's addresses
     assert split.trailing_data(cfg, rom) == []
+
+
+def test_data_between_code_at_one_offset_is_read_when_any_switch_proves_it():
+    """An N64 game's first code had no switch of its own, and its main code's .rodata (jump tables, float constants)
+    sat between them: unread, so the judge accepted any float literal there."""
+    def game(main_vram):
+        rom = bytearray(0x3000)
+        rom[0x1000:0x1008] = b"\x03\xe0\x00\x08\x00\x00\x00\x00"  # the first code: a return, no switch
+        code = _dispatch(0x80200140)  # the later code's table lies in the data between the two
+        rom[0x2000:0x2000 + len(code)] = code
+        for i, w in enumerate([main_vram + 0x14, main_vram + 0x18]):
+            rom[0x1140 + 4 * i:0x1144 + 4 * i] = w.to_bytes(4, "big")
+        return bytes(rom), {"segments": [
+            {"name": "boot", "type": "code", "start": 0x1000, "vram": 0x80200000}, {"type": "bin", "start": 0x1100},
+            {"name": "main", "type": "code", "start": 0x2000, "vram": main_vram}, {"type": "bin", "start": 0x2100},
+            [len(rom)]]}
+
+    rom, cfg = game(0x80201000)  # the main code at the first code's offset: one linear load
+    assert split.trailing_data(cfg, rom) == [(0x1100, 0x80200100, 0x80201000)]
+    rom, cfg = game(0x80300000)  # another offset: another load, which proves nothing about the first's data
+    assert split.trailing_data(cfg, rom) == []

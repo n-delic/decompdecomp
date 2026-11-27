@@ -173,8 +173,13 @@ def trailing_data(cfg: dict, rom: bytes, *, big_endian: bool = True) -> list[tup
     every table there. A raw run counts only when its end is another segment (not the ROM's tail, where the assets
     are), it overlaps no segment's and no other run's addresses, and the switches prove it: the run's code has a jump
     table in it, and every table in it (whoever's code reads it) holds an address in that code's own segment. Raw
-    bytes that are packed, or another overlay's at the same addresses, fail that and stay unread."""
-    raw = [s for s in cfg.get("segments", []) if isinstance(s, (dict, list))]
+    bytes that are packed, or another overlay's at the same addresses, fail that and stay unread.
+
+    A raw run with code at the same offset on both sides is inside one linear load, so any code's switches prove it:
+    the run's own need not have a table. An N64 game's first code had no switch and its main code's 32 KB of .rodata
+    sat between the two (eight jump tables, the float constants): unread, so the judge accepted any float literal a
+    candidate wrote for one of them, and `float_literal_global` had no words to propose."""
+    raw =[s for s in cfg.get("segments", []) if isinstance(s, (dict, list))]
 
     def start_of(seg):
         return seg[0] if isinstance(seg, list) else seg.get("start")
@@ -191,6 +196,7 @@ def trailing_data(cfg: dict, rom: bytes, *, big_endian: bool = True) -> list[tup
              if seg.get("type") == "code" and isinstance(seg.get("vram"), int)]
     entries = [entry for entry in entries if entry[2] <= len(rom)]
     found = []  # (rom_start, vram, vram_end, the run's code as (rom_start, rom_end))
+    between = set()  # rom_start of the runs whose next segment is code at the same offset
     run = None  # (delta, rom end, code ranges)
     for seg, start, end, bounded in entries:
         vram = seg.get("vram")
@@ -202,6 +208,9 @@ def trailing_data(cfg: dict, rom: bytes, *, big_endian: bool = True) -> list[tup
         elif seg.get("type") == "bin" and vram is None and run is not None and run[1] == start:
             if bounded:
                 found.append((start, start + run[0], end + run[0], run[2]))
+                if any(other.get("type") == "code" and begin == end and other.get("vram") == begin + run[0]
+                       for other, begin, _, _ in entries):
+                    between.add(start)
             run = (run[0], end, run[2])
         else:
             run = None
@@ -218,7 +227,7 @@ def trailing_data(cfg: dict, rom: bytes, *, big_endian: bool = True) -> list[tup
         inside = [(table, v, e, where in code) for table, v, e, where in tables if lo <= table and table + 4 <= hi]
         # Every switch whose table lies here, the run's own and any other code's, must jump into its own segment:
         # the bytes of another overlay at these addresses, or packed data, fail that and the run stays unread.
-        if any(own for *_, own in inside) and all(
+        if inside and (start in between or any(own for *_, own in inside)) and all(
                 v <= int.from_bytes(rom[start + table - lo:start + table - lo + 4], order) < e
                 for table, v, e, _ in inside):
             out.append((start, lo, hi))

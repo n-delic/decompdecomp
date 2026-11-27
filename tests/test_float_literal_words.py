@@ -189,3 +189,11 @@ def test_a_double_gas_loads_into_a_register_pair_is_eight_bytes():
 /* 24 80071E10 8C424818 */  lw         $v0, %lo(D_800D4818)($v0)
 '''
     assert float_literal_words.loads(pair) == {'D_800D47F8': 8, 'D_800D4800': 8}
+
+
+def test_a_constant_with_no_symbol_is_read_at_the_address_its_name_says():
+    """An N64 game's .rodata the import never listed had no symbols for its constants: the draft named them
+    D_800042C0, and with no symbol of that name the words were empty, so no literal was ever proposed."""
+    net = _net()
+    net.symbols = lambda project_id: SymbolTable([])
+    assert float_literal_words.read(net, PROJ, FN) == {'D_8000930C': 0x43FA0000}
