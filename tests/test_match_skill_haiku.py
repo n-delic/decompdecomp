@@ -88,7 +88,7 @@ class App:
     def __init__(self, home=None):
         pass
 
-    def function(self, slug, name):
+    def function(self, slug, name, quick=False):
         return {"status": App.status, "best": App.best}
 
 
@@ -166,7 +166,7 @@ def test_a_refused_source_is_never_judged(session):
 
 def test_a_function_the_app_renamed_after_matching_is_still_seen_as_matched(session, monkeypatch, capsys):
     class Renamed(App):
-        def function(self, slug, name):
+        def function(self, slug, name, quick=False):
             if name == "0x80010000":
                 return {"id": 5, "name": "fixedSqrt", "status": App.status, "best": 0}
             return {"HTTP": 400} if App.status == "matched" else {"status": App.status, "best": App.best}

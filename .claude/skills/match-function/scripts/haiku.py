@@ -353,10 +353,10 @@ def app_function(info, name):
     same function's record counts; else by name."""
     app = judge.App(info["home"])
     if info.get("address"):
-        record = app.function(info["slug"], info["address"])
+        record = app.function(info["slug"], info["address"], quick=True)
         if record.get("name") and record.get("id") == info.get("function_id"):
             return record
-    return app.function(info["slug"], name)
+    return app.function(info["slug"], name, quick=True)
 
 
 def wait_matched(info, name):

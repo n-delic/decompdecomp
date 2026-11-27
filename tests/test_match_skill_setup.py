@@ -560,7 +560,7 @@ def test_a_failed_renewal_is_retried_at_once_and_lost_only_when_the_claim_must_h
         calls = []
 
         class Slow:
-            def function(self, slug, name):
+            def function(self, slug, name, quick=False):
                 calls.append(name)
                 if len(calls) < 3:
                     raise setup.McpError("timed out")
@@ -571,7 +571,7 @@ def test_a_failed_renewal_is_retried_at_once_and_lost_only_when_the_claim_must_h
         assert not (root / "LOST").exists()
 
         class Down:
-            def function(self, slug, name):
+            def function(self, slug, name, quick=False):
                 raise OSError("connection refused")
 
         assert setup.renew_once(root, info, Down(), flaky, time.time(), pause=0) == "failed"
@@ -881,7 +881,7 @@ def test_a_function_the_app_renamed_after_matching_is_not_a_lost_claim(world, ca
         def __init__(self, records):
             self.records, self.asked = records, []
 
-        def function(self, slug, name):
+        def function(self, slug, name, quick=False):
             self.asked.append(name)
             return self.records.get(name, {"HTTP": 400})
 
@@ -911,8 +911,64 @@ def test_the_address_is_recorded_for_the_claimed_function(monkeypatch):
         def __init__(self, home):
             pass
 
-        def function(self, slug, name):
+        def function(self, slug, name, quick=False):
             return {"id": 5, "name": name, "vram": 0x80010000}
 
     monkeypatch.setattr(setup.judge, "App", App)
     assert setup.identity("home", "demo", "func_80010000") == {"address": "0x80010000", "function_id": 5}
+
+
+def test_a_match_is_known_from_its_verdict_while_the_app_is_too_busy_to_say(world, capsys):
+    """The app answers "Continuation state: ..." above the MATCH line, and a busy app refuses the full record of the
+    renamed function: both read as CLAIM LOST right after a match."""
+    setup, app, home, primary = world
+    assert start(setup, home, primary, "--holder", "claude-m3", "--interval", "3600") == 0
+    root = setup.session_dir("claude-m3")
+    claimlost = sys.modules["claimlost"]
+    try:
+        assert wait_for(lambda: (root / "renew.log").exists())
+        app.answers = ["Continuation state: function=func_8001; status=matched.\n\n\u2705 MATCH! func_8001 is "
+                       "byte-identical to the target (3 instructions). Credited to x."]
+        (root / "c.c").write_text("int f(void){return 0;}")
+        assert setup.main(["try", "claude-m3", str(root / "c.c")]) == 0
+        assert json.loads((root / "connection.json").read_text())["matched_here"] == ["func_8001"]
+
+        class Busy:
+            def function(self, slug, name, quick=False):
+                return {"HTTP": 400, "error": "Shared metadata is still being prepared. Try again shortly."}
+
+        info = json.loads((root / "connection.json").read_text())
+        assert setup.renew_once(root, info, Busy(), None, time.time(), pause=0) == "matched"
+        capsys.readouterr()
+        assert setup.main(["check", "claude-m3"]) == 0
+        out = capsys.readouterr()
+        assert "CLAIM LOST" not in out.out + out.err and not claimlost.warning(root)
+    finally:
+        setup.main(["stop", "claude-m3"])
+
+
+def test_check_does_not_call_a_claim_lost_while_the_app_cannot_say_whether_it_is_matched(world, capsys, monkeypatch):
+    setup, app, home, primary = world
+    assert start(setup, home, primary, "--holder", "claude-m4", "--interval", "3600") == 0
+    root = setup.session_dir("claude-m4")
+    asked = []
+
+    class Busy:
+        def __init__(self, home):
+            pass
+
+        def function(self, slug, name, quick=False):
+            asked.append(quick)
+            return {"HTTP": 400, "error": '{"error":"Shared metadata is still being prepared. Try again shortly."}'}
+
+    try:
+        assert wait_for(lambda: (root / "renew.log").exists())
+        app.answers = ['{"claims": []}']
+        capsys.readouterr()
+        with monkeypatch.context() as patched:  # the fixture's own patches stay
+            patched.setattr(setup.judge, "App", Busy)
+            assert setup.main(["check", "claude-m4"]) == 1
+        assert "try again" in capsys.readouterr().out and not (root / "LOST").exists()
+        assert asked and all(asked)  # only the quick record
+    finally:
+        setup.main(["stop", "claude-m4"])
