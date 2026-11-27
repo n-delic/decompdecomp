@@ -48,11 +48,11 @@ class Batch:
             self.buffers.append(found)
         return found
 
-    def flush(self, store=None):
+    def flush(self, store=None, *, final=None):
         for buffer in list(self.buffers):
             if store is not None and buffer['store'] is not store:continue
             statements=[*buffer['pending'],*((sql,args) for (sql,_),args in buffer['counters'].items())]
-            if statements:
+            if statements or final is not None:
                 with compile_timing.phase('history_write'), buffer['store'].tx() as db:
                     for sql, group in groupby(statements,key=lambda statement:statement[0]):
                         args=[arguments for _,arguments in group]
@@ -61,9 +61,12 @@ class Batch:
                             db.executemany(sql,args)
                         else:
                             for arguments in args:db.execute(sql,arguments)
+                    if final is not None:
+                        sql, rows, _ = final
+                        db.executemany(sql, rows)
                 compile_timing.add('history_transactions',1)
                 _FLUSHES[0] += 1
-                compile_timing.add('history_statements',len(statements))
+                compile_timing.add('history_statements', len(statements) + (final[2] if final else 0))
             self.buffers.remove(buffer)  # Never replay a committed store if another flush fails.
         if not self.buffers:self.started = time.monotonic()
 
@@ -76,6 +79,13 @@ def current():
 def flush(store=None):
     value = current()
     if value is not None:value.flush(store)
+
+
+def flush_with(store, sql, rows, count):
+    """Stream a function's completed miss records with the store's last advisory counters."""
+    batch = current() or Batch()
+    batch.buffer(store)
+    batch.flush(store, final=(sql, rows, count))
 
 
 def lookup(store, key):

@@ -147,6 +147,57 @@ def test_miss_batch_survives_stop_and_reopen_and_identical_upsert_does_not_write
         reopened.conn.close()
 
 
+def test_function_miss_cache_reads_once_and_flushes_on_stop(data, monkeypatch):
+    net, _, _, fid = data
+    store = net.store
+    rich = json.dumps({'score': 42, 'rows': [['instruction' * 70]], 'output': 'fingerprint'})
+    search_history.record_miss(store, fid, 'deep-v1:rich', 'prior turn', rich)
+    with store.tx() as db:
+        db.execute('INSERT INTO reuse_trials VALUES(?,?,?,?,?)',
+                   (fid, 'deep-profile-v1:failed', 'compile_failed', 'probe', '{}'))
+        db.execute('INSERT INTO reuse_trials VALUES(?,?,?,?,?)',
+                   (fid, 'deep-profile-v1:exact', 'exact', 'verified', '{}'))
+        db.execute('INSERT INTO reuse_trials VALUES(?,?,?,?,?)',
+                   (fid, 'deep-resume-v1', 'frontier', 'repair roots', '[1]'))
+
+    misses_reads = []
+    read = store._read
+
+    def counted(sql, *args, **kwargs):
+        if 'reuse_trials' in sql:
+            misses_reads.append(sql)
+        return read(sql, *args, **kwargs)
+
+    monkeypatch.setattr(store, '_read', counted)
+    log = Log()
+    changes = store.conn.total_changes
+    with pytest.raises(RuntimeError, match='Stop'), search_history.function_turn(log, store, fid) as misses:
+        assert log.miss_cache is misses
+        assert isinstance(misses.saved['deep-v1:rich'], tuple)  # compressed until needed
+        assert misses.get('deep-v1:rich') == ('miss', rich)
+        assert misses.get('deep-profile-v1:failed') == ('compile_failed', None)
+        assert misses.get('deep-profile-v1:exact') is None
+        assert misses.get('deep-resume-v1') is None
+        for i in range(700):
+            key = f'deep-v1:new{i}'
+            assert misses.get(key) is None
+            misses.record(key, 'miss', 'new turn', '100')
+            assert misses.get(key) == ('miss', '100')
+        misses.record('deep-profile-v1:exact', 'miss', 'stale parallel verdict', '100')
+        assert len(misses_reads) == 1 and store.conn.total_changes == changes
+        raise RuntimeError('Stop')
+    assert log.miss_cache is None
+    from decompnet.store import Store
+    reopened = Store(store.path)
+    try:
+        row = reopened.one("SELECT COUNT(*) n FROM reuse_trials WHERE signature LIKE 'deep-v1:new%'")
+        assert row['n'] == 700
+        assert reopened.one("SELECT outcome FROM reuse_trials WHERE signature='deep-profile-v1:exact'")[0] == 'exact'
+    finally:
+        reopened.close_readers()
+        reopened.conn.close()
+
+
 def test_zero_day_cleanup_is_rejected_and_reference_map_can_rebuild(data):
     net,a,_,fid=data
     old=attempt(net,a,fid,'loss');attempt(net,a,fid,'latest')

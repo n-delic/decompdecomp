@@ -94,15 +94,21 @@ def probe(search, agent, proj, fn, source, profile, *, scored=False, review_vari
     # a miss queued earlier in this batch (the profile sweep's, judged just before the profile probe asks for the same
     # pair) keeps its score beside its outcome: it was the outcome alone, and 816 of 837 neighbour probes of one game
     # were recorded without a score, so the probe's note never said which profile scored better
-    queued = trial_bookkeeping.lookup(store, ('profile-probe', fn['id'], key))
-    cached = {'outcome': queued[0], 'feedback': json.dumps({'score': queued[1]})} if queued is not None else store.one(
-        'SELECT outcome,feedback FROM reuse_trials WHERE function_id=? AND signature=?', fn['id'], key)
+    misses = getattr(search, 'miss_cache', None)
+    if misses is not None:
+        cached = misses.get(key)
+    else:
+        queued = trial_bookkeeping.lookup(store, ('profile-probe', fn['id'], key))
+        row = store.one('SELECT outcome,feedback FROM reuse_trials WHERE function_id=? AND signature=?',
+                        fn['id'], key) if queued is None else None
+        cached = (queued[0], json.dumps({'score': queued[1]})) if queued is not None else (
+            (row['outcome'], row['feedback']) if row else None)
     # (a compile failure is as settled as a miss: retrying one recompiled 88 broken rewrites 9,844 times)
-    if cached and cached['outcome'] in ('miss', 'compile_failed'):
+    if cached and cached[0] in ('miss', 'compile_failed'):
         search.skipped += 1
-        if scored and cached['outcome'] == 'miss' and 'feedback' in cached.keys():
+        if scored and cached[0] == 'miss':
             try:
-                return json.loads(cached['feedback'] or '{}').get('score')
+                return json.loads(cached[1] or '{}').get('score')
             except (TypeError, ValueError):
                 return None
         return None
@@ -115,10 +121,17 @@ def probe(search, agent, proj, fn, source, profile, *, scored=False, review_vari
     # A miss is advisory (it only saves compiling the same text again), so a search queues it with its batch, and a
     # repeat inside the batch finds it there; an exact result is written at once. It was a transaction through the
     # single writer for every candidate: 15% of a lane's CPU on a sampled 29-lane pass.
-    trial_bookkeeping.submit(store, [('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason,feedback) VALUES(?,?,?,?,?)',
-                   (fn['id'], key, outcome, 'deep compiler profile probe',
-                    json.dumps({'score':score, 'profile':profile, **({'source':source} if exact else {})})))],
-                   immediate=bool(exact), memo=(('profile-probe', fn['id'], key), (outcome, score)))
+    feedback = json.dumps({'score':score, 'profile':profile, **({'source':source} if exact else {})})
+    reason = 'deep compiler profile probe'
+    if misses is not None and not exact:
+        misses.record(key, outcome, reason, feedback)
+    else:
+        if misses is not None:
+            misses.forget(key)
+        trial_bookkeeping.submit(store, [
+            ('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason,feedback) VALUES(?,?,?,?,?)',
+             (fn['id'], key, outcome, reason, feedback))],
+            immediate=bool(exact), memo=(('profile-probe', fn['id'], key), (outcome, score)))
     search.log('Profile '+profile['toolchain']+' '+' '.join(profile['flags'])+': '+
                ('exact; rechecking source/profile bundle' if exact else 'score '+str(score) if score is not None else 'does not compile'))
     if exact:

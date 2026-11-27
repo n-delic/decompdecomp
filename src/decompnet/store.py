@@ -1130,13 +1130,15 @@ class Store:
         for reader in readers:
             reader.conn.close()
 
-    def _read(self, sql: str, args: tuple, single: bool):
+    def _read(self, sql: str, args: tuple, single: bool, *, consume=None):
         started = time.monotonic()
         # Two CPU clock reads per query; finer per-phase clocks materially tax fast reads.
         started_cpu = thread_time()
         self._local.read_phases = {}  # durations only: request_timing.sql_read adds them up
         self._local.read_via = 'reader'
         try:
+            if consume is not None:
+                return self._read_rows(sql, args, single, consume)
             return self._read_rows(sql, args, single)
         finally:
             elapsed = time.monotonic() - started
@@ -1158,7 +1160,7 @@ class Store:
                         *(phases.get(k, 0) for k in ('connection', 'lock_wait', 'execute', 'fetch')),
                         self._local.read_via, self._plan_shape(sql, args), cpu_elapsed)
 
-    def _read_rows(self, sql: str, args: tuple, single: bool):
+    def _read_rows(self, sql: str, args: tuple, single: bool, consume=None):
         started = time.perf_counter()
         phases = self._local.read_phases
         try:
@@ -1167,12 +1169,12 @@ class Store:
             phases['connection'] = time.perf_counter() - started
         if conn is not None and getattr(self._local, "readers", 0):
             try:
-                return self._query(conn, sql, args, single)
+                return self._query(conn, sql, args, single, consume)
             finally:
                 self._release_reader()
-        return self._query(conn, sql, args, single)
+        return self._query(conn, sql, args, single, consume)
 
-    def _query(self, conn, sql, args, single):
+    def _query(self, conn, sql, args, single, consume):
         phases = self._local.read_phases
         def query(connection):
             executing = time.perf_counter()
@@ -1183,6 +1185,8 @@ class Store:
                 phases['execute'] = time.perf_counter() - executing
             fetching = time.perf_counter()
             try:
+                if consume is not None:
+                    return consume(cur)
                 return cur.fetchone() if single else cur.fetchall()
             finally:
                 cur.close()
@@ -1213,3 +1217,7 @@ class Store:
 
     def all(self, sql: str, *args) -> list[sqlite3.Row]:
         return self._read(sql, args, single=False)
+
+    def scan(self, sql, consume, *args):
+        """Consume a query's rows before releasing its reader, without a temporary result list."""
+        return self._read(sql, args, single=False, consume=consume)
