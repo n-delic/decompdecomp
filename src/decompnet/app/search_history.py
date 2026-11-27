@@ -90,15 +90,18 @@ class FunctionMisses:
 def function_turn(log, store, fid):
     log.check_cancel()
     misses = FunctionMisses(store, fid, log.check_cancel)
-    previous = getattr(log, 'miss_cache', None)
-    log.miss_cache = misses
+    previous_misses = getattr(log, 'miss_cache', None)
+    previous_turn = getattr(log, 'advisory_turn', None)
+    turn = trial_bookkeeping.Turn()
+    log.miss_cache, log.advisory_turn = misses, turn
     maximum = getattr(getattr(log, 'compile_pool', None), 'maximum', False)
-    with trial_bookkeeping.scope(maximum):
+    with trial_bookkeeping.for_turn(turn), trial_bookkeeping.scope(maximum):
         try:
             yield misses
         finally:
-            log.miss_cache = previous
+            log.miss_cache, log.advisory_turn = previous_misses, previous_turn
             misses.flush()
+            turn.batch.flush()  # The catalog may hold stats for a sharded project.
 
 
 def signature(scope, source):

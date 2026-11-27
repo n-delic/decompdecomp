@@ -39,6 +39,41 @@ def test_permutation_hold_does_not_change_an_agents_lease(tmp_path, worker):
     assert net._function('f','game')['permuted'] == 1
 
 
+def test_nonexclusive_phase_checks_only_write_for_legacy_leases_or_counted_turns(tmp_path, monkeypatch):
+    net, _ = _game(tmp_path, [('f', 10, 'open')])
+    owner, _ = net.local_agent('coding-agent')
+    agent, _ = net.local_agent('permuter-1')
+    fn = net._function('f', 'game')
+    original_tx = net.store.tx
+    writes = []
+
+    def tx(*args, **kwargs):
+        writes.append(1)
+        return original_tx(*args, **kwargs)
+
+    monkeypatch.setattr(net.store, 'tx', tx)
+    with original_tx() as db:
+        db.execute('INSERT INTO claims VALUES(?,?,0,?)', (fn['id'], agent.id, time.time() + 3600))
+    assert permuter_claims.hold(net, agent, fn, 60, count_turn=False)
+    assert not net.store.one('SELECT 1 FROM claims')
+    assert writes == [1]
+
+    net.claim_row(owner, 'game', 'f')
+    original = dict(net.store.one('SELECT * FROM claims'))
+    writes.clear()
+    for _ in range(3):
+        assert permuter_claims.hold(net, agent, fn, 60, count_turn=False)
+        permuter_claims.release(net, agent, fn)
+    assert not writes
+    assert dict(net.store.one('SELECT * FROM claims')) == original
+    assert net._function('f', 'game')['permuted'] == 0
+
+    assert permuter_claims.hold(net, agent, fn, 60)
+    assert writes == [1]
+    assert net._function('f', 'game')['permuted'] == 1
+    assert dict(net.store.one('SELECT * FROM claims')) == original
+
+
 def test_startup_removes_legacy_permuter_leases_only(tmp_path):
     net,_=_game(tmp_path,[('f',10,'open'),('g',20,'open'),('h',30,'open')])
     with net.store.tx() as db:

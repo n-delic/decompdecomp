@@ -403,9 +403,10 @@ class Search(Permuter):
             info = dict(provenance) | {'source_sha256': hashlib.sha256(source.encode()).hexdigest(),
                                       'phase': phase}
             self.recipe_wins.append((family, best, score, json.dumps(info), time.time()))
-            self.flush_recipes()
+            if trial_bookkeeping.current_turn() is None:
+                self.flush_recipes()
             self.log(f'Improved with {family}: score {best:,} → {score:,}; verified and saved.')
-        elif sum(sum(v[:3]) for v in self.recipe_counts.values()) >= 64:
+        elif trial_bookkeeping.current_turn() is None and sum(sum(v[:3]) for v in self.recipe_counts.values()) >= 64:
             self.flush_recipes()
 
     def phase_summary(self):

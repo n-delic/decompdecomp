@@ -674,7 +674,7 @@ class Permuter:
         return run(proj, fn["unit"]) if run else nullcontext()
 
     def _let_go(self, agent, fn) -> None:
-        local_claims.release(self.net, agent, fn)
+        permuter_claims.release(self.net, agent, fn)
 
     def _after_improvement(self, agent, proj, fn, st, fork, best, source):
         """Deep search can run bounded local repairs here without changing normal random turns."""

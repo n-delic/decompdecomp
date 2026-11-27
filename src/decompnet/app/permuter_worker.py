@@ -21,7 +21,7 @@ from types import SimpleNamespace
 from .. import permuter_claims
 from ..hostenv import NO_WINDOW
 from ..network import NetworkError
-from . import edition, local_claims, workers
+from . import edition, workers
 
 log = logging.getLogger("decompdecomp")
 # Shared modules can be imported lazily after an update. Replace the child when
@@ -106,7 +106,7 @@ class PermuterWorker:
                                  count_turn=count_turn)
 
     def _let_go(self, agent, fn) -> None:
-        local_claims.release(self.net, agent, fn)
+        permuter_claims.release(self.net, agent, fn)
 
     def parent_threads(self, configured) -> int:
         """The app keeps one worker while the child owns the rest of the CPU budget."""

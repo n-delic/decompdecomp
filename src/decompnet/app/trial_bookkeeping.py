@@ -10,6 +10,7 @@ from itertools import groupby
 from .. import compile_timing
 
 _current = ContextVar('trial_bookkeeping', default=None)
+_turn = ContextVar('turn_bookkeeping', default=None)
 _FLUSHES = [0]  # transactions this process has committed through a Batch: rows read before one are stale after it
 _STORED = {}
 _STORED_LOCK = threading.Lock()
@@ -44,14 +45,15 @@ class Batch:
     def buffer(self, store):
         found=next((buffer for buffer in self.buffers if buffer['store'] is store),None)
         if found is None:
-            found={'store':store,'pending':[],'values':{},'bytes':0,'counters':{}}
+            found={'store':store,'pending':[],'values':{},'bytes':0,'counters':{},'cleanup':{}}
             self.buffers.append(found)
         return found
 
     def flush(self, store=None, *, final=None):
         for buffer in list(self.buffers):
             if store is not None and buffer['store'] is not store:continue
-            statements=[*buffer['pending'],*((sql,args) for (sql,_),args in buffer['counters'].items())]
+            statements = [*buffer['pending'], *((sql, args) for (sql, _), args in buffer['counters'].items()),
+                          *buffer['cleanup']]
             if statements or final is not None:
                 with compile_timing.phase('history_write'), buffer['store'].tx() as db:
                     for sql, group in groupby(statements,key=lambda statement:statement[0]):
@@ -71,6 +73,45 @@ class Batch:
         if not self.buffers:self.started = time.monotonic()
 
 
+class Turn:
+    """Advisory evidence shared by a function's paths until the owner finishes."""
+
+    def __init__(self):
+        self.batch = Batch()
+        self.lock = threading.Lock()
+        self.reads = {}
+
+
+def current_turn():
+    return _turn.get()
+
+
+@contextmanager
+def for_turn(turn):
+    token = _turn.set(turn)
+    try:
+        yield
+    finally:
+        _turn.reset(token)
+
+
+def submit_final(store, statements):
+    if not statements:
+        return
+    turn = current_turn()
+    if turn is None:
+        submit(store, statements, immediate=True)
+        return
+    with turn.lock:
+        turn.batch.buffer(store)['pending'].extend(statements)
+
+
+def cleanup_final(store, sql, args):
+    turn = current_turn()
+    with turn.lock:
+        turn.batch.buffer(store)['cleanup'][(sql, args)] = None
+
+
 def current():
     value = _current.get()
     return value if value is not None and value.owner == threading.get_ident() else None
@@ -82,11 +123,11 @@ def flush(store=None):
 
 
 def flush_with(store, sql, rows, count):
-    """Stream a function's completed miss records with the store's last advisory counters."""
-    batch = current() or Batch()
+    """Stream a function's completed miss records with the store's advisory evidence."""
+    turn = current_turn()
+    batch = turn.batch if turn is not None else current() or Batch()
     batch.buffer(store)
     batch.flush(store, final=(sql, rows, count))
-
 
 def lookup(store, key):
     value = current()
@@ -99,7 +140,17 @@ def stored(store, key, load):
     """`load()`'s rows for `key`, read at most once a STORED_SECONDS and again after any flush of this process: the
     policy tables are read before every batch of candidates, and each read was a query (a quarter of a core of a
     sampled permuter worker) for rows that change by a few counts a second. Another process's writes show up within
-    a second; this process's own are added by pending_counters until they are flushed, and a flush drops the copy."""
+    a second; this process's own are added by pending_counters until they are flushed, and a flush drops the copy.
+    Deep searches keep this advisory snapshot for the function and overlay all of its paths’ counters."""
+    turn = current_turn()
+    if turn is not None:
+        slot = (id(store), key)
+        with turn.lock:
+            if slot in turn.reads:
+                return turn.reads[slot]
+        rows = load()
+        with turn.lock:
+            return turn.reads.setdefault(slot, rows)
     now = time.monotonic()
     slot = (id(store), key)
     with _STORED_LOCK:
@@ -123,8 +174,15 @@ def pending_counters(store, sql):
     """The counter rows `count` has queued for `store` under this exact SQL and not yet written: {key arguments: the
     queued arguments}. A reader that needs the totals can add these to the stored rows instead of flushing the batch,
     which is a transaction through the project's single writer each time."""
-    value = current()
-    buffer = next((b for b in value.buffers if b['store'] is store), None) if value is not None else None
+    turn = current_turn()
+    if turn is not None:
+        with turn.lock:
+            return _pending_counters(turn.batch, store, sql)
+    return _pending_counters(current(), store, sql)
+
+
+def _pending_counters(batch, store, sql):
+    buffer = next((b for b in batch.buffers if b['store'] is store), None) if batch is not None else None
     if buffer is None:
         return {}
     return {slot[1]: args for slot, args in buffer['counters'].items() if slot[0] == sql}
@@ -152,10 +210,22 @@ def count(store, sql, args, key, merge=None, *, immediate=False, memo=None):
     """A counter upsert (attempted+N and the like): within a batch, one with the same SQL and key (`key` leading
     arguments) is merged into the pending one by `merge(old, new)`, so a batch writes one row per key rather than
     one per trial. The deep search wrote three counter rows for every candidate through the single writer."""
+    turn = current_turn()
+    if turn is not None:
+        with turn.lock:
+            _count(turn.batch, store, sql, args, key, merge, memo)
+        return
     value = current()
     if value is None:
         submit(store, [(sql, args)], immediate=immediate)
         return
+    _count(value, store, sql, args, key, merge, memo)
+    if immediate:value.flush(store)
+    elif (value.bytes >= value.max_bytes or value.statement_count >= value.max_statements
+          or time.monotonic()-value.started >= value.seconds):value.flush()
+
+
+def _count(value, store, sql, args, key, merge, memo):
     buffer = value.buffer(store)
     slot = (sql, tuple(args[:key]))
     old = buffer['counters'].get(slot)
@@ -170,9 +240,6 @@ def count(store, sql, args, key, merge=None, *, immediate=False, memo=None):
             buffer['bytes'] -= sum(len(arg.encode()) for arg in old if isinstance(arg, str))
     if old is None:
         buffer['bytes'] += len(sql.encode()) + 64*len(args)
-    if immediate:value.flush(store)
-    elif (value.bytes >= value.max_bytes or value.statement_count >= value.max_statements
-          or time.monotonic()-value.started >= value.seconds):value.flush()
 
 
 def sums(old, new, key, *, first=(), last=(), newest=None):
@@ -211,5 +278,7 @@ def buffered(function):
     def run(*args, **kwargs):
         log = kwargs.get('log') or (args[5] if len(args)>5 else None)
         maximum = getattr(getattr(log, 'compile_pool', None), 'maximum', False)
-        with scope(maximum):return function(*args, **kwargs)
+        turn = getattr(log, 'advisory_turn', None) or current_turn()
+        with for_turn(turn), scope(maximum):
+            return function(*args, **kwargs)
     return run

@@ -198,6 +198,63 @@ def test_function_miss_cache_reads_once_and_flushes_on_stop(data, monkeypatch):
         reopened.conn.close()
 
 
+def test_stop_flushes_misses_cursor_handoff_and_counters_in_one_transaction(data, monkeypatch):
+    from decompnet.app import deep_handoff, experiment_evidence, proposal_progress
+    from decompnet.app.deep_sweep import Sweeps
+    from decompnet.app.support import Jobs
+    from decompnet.store import Store
+    from decomprepair.debug_boundary_repairs import FAMILY
+
+    net, _, pid, fid = data
+    store = net.store
+    fn = dict(net._function('target', 'game'))
+    proj = {'id': pid, 'arch': 'mips'}
+    source = fn['best_source']
+    sweeps = Sweeps(net, Jobs())
+    experiment_evidence.prepare(net, pid)
+    proposal_progress.prepare(net, pid)
+    monkeypatch.setattr(experiment_evidence, 'build_scope', lambda *args: 'fixed build')
+    monkeypatch.setattr(deep_handoff, 'smallest_block', lambda *args: [('r', 'target', 'draft')])
+    pool = [(FAMILY, f'int target(void){{return {n};}}') for n in range(4)]
+    baseline_scope = experiment_evidence.scope(net, proj, fn, source)
+    tx, writes = store.tx, []
+
+    def observed(*args, **kwargs):
+        writes.append(1)
+        return tx(*args, **kwargs)
+
+    monkeypatch.setattr(store, 'tx', observed)
+    with pytest.raises(RuntimeError, match='Stop'), search_history.function_turn(Log(), store, fid) as misses:
+        for index in range(3):
+            experiment_evidence.record(net, fn, baseline_scope, 'frame', source,
+                                       source + str(index), 5, 5, 'same', 'same', 1)
+        assert experiment_evidence.effect_rows(store, fid, baseline_scope)[0]['attempted'] == 3
+        assert deep_handoff.save(net, proj, fn, source, [])
+        assert not deep_handoff.brief(net, proj, fn, source)
+        order, cursor = proposal_progress.order(net, proj, fn, source, pool)
+        assert order == pool and cursor is not None
+        for _, candidate in pool[:2]:
+            cursor.measured(FAMILY, candidate, 5)
+        assert proposal_progress.order(net, proj, fn, source, pool)[0][0] == pool[2]
+        sweeps.record_recipes(fid, {'frame': (3, 0, 0, 0, 0, 0)}, [], project=pid)
+        misses.record('deep-v1:stored', 'miss', 'test', '5')
+        assert writes == []
+        raise RuntimeError('Stop')
+
+    assert writes == [1]
+    reopened = Store(store.path)
+    try:
+        assert reopened.one('SELECT feedback FROM reuse_trials WHERE signature=?', 'deep-v1:stored')[0] == '5'
+        assert reopened.one('SELECT tested FROM deep_permutation_recipes WHERE function_id=?', fid)[0] == 3
+        assert reopened.one('SELECT attempted FROM repair_input_effects WHERE function_id=?', fid)[0] == 3
+        assert reopened.one('SELECT last_source FROM repair_proposal_progress WHERE function_id=?', fid)[0] == hashlib.sha256(pool[1][1].encode()).hexdigest()
+        handoff = reopened.one('SELECT value FROM settings WHERE key=?', 'deep-handoff:' + str(fid))
+        assert json.loads(handoff[0])['families'][0]['attempted'] == 3
+    finally:
+        reopened.close_readers()
+        reopened.conn.close()
+
+
 def test_zero_day_cleanup_is_rejected_and_reference_map_can_rebuild(data):
     net,a,_,fid=data
     old=attempt(net,a,fid,'loss');attempt(net,a,fid,'latest')
