@@ -166,3 +166,36 @@ def test_export_tracks_reviewed_function_in_its_own_overlapping_bank():
     result=_export_segments(layout,[{'vram':base+0x10,'rom_offset':0x150,'size':12}])
     assert result['segments'][0]['subsegments'][1][0]==0x118
     assert result['segments'][1]['subsegments'][1][0]==0x15c
+
+
+def test_export_rejoins_cut_scoped_bank_without_mutating_project():
+    from decompnet.rom.reviewed import restore_cut_banks
+
+    bank = {'type': 'code', 'name': 'bank', 'start': 0x100, 'vram': 0x80001000,
+            'exclusive_ram_id': 'slot', 'subsegments': [[0x100, 'c', 'a'], [0x120, 'bin', 'gap'],
+                                                      [0x140, 'c', 'b']]}
+    fragment = {'type': 'code', 'name': 'part', 'start': 0x120, 'vram': 0x80001020,
+                'subsegments': [[0x120, 'c', 'part']]}
+    original = {'segments': [bank, fragment, {'type': 'bin', 'start': 0x138}, {'type': 'bin', 'start': 0x180}, [0x200]]}
+    restored = restore_cut_banks(original)
+    assert original['segments'][1] == fragment
+    assert restored['segments'] == [bank, {'type': 'bin', 'start': 0x180}, [0x200]]
+    row = {'name': 'saved', 'vram': 0x80001040, 'rom_offset': 0x140, 'size': 8}
+    assert _export_segments(original, [row])['segments'] == restored['segments']
+
+
+@pytest.mark.parametrize('change', [
+    {'vram': 0x80002020},
+    {'exclusive_ram_id': 'other'},
+    {'subsegments': [[0x120, 'c', 'part'], [0x130, 'data']]},
+    {'bss_size': 16},
+])
+def test_cut_bank_does_not_consume_independent_fragments(change):
+    from decompnet.rom.reviewed import restore_cut_banks
+
+    bank = {'type': 'code', 'name': 'bank', 'start': 0x100, 'vram': 0x80001000,
+            'exclusive_ram_id': 'slot', 'subsegments': [[0x100, 'c', 'a'], [0x140, 'c', 'b']]}
+    fragment = {'type': 'code', 'name': 'part', 'start': 0x120, 'vram': 0x80001020,
+                'subsegments': [[0x120, 'c', 'part']], **change}
+    original = {'segments': [bank, fragment, {'type': 'bin', 'start': 0x180}, [0x200]]}
+    assert restore_cut_banks(original) == original
