@@ -27,6 +27,7 @@ def enabled(cfg) -> bool:
 def transplant(donor, target, syms, pa, pb, ops_a, ops_b, header_a, header_b, big):
     """[source] for `target` from `donor`'s matched C (rows with name, target, relocs, matched_source), or [] when
     the names can't be mapped consistently. `pa`/`pb`: their prints (twins.rom_print), `ops_*` their mnemonics."""
+    from . import twin_fields
     from .similar_matches import _aligned_prints, literal_variants, relocations
     from .twins import _declared, apply, rom_renames
 
@@ -34,10 +35,11 @@ def transplant(donor, target, syms, pa, pb, ops_a, ops_b, header_a, header_b, bi
     if not source:
         return []
     if [(o, t) for o, t, _ in relocations(donor)] == [(o, t) for o, t, _ in relocations(target)]:
-        names = rom_renames(syms, source, pa, pb, donor['name'], target['name'])
+        left, right = pa, pb
     else:
         left, right = _aligned_prints(donor, target, pa, pb, ops_a, ops_b)
-        names = rom_renames(syms, source, left, right, donor['name'], target['name'])
+    used_a, used_b = left.addrs, right.addrs
+    names = rom_renames(syms, source, left, right, donor['name'], target['name'])
     if names is None:
         return []
     names = {**names, donor['name']: target['name']}
@@ -45,7 +47,10 @@ def transplant(donor, target, syms, pa, pb, ops_a, ops_b, header_a, header_b, bi
     names = {old: new for old, new in names.items() if old in words}
     prelude = _declared(header_a, header_b, names, donor['name'])
     moved = apply(source, names)
-    out = [prelude + moved]
+    # another field of the same table, or a literal where the donor loads a global (app/twin_fields.py)
+    out = [prelude + v for v in twin_fields.variants(source, names, list(zip(used_a, used_b)), donor, target, syms,
+                                                     apply, big)]
+    out.append(prelude + moved)
     out += [prelude + v for v in literal_variants(moved, donor, target, big)]
     return list(dict.fromkeys(out))
 
@@ -79,5 +84,5 @@ def candidates(net, proj, fn, header):
         except Exception:  # noqa: BLE001 - a donor the alignment can't read costs only its candidate
             continue
         note = f'/* draft from the matched look-alike {donor["name"]} ({score:.0%} similar), tried by autopilot */\n'
-        out += [('twin_draft', note + source) for source in sources[:2]]
+        out += [('twin_draft', note + source) for source in sources[:3]]
     return out

@@ -283,6 +283,8 @@ def rom_renames(syms, source: str, a: Print, b: Print, a_name: str, b_name: str,
                 break
         if base is None:
             continue  # the C doesn't name it (a literal, a string it defines): the judge compares the values
+        if base.name == a_name and 0 < in_a - base.address < a.size:
+            continue  # a jump to the function's own body, not a name for the C to write
         to = in_b - (in_a - base.address)
         other = (syms_b or syms).by_addr.get(to)
         name = other.name if other is not None else f"D_{to:08X}"

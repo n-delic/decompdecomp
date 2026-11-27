@@ -663,7 +663,7 @@ def run(twins, slug: str, job, *, function_ids=None) -> int:
     symbol_state = [(r['name'], r['address']) for r in net.project_store(proj['id']).all(
         'SELECT name,address FROM symbols WHERE project_id=? ORDER BY name', proj['id'])]
     source_cache, ops_cache = {}, {}
-    from . import address_repairs, parameter_transfers, regional_layouts, reuse_donors
+    from . import address_repairs, parameter_transfers, regional_layouts, reuse_donors, twin_fields
     donors = reuse_donors.Donors(net, proj, include_self=True)
     layouts = {pid: regional_layouts.learn(net, proj, other) for pid, other in others.items()}
     maps = {pid: regional_names(twins, proj, other) for pid, other in others.items()}
@@ -875,6 +875,7 @@ def run(twins, slug: str, job, *, function_ids=None) -> int:
                 if local is not None:
                     local = {**local, **learned}
             else:
+                left, right = pa, pb
                 local = rom_renames(syms_a, a['matched_source'], pa, pb, a['name'], b['name'], theirs) if aligned else {}
             names = None if local is None else {**learned, **local, a['name']: b['name']}
             if names is None:
@@ -891,6 +892,10 @@ def run(twins, slug: str, job, *, function_ids=None) -> int:
                                                     for v in parameter_sources] + parameter_sources))
             donor = json.loads(a['compiler'])
             literals = literal_variants(source, a, b, big)
+            # In its own game only: another field of one table, or a literal where the donor loads a global
+            # (app/twin_fields.py)
+            fields = [prelude + v for v in twin_fields.variants(a['matched_source'], names, list(zip(left.addrs, right.addrs)),
+                                                                a, b, syms_a, apply, big)] if theirs is None else []
             transfers = [(v, own, 'transfer') for v in
                          [source, *literals, *regional_layouts.variants(source, a, b, layouts[other['id']], big)]]
             variants = [(v, own, 'parameter transfer') for v in parameter_sources] + transfers[:1]
@@ -905,6 +910,8 @@ def run(twins, slug: str, job, *, function_ids=None) -> int:
             if (donor_toolchain and codegen_key(donor) != own_codegen and not donor.get('cmd') and not own.get('cmd')
                     and (same_game or donor_toolchain in supported_compilers) and toolchains.installed(donor_toolchain)):
                 variants.append((source, donor, 'profile'))
+                variants += [(v, donor, 'profile') for v in fields[:1]]
+            variants += [(v, own, 'transfer') for v in fields[:2]]
             variants += transfers[1:]
             variants.append((source, own, 'literals'))
             plain = None
