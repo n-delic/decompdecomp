@@ -1200,3 +1200,53 @@ def test_cache_fallthrough_does_not_absorb_identified_sdk_tail(monkeypatch, kind
     monkeypatch.setattr(console, f'sdk_{kind}_identity', lambda *args, **kwargs: {'name': 'sdk'})
     monkeypatch.setattr(console, f'sdk_{kind}_sizes', (0, 100) if kind == 'shape' else (20,))
     assert not cache_fallthrough(*functions, image, console, 'big', segments, set(), [])
+
+
+@pytest.mark.parametrize('case', ['loaded', 'missing_double', 'missing_float', 'entry', 'pointer', 'clobbered'])
+def test_segment_start_inside_loaded_floating_constants_is_data(case):
+    # The double starts in the preceding data segment; its second word and a
+    # separately loaded float were mistaken for a function at the code start.
+    address = BASE + 4
+    hi = 0x3c010000 | ((BASE + 0x8000) >> 16)
+    double = 0xd4200000 | (BASE & 0xffff)
+    single = 0xc4200000 | ((BASE + 8) & 0xffff)
+    words = [0x3f1a36e2, 0xeb1c432d, 0x38d1b717, 0, *BODY,
+             hi, double, hi, single, 0x03e00008, 0]
+    if case == 'missing_double': words[13] = 0
+    if case == 'missing_float': words[15] = 0
+    if case == 'clobbered': words[13] = 0x24010000
+    image, functions, _ = fixture(words, cuts=(0, 4, 12, 16, 48, 72))
+    functions = [functions[1], *functions[3:]]
+    segments = [Segment('code', 4, len(image), address)]
+    if case == 'pointer': image += address.to_bytes(4, 'big')
+    symbols = [f'entry = 0x{address:08X}; // type:func'] if case == 'entry' else []
+    data = [DataSymbol('constant', BASE, 0, 4, 'data')]
+    result = repair(functions, data, image, consoles.get('n64'), segments, symbols=symbols)
+    assert any(fn.rom == 4 for fn in result) == (case != 'loaded')
+    assert any(item.rom == 4 and item.size == 8 for item in data) == (case == 'loaded')
+
+
+@pytest.mark.parametrize('case', ['record', 'no_load', 'no_stack_address', 'call', 'pointer', 'open_predecessor'])
+def test_closed_overlay_terminal_loaded_pointer_record_is_data(case):
+    address = BASE + 12
+    upper = ((address + 0x8000) >> 16) & 0xffff
+    inside = address + 4
+    words = [0x03e00008, 0, 0, 0x800a1000, 4,
+             0x3c010000 | upper, 0x8c220000 | (address & 0xffff),
+             0x3c030000 | ((inside + 0x8000) >> 16), 0x24630000 | (inside & 0xffff),
+             0xafa30004, 0x03e00008, 0]
+    if case == 'no_load': words[6] = 0
+    if case == 'no_stack_address': words[9] = 0
+    if case == 'call': words[10] = 0x0c000000 | ((address >> 2) & 0x3ffffff)
+    if case == 'open_predecessor': words[0] = 0
+    image, functions, _ = fixture(words, cuts=(0, 8, 12, 20, 48))
+    functions = [functions[0], functions[2], functions[3]]
+    # The assembly reader annotates both halves of a typed symbolic access.
+    functions[2].lines[0] = replace(functions[2].lines[0], operands=f'$at, %hi({functions[1].name})')
+    functions[2].lines[1] = replace(functions[2].lines[1], operands=f'$v0, %lo({functions[1].name})($at)')
+    segments = [Segment('overlay', 0, 20, BASE), Segment('caller', 20, 48, BASE + 20)]
+    if case == 'pointer': image += address.to_bytes(4, 'big')
+    data = []
+    result = repair(functions, data, image, consoles.get('n64'), segments)
+    assert any(fn.rom == 12 for fn in result) == (case != 'record')
+    assert any(item.rom == 12 and item.size == 8 for item in data) == (case == 'record')
