@@ -731,6 +731,20 @@ def test_export_removes_foreign_bank_labels_only(tmp_path):
                                   'nonmatching real\nglabel real\n/* 000204 80001004 03E00008 */ jr $ra\n')
 
 
+def test_export_removes_a_foreign_entrys_matching_endlabel(tmp_path):
+    from decompnet.rom.export import remove_foreign_bank_labels
+
+    folder = tmp_path/'asm'/'nonmatchings'
+    folder.mkdir(parents=True)
+    source = folder/'bank.s'
+    source.write_text('glabel foreign\n/* 000200 80001000 00000000 */ .word 0\nendlabel foreign\n'
+                      'glabel own\n/* 000204 80001004 03E00008 */ jr $ra\nendlabel own\n')
+    remove_foreign_bank_labels(tmp_path, [dict(name='foreign', rom_offset=0x100),
+                                          dict(name='own', rom_offset=0x204)])
+    assert source.read_text() == ('/* 000200 80001000 00000000 */ .word 0\n'
+                                  'glabel own\n/* 000204 80001004 03E00008 */ jr $ra\nendlabel own\n')
+
+
 def test_export_keeps_scoped_local_labels_only_in_their_rom_bank(tmp_path):
     from decompnet.rom.export import remove_foreign_bank_labels
 
