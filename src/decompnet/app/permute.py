@@ -47,7 +47,7 @@ from ..network import NetworkError
 from ..permuter import MUTATIONS, mutate
 from ..project import compiler_for
 from ..repair_feedback import trial as repair_trial
-from . import deep_line_order, draft_repairs, float_literal_words, local_claims, switch_tables, workers
+from . import deep_line_order, draft_repairs, float_literal_words, local_claims, repair_asm, switch_tables, workers
 from .trial_bookkeeping import buffered
 
 log = logging.getLogger("decompdecomp")
@@ -540,7 +540,7 @@ class Permuter:
             # docs/learnings). Propose from the source as it is judged now.
             from .function_names import canonical_source
             parent = canonical_source(fn, fn['best_source'])
-            candidates = draft_repairs.variants(parent, fn['name'], proj['arch'], fn['asm'] or '', flags=compiler_for(self.net.cfg(proj),fn['vram'], fn).get('flags',[]) if not fork else [], labels=labels,header=header,limit=None,tables=switch_tables.read(self.net,proj,fn),callees=draft_repairs.capture_followup_repairs.callee_evidence(self.net,proj,fn,parent),entry_scope=draft_repairs.promoted_entry_repairs.scope(self.net,proj,fn),words=float_literal_words.read(self.net,proj,fn))
+            candidates = draft_repairs.variants(parent, fn['name'], proj['arch'], repair_asm.current(self.net, proj, fn['asm'] or '', parent), flags=compiler_for(self.net.cfg(proj),fn['vram'], fn).get('flags',[]) if not fork else [], labels=labels,header=header,limit=None,tables=switch_tables.read(self.net,proj,fn),callees=draft_repairs.capture_followup_repairs.callee_evidence(self.net,proj,fn,parent),entry_scope=draft_repairs.promoted_entry_repairs.scope(self.net,proj,fn),words=float_literal_words.read(self.net,proj,fn))
             from decomprepair import normalization_repairs
 
             from . import repair_ranking
