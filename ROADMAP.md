@@ -887,6 +887,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Verified cleanup of rare compiler profiles | ✓ ROM mode | ✓ ROM mode | ✓ ROM mode | — | — | ✓ ROM mode | — | — | — | — | — | — |
 | Deep Permuter detects a near-match's compiler (`profile_detection`: its saved C under every installed profile, matched neighbours, the compiler map, code habits; told and tried first) | ✓ demo; copies of three real games | ✓ shared ROM path, unchecked | ✓ shared ROM path, unchecked | ✓ judge and neighbours, unchecked (code habits: MIPS only) | — | ✓ shared ROM path, unchecked | — | — per-file compilers: planned | — per-file compilers: planned | — per-file compilers: planned | — per-file compilers: planned | — the project's build |
 | Profile probe: the few per-function profiles an open function's target points to (`-mfp32`, `-G8`, SN 2.7.2's builds, the 0001 + 0004-assembler pack for any `ldc1` target, KMC for libultra, the profile most matched neighbours use, the project's most used per-function profiles, `-fforce-addr` for a target that reads offsets off a held symbol address), and every other -O level of the function's compiler (for the saved C and the machine draft, a clearly closer level then repaired by the Deep Permuter), judged once per saved C by the Deep Permuter and the autopilot's saved-source pass, an exact pair applied for that function only (`profile_probe`) | ✓ demo; the rules from ~1,000 hand matches of one SN 2.8.1 game | ✓ flag and neighbour rules (`-G`), unchecked | ✓ flag and neighbour rules (`-G`), unchecked | ✓ flag and neighbour rules, unchecked | — | ✓ flag and neighbour rules, unchecked | ✓ -O levels and neighbour rules, unchecked | — per-file compilers: planned | — per-file compilers: planned | — per-file compilers: planned | — per-file compilers: planned | — the project's build |
+| Drafts under other profiles: after the background drafts, each open function's stored draft, a fresh draft and its saved C judged under the profiles the project's matched functions use (and the other `-mfp` flag where the target's float registers point to it), an exact pair applied for that function only, the closest kept as its closest attempt (`profile_drafts`) | ✓ demo, `-mfp32`/`-mfp64` variants | ✓ shared ROM path, unchecked (no demo compiler here) | ✓ shared ROM path, unchecked | — no machine drafts: m2c can't read its code | — the project's build | ✓ shared ROM path, unchecked | ✓ shared ROM path, unchecked | — per-file compilers: planned | — per-file compilers: planned | — per-file compilers: planned | — per-file compilers: planned | — the project's build |
 | Repair rules learnt from the Deep Permuter's matches (`mined_rules`): a statement-sized change that made two different matches becomes a rule, tried first on other functions (C only) | ✓ unit tests; extraction measured on saved matches | ✓ shared, unchecked | ✓ shared, unchecked | ✓ shared, unchecked | ✓ shared, unchecked | ✓ shared, unchecked | ✓ shared, unchecked | ✓ shared, unchecked | ✓ shared, unchecked | ✓ shared, unchecked | ✓ shared, unchecked | ✓ shared, unchecked |
 | Flag search (`search_flags`) | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — (the project's flags only) | per source file (/Oy- on 32-bit, /O1, /Ob1) | per source file | — (the project's flags only) | the project's build |
 | Compiler map and the judge's survey | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ from scratch: per source file (its own compilers, nearest first); else the project's build | ✓ per source file, Rich header | the XDK build's compiler (no Rich header: one per game) | ✓ from scratch: per source file (its own compilers, nearest first); else the project's build | — |
@@ -2421,8 +2422,22 @@ check the pass on each console in the table, GBA, PS4 and project mode included.
 The app keeps each open function's closest compile under another compiler profile and the briefs hand it on
 (`app/profile_attempts.py`). Not covered yet: PS4 and public decomps, whose own build owns the compiler and flags, so
 there is no other profile to try; carrying the attempt in saves, rooms and hosted projects (it stays in this computer's
-project database); compiles by the app's own background profile searches (profile probes, Deep Permuter sweeps), which
-keep their own records; and judging an ordinary compile_and_diff under other profiles unasked.
+project database); compiles by the profile probes and the Deep Permuter's sweeps, which keep their own records (the
+drafts under other profiles, `app/profile_drafts.py`, keep their closest here); and judging an ordinary compile_and_diff
+under other profiles unasked.
+
+### Drafts under other profiles in project mode, and on the PS3
+
+After the background drafts, a ROM project's open functions have their stored draft, a fresh draft and their saved C
+judged under the profiles its matched functions use, and an exact pair is applied for that function only
+(`app/profile_drafts.py`, run by the drafter, `app/drafts.py`). Not covered yet: project mode (GameCube, Wii, Windows
+PC, Xbox, DS and public decomps), where a source file owns its compiler and flags (`Console.file_compiler`), so "the
+profiles matched functions use" are the compilers and flags of the other files. Next: take those from the files with
+matches, judge each function's draft and saved C through `try_compiler`'s per-file path (`app/filecompilers.py`),
+which switches a file only when the function matches and the file's other matches still do. The PS3 has no machine
+drafts (m2c can't read PPU code), so the drafter never starts there: its saved C could still be judged by the same pass
+started without drafts. The PS1, PS2, PSP and GBA columns run the shared ROM path but were not run on their demos here
+(their compilers were not installed); the float-register variant is MIPS GCC with an `-mfp` flag only.
 
 ### Profile probes for project mode
 

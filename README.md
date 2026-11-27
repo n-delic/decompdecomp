@@ -153,6 +153,16 @@ Claimed functions and unresolved boundaries are skipped; Stop keeps completed wo
 in a function shows separate generation, compiler and linking failures. Unchanged failed inputs are cached;
 explicit regeneration opens a new pass. No AI calls are made.
 
+After the background drafts are made, a ROM project's open functions are also tried under the other compiler
+profiles its matched functions already use. Each function's stored draft, a freshly made draft and its saved C are
+judged under those profiles. A MIPS GCC function whose float registers point to the other register file is judged
+with the other `-mfp32`/`-mfp64` flag too. Only an exact result is applied, and only to that function, as an
+ordinary function-only compiler suggestion (with automatic compiler changes off, it waits on the project page). The
+project's default compiler and its ranges never change. The closest result that is not exact is kept as the
+function's closest attempt under another profile. The pass runs again when a draft changes, when the saved C changes
+or when a profile gets its first match; finished functions are not judged again. It appears in **Background work** as
+**Drafts under other profiles**, with Stop, and runs only while the project is being worked on.
+
 Initial MIPS drafts can try private callback-table declarations, missing forwarded arguments, and overlapping
 stack views in one original-sized frame. Known-size original tables, constants and strings use the selected
 overlay's reader. Malformed irregular switches get one bounded alternative. These are hypotheses: compilation
