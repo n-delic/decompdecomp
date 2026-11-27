@@ -8,6 +8,7 @@ each round, spending its compiles walking the same list again: a replay stalled 
 families the context the local lane gives and, under a profile that only flips the floating-point model, first runs a
 best-child chain of the families under it (repair_chain)."""
 import time
+from collections import Counter
 from types import SimpleNamespace
 
 from decompnet.app import profile_climb
@@ -145,3 +146,51 @@ def test_the_families_are_given_the_local_lanes_context(monkeypatch):
     assert profile_climb.proposal_options(search, PROJ, FN, 'A', 'H') == dict(limit=None, header='H')
     del search.net.fork_slug  # (a search with no project: the header alone, never a failed climb)
     assert profile_climb.proposal_options(search, PROJ, FN, 'A', 'H') == dict(limit=None, header='H')
+
+
+# --- the profiles matched functions use -------------------------------------------------------------------------------
+
+USUAL = {'toolchain': 'other', 'flags': ['-G0', '-O2', '-mfp64']}
+
+
+def usual_search(monkeypatch, scores, used=5, children=None):
+    given, probed = setup(monkeypatch, children or {'A': [('callee_arity_trim', 'B')], 'B': [('default_into_then', 'C')]},
+                          options={})
+    monkeypatch.setattr('decompnet.app.profile_detection.neighbours', lambda net, proj, cfg, fn: (Counter(), 0))
+    search = Search(scores)
+    search.net.cfg = lambda proj: {'function_compilers': {str(i): dict(USUAL) for i in range(used)}}
+    return search, probed
+
+
+def test_a_near_match_is_repaired_under_the_profile_matched_functions_use_though_it_scores_worse(monkeypatch):
+    # 15 under its own settings, 25 under the other profile, exact there two repairs later
+    search, probed = usual_search(monkeypatch, {'A': 25, 'B': 15, 'C': 0})
+    assert profile_climb.explore_usual(search, None, PROJ, FN, 'A', 15, check=lambda: None) is True
+    assert probed == [('C', USUAL)]
+    assert all(list(flags) == USUAL['flags'] for flags, _ in search.judged)
+    assert any('default_into_then' in line for line in search.logs)
+
+
+def test_a_far_match_or_a_rarely_used_profile_gets_no_usual_chain(monkeypatch):
+    search, probed = usual_search(monkeypatch, {'A': 25, 'B': 15, 'C': 0})
+    assert profile_climb.explore_usual(search, None, PROJ, FN, 'A', 4000, check=lambda: None) is False
+    search, probed = usual_search(monkeypatch, {'A': 25, 'B': 15, 'C': 0}, used=2)
+    assert profile_climb.explore_usual(search, None, PROJ, FN, 'A', 15, check=lambda: None) is False
+    assert not search.judged and not probed
+
+
+def test_the_neighbours_profile_comes_before_the_projects(monkeypatch):
+    near = ('near', ('-O1',))
+    monkeypatch.setattr('decompnet.app.profile_detection.neighbours',
+                        lambda net, proj, cfg, fn: (Counter({near: 3}), 3))
+    cfg = {'function_compilers': {str(i): dict(USUAL) for i in range(5)}}
+    assert profile_climb.usual_profiles(None, PROJ, cfg, FN, OWN) == [{'toolchain': 'near', 'flags': ['-O1']}, USUAL]
+
+
+def test_explore_tries_the_usual_profiles_when_no_profile_leads(monkeypatch):
+    search, probed = usual_search(monkeypatch, {'A': 25, 'B': 15, 'C': 0})
+    search.deadline = time.monotonic() + 600
+    monkeypatch.setattr(profile_climb, 'lead', lambda *a, **k: None)
+    monkeypatch.setattr('decompnet.app.profile_detection.detected', lambda net, proj, fn: None)
+    assert profile_climb.explore(search, None, PROJ, FN, 15) is True
+    assert probed == [('C', USUAL)]

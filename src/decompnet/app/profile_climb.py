@@ -10,6 +10,8 @@ After the local repairs, the profiles that compiler_fingerprints ranks best for 
 compiler's flag variants) are measured on the current C. When one scores strictly better than the function's own
 settings, a bounded greedy search runs under it: the same proposals the local repairs use (draft_repairs) and the
 library's random rewrites, each judged with the judge's linked verdict under that profile, keeping a best of its own.
+A near-match also gets a short best-child chain of the repairs under the profiles its matched neighbours and the
+project's other functions use, whether or not the C scores better there as it stands (explore_usual).
 An exact result goes through deep_profiles.probe, which rechecks the source/profile pair and suggests the setting:
 nothing here changes a function's settings or records a score under its own profile.
 """
@@ -27,6 +29,9 @@ RANDOM_PER_ROUND = 24  # random rewrites tried after each round of local proposa
 CHAIN_SHARE = 2  # a floating-point profile's repair chain may use at most this fraction (1/2) of the climb's compiles
 CHAIN_STEPS = 4  # ... in at most this many steps of best-child greedy search
 CHAIN_CHILDREN = 100  # ... judging at most this many children a step
+USUAL_NEIGHBOUR = 1  # profiles of matched neighbours given a repair chain although the current C scores worse there
+USUAL_COMMON = 2  # ... and the project's most used per-function profiles
+USUAL_COMPILES = 2 * CHAIN_CHILDREN  # compiles one such chain may spend
 FP_FIRST = ('float_literal', 'double_literal', 'operand_order')  # families whose names say they fix FP constants/operands
 
 
@@ -129,6 +134,65 @@ def neighbour_profile(net, proj, cfg, fn, tested):
         if votes >= 2 and (toolchain, flags) not in excluded:
             return {'toolchain': toolchain, 'flags': list(flags)}
     return None
+
+
+def usual_profiles(net, proj, cfg, fn, own) -> list[dict]:
+    """The profiles other matched functions were built with, other than the function's own: the one most of its matched
+    neighbours use (at least two), then the project's most used per-function profiles."""
+    from .profile_detection import neighbours
+    from .profile_probe import COMMON_MIN, key
+
+    mine = key(own)
+    votes, _ = neighbours(net, proj, cfg, fn)
+    near = [k for k, n in votes.most_common() if n >= 2 and k != mine][:USUAL_NEIGHBOUR]
+    used = Counter(key(p) for p in (cfg.get('function_compilers') or {}).values() if p.get('toolchain'))
+    common = [k for k, n in used.most_common() if n >= COMMON_MIN and k != mine and k not in near][:USUAL_COMMON]
+    return [{'toolchain': toolchain, 'flags': list(flags)} for toolchain, flags in near + common]
+
+
+def explore_usual(search, agent, proj, fn, source, own_score, *, check) -> bool:
+    """A short repair chain of a near-match under each of the profiles matched functions use, even where the C as it
+    stands scores worse than under its own. True when one was exact (handed to deep_profiles.probe).
+
+    A random-range helper of an N64 game was 15 under the project's KMC GCC and 25 under the SN profile most of its
+    matched functions use, so no climb ever went there: exact there two repairs later (callee_arity_trim 15, then
+    default_into_then 0), while the same two under KMC stopped at a reload register no C can choose."""
+    from ..project import compiler_for
+    from . import deep_profiles
+    from .profile_detection import NEAR_MAX
+
+    if not 0 < own_score <= NEAR_MAX:
+        return False
+    try:
+        cfg = search.net.cfg(proj)
+        own = compiler_for(cfg, fn['vram'], fn)
+        if own.get('cmd'):
+            return False
+        profiles = usual_profiles(search.net, proj, cfg, fn, own)
+    except Exception:  # noqa: BLE001 - this is one more lead: without the project's records there is none
+        return False
+    for profile in profiles:
+        check()
+        key = profile['toolchain'] + ' ' + ' '.join(profile['flags'])
+        budget = min(USUAL_COMPILES, max(0, search.limit - search.tested) // CLIMB_SHARE)
+        if budget <= 0:
+            break
+        if key in search.profile_bests:
+            continue  # (the climb already searched under it)
+        score = _judge(search, proj, fn, profile, source)
+        if score is None or score > NEAR_MAX:
+            continue
+        best_source, best = source, score
+        if score:
+            search.log(f'Repair chain under {key}, which matched functions use, from score {score}.')
+            header = search.net._context(proj['id'], fn['unit'])['header']
+            best_source, best, _ = repair_chain(search, agent, proj, fn, source, score, profile, budget, check,
+                                                header, key)
+        search.profile_bests[key] = (best, best_source)
+        if best == 0:
+            deep_profiles.probe(search, agent, proj, fn, best_source, profile)
+            return True
+    return False
 
 
 def _judge(search, proj, fn, profile, source, *, require_clean=False):
@@ -392,7 +456,10 @@ def explore(search, agent, proj, fn, baseline, clean_profile=None):
                 search.check()
             else:
                 check()
-            return climb(search, agent, proj, fn, source, *found, require_clean=bool(clean_profile), check=check) == 0
+            if climb(search, agent, proj, fn, source, *found, require_clean=bool(clean_profile), check=check) == 0:
+                return True
+        if not clean_profile:
+            return explore_usual(search, agent, proj, fn, source, baseline, check=check)
     except _ProfileTimeElapsed:
         search.log('Alternate compiler profile time share reached; continuing with the current settings.')
     return False
