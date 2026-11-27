@@ -13,11 +13,12 @@ from decompnet.forks.scaffold import prepare
 
 @pytest.mark.skipif(shutil.which('ninja') is None and not (Path(sys.executable).parent / 'ninja').is_file(),
                     reason='needs ninja')
-def test_candidate_reuses_existing_ninja_rule_and_nested_program_assembly(tmp_path):
+@pytest.mark.parametrize('rule', ['compile_c', 'cc'])
+def test_candidate_reuses_existing_ninja_rule_and_nested_program_assembly(tmp_path, rule):
     root = tmp_path / 'project with spaces'
     root.mkdir()
     manifest = root / 'build.ninja'
-    manifest.write_text('rule compile_c\n  command = cp $in $out\nbuild existing.o: compile_c existing.c\n')
+    manifest.write_text(f'rule {rule}\n  command = cp $in $out\nbuild existing.o: {rule} existing.c\n')
     original = manifest.read_bytes()
     (root / 'existing.c').write_text('existing')
     target = root / '.decomp-wtf/verified-program-references-example/game/objects/abc.o'
