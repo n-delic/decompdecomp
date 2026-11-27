@@ -1292,6 +1292,11 @@ compilers have their years so far; every other console's compiler counts as unre
   changes a function's compiler by itself (`app/profile_detection.py`). ROM projects only (see "Compiler detection
   for project mode").
 
+- **A near-match is repaired under the profiles matched functions use.** Even when its saved C scores worse there, the
+  Deep Permuter now runs a short best-child chain of the repair families under the matched neighbours' profile and the
+  project's most used per-function profiles (`profile_climb.explore_usual`; an N64 function at 15 under its own
+  settings and 25 under the right ones was exact there two repairs later). ROM projects, like the rest of the climb.
+
 - **Scores follow the flow, not the instruction count (score version 3).** On a large function one instruction added
   or removed shifted every later branch (and jump to the function's own symbol), and each one cost 10 or, for a
   relocated jump, 150 as another call: a candidate that fixed a whole loop scored 2,175 against a best of 340. A branch
