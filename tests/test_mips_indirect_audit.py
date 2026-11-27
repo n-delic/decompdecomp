@@ -50,6 +50,26 @@ def test_unoptimized_switch_reloads_the_checked_frame_slot(order):
         assert found is None or found['state'] != 'validated'
 
 
+@pytest.mark.parametrize('order', ['big', 'little'])
+def test_guarded_switch_uses_a_separate_address_pair(order):
+    words = [0x2c430002, 0x1060000b, 0, 0x00021880, 0x3c048000, 0x24841100,
+             0x00641021, 0x8c430000, 0x00600008, 0, 0x03e00008, 0,
+             0x03e00008, 0, 0x03e00008, 0]
+    image = bytearray(0x1200)
+    image[0x1000:0x1040] = b''.join(w.to_bytes(4, order) for w in words)
+    image[0x1100:0x1108] = b''.join(w.to_bytes(4, order) for w in (0x80001028, 0x80001030))
+    ranges = [dict(rom_start=0x1100, rom_end=0x1108, vram=0x80001100)]
+    result = jump_table(image, 0x1000, 0x1040, 0x80001000, 0x1020, order, ranges)
+    assert result['state'] == 'validated' and result['entry_count'] == 2
+    for offset, word in ((0x1008, 0x24420001),  # changes the checked index
+                         (0x1014, 0x24851100),  # low half writes a different register
+                         (0x1038, 0x08000404)):  # enters after the guard
+        changed = bytearray(image)
+        changed[offset:offset+4] = word.to_bytes(4, order)
+        found = jump_table(changed, 0x1000, 0x1040, 0x80001000, 0x1020, order, ranges)
+        assert found is None or found['state'] != 'validated'
+
+
 @pytest.mark.parametrize('word,valid', [
     (0x306500F0, True),   # andi a1, v1, 0xf0
     (0x24650001, True),   # addiu a1, v1, 1
