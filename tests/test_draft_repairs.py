@@ -5,6 +5,7 @@ import threading
 
 import pytest
 
+from decompnet.app import draft_repairs
 from decompnet.app.draft_repairs import variants
 from decompnet.app.permute import State
 from tests.test_permute import AGENT, FakeNet, ProjectStub, ScriptedPermuter
@@ -42,11 +43,11 @@ def test_guard_with_call_returns_can_be_inverted():
 def test_nested_call_argument_boundary_and_opaque_text():
     src = 'int f(int x) { /* other(x, 123) */ return send(inner(x, 2), 0x40); }'
     out = variants(src, 'f', 'mips')
-    assert 'return send(inner(x, 2));' in out[0]
-    assert '/* other(x, 123) */' in out[0]
+    assert any('/* other(x, 123) */ return send(inner(x, 2));' in v for v in out)
     assert all('other(x, 123)' in v for v in out)
-    assert not variants('int f(int x) { return send(x, side_effect()); }', 'f', 'mips')
-    assert not variants('int f(int x) { return send(x, "abc"); }', 'f', 'mips')
+    # (other families may wrap the statement, never dropping what has an effect or isn't a literal or a name)
+    for call in ('send(x, side_effect())', 'send(x, "abc")'):
+        assert all(call in v for v in variants(f'int f(int x) {{ return {call}; }}', 'f', 'mips'))
 
 
 def test_only_requested_definition_and_no_directives():
@@ -75,6 +76,19 @@ def setup_repair_net(count=1):
     return net
 
 
+@pytest.fixture
+def argument_drop_only(monkeypatch):
+    """One proposal a function, the real argument drop: the round's cache, claim and stop rules are counted apart
+    from how many other families the library has for `return send(x, 7);` (run_weight_scope wraps it too)."""
+    real = draft_repairs.variants
+
+    def only(source, name, *args, **kwargs):
+        return [v for v in real(source, name, *args, **kwargs) if v == source.replace('send(x, 7)', 'send(x)')]
+
+    monkeypatch.setattr(draft_repairs, 'variants', only)
+
+
+@pytest.mark.usefixtures('argument_drop_only')
 def test_outside_cutoff_cached_and_does_not_spend_random_turns():
     net = setup_repair_net()
     perm = ScriptedPermuter(net, {})
@@ -93,6 +107,7 @@ def test_outside_cutoff_cached_and_does_not_spend_random_turns():
     assert len(perm.judged) == 2
 
 
+@pytest.mark.usefixtures('argument_drop_only')
 def test_rotation_claims_stop_and_exact_match_counts():
     net = setup_repair_net(21)
     perm = ScriptedPermuter(net, {'int f21(int x) { return send(x); }': 0})
@@ -109,6 +124,7 @@ def test_rotation_claims_stop_and_exact_match_counts():
     assert len(perm.judged) == 20
 
 
+@pytest.mark.usefixtures('argument_drop_only')
 def test_project_mode_uses_project_header_and_judge():
     net = setup_repair_net()
     net.fork_slug = lambda slug: 'fork'
@@ -154,6 +170,7 @@ def test_failed_judge_releases_claim_without_caching():
     assert not net.store.all('SELECT * FROM reuse_trials')
 
 
+@pytest.mark.usefixtures('argument_drop_only')
 def test_run_again_does_not_start_random_permutation_or_remote_room_work():
     net = setup_repair_net()
     net.local_agent = lambda name: (AGENT, None)
@@ -296,6 +313,7 @@ def test_one_unavailable_project_header_does_not_stop_the_remaining_repairs():
     assert not net.store.all('SELECT * FROM claims')
 
 
+@pytest.mark.usefixtures('argument_drop_only')
 def test_progress_movement_abandons_stale_repair_snapshot_without_caching(monkeypatch, caplog):
     from decompnet.app.progress import ProgressMoved
 
