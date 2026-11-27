@@ -470,3 +470,25 @@ def test_queued_machine_draft_skips_a_function_that_already_matches(fork, monkey
     result = net.forks.attempt(agent, slug, 'offset', OFFSET, keep=False)
     assert 'already matched' in result['text']
     assert result['score'] is None and not result['matched']
+
+
+@pytest.mark.parametrize('bad_first', [False, True])
+def test_autopilot_keeps_scored_draft_when_variant_is_rejected(fork, monkeypatch, bad_first):
+    """A generated declaration the editor cannot place must not erase a prior score."""
+    from decompnet.app import draft_reports
+
+    net, slug, agent = fork
+    proj = net.project_row(slug)
+    fn = net._function('scale', slug)
+    near = SCALE.replace('* 1.1', '+ 1.1')
+    bad = 'typedef struct {\n    int field;\n} Unplaceable;\n' + SCALE
+    variants = [('', near), ('', bad)]
+    if bad_first:
+        variants.reverse()
+    monkeypatch.setattr(net.forks, '_autopilot_drafts', lambda *args, **kwargs: iter(variants))
+    outcome = net.forks.autopilot_one(agent, proj, fn['id'])
+    report = draft_reports.read(net, fn['id'], project_id=proj['id'])
+    assert outcome in ('near', 'far')
+    assert report['complete'] and report['scored'] and report['trials'] == 2
+    assert any('compile_and_diff takes one function definition' in f['reason'] for f in report['failures'])
+    assert net._function('scale', slug)['attempts'] >= 1

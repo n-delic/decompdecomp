@@ -3990,7 +3990,15 @@ class ForkEngine:
                 _, span = self._find(code, names)
                 if span is None:
                     continue
-                res = self.attempt(agent, proj["slug"], fn["name"], code, keep=False, prelude=prelude)
+                try:
+                    res = self.attempt(agent, proj["slug"], fn["name"], code, keep=False, prelude=prelude)
+                except NetworkError as error:
+                    # One generated variant can contain declarations the fork's editor cannot place.
+                    # Keep earlier scored drafts and try the remaining variants instead of losing the run.
+                    report['trials'] += 1
+                    draft_reports.failure(report, 'candidate', 'project_draft', str(error))
+                    outcomes.append('fail')
+                    continue
                 report['trials'] += 1
                 report['compiled'] |= res.get('score') is not None
                 report['scored'] |= res.get('score') is not None
