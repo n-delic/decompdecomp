@@ -68,6 +68,21 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
     for dest,offset,segment in shared:
         references[dest].discard((offset,segment))
         if not references[dest]:del references[dest]
+    stale = stale_code_copies(functions, image, order, console, segments, owner, explicit,
+                              references, direct_calls, data)
+    if stale:
+        removed_sources = {line.rom for fn in functions if (fn.rom, fn.vram) in stale for line in fn.lines}
+        functions = [fn for fn in functions if (fn.rom, fn.vram) not in stale]
+        for target in list(references):
+            references[target] = {(source, unit) for source, unit in references[target] if source not in removed_sources}
+            if not references[target]:
+                del references[target]
+        direct_calls = {target for target in direct_calls if any(
+            int.from_bytes(image[source:source+4], order) >> 26 == 3 for source, _ in references.get(target, ()))}
+        transfer_targets = {target for target in transfer_targets if any(
+            int.from_bytes(image[source:source+4], order) >> 26 in (1, 2, 3, 4, 5, 6, 7, 17, 20, 21, 22, 23)
+            for source, _ in references.get(target, ()))}
+        log(f'Left {len(stale)} proven stale code copies in the original image.')
     functions = recover_inline_tables(functions, data, image, order, explicit | pointers, references, segments, log)
     buffer_written = buffer_write_evidence(functions, image, console, check=getattr(log,'check_cancel',lambda:None))
     data_entry_targets = explicit|pointers|transfer_targets
@@ -1406,6 +1421,84 @@ def string_address_references(fn, references, lines, bodies):
             return False
         uses.difference_update((start,start+4))
     return True
+
+def stale_code_copies(functions, image, order, console, segments, owner, explicit, references, calls, data):
+    """Find unentered stale copies of another called function between a return and the next frame."""
+    ordered = sorted(functions, key=lambda fn: (owner(fn), fn.rom))
+    stale = set()
+    closed = {}
+    for index in range(1, len(ordered)-1):
+        before, fn, after = ordered[index-1:index+2]
+        if (not 32 <= fn.size <= 64 or fn.size % 4 or owner(fn)[0] < 0
+                or owner(before) != owner(fn) or owner(after) != owner(fn)
+                or before.rom + before.size != fn.rom or before.vram + before.size != fn.vram
+                or before.size < 8 or before.lines[-2].word != JR_RA
+                or fn.rom + fn.size != after.rom or fn.vram + fn.size != after.vram
+                or after.vram not in calls or not is_frame(after.lines[0].word)
+                or not any(not fn.rom <= src < fn.rom+fn.size
+                           and int.from_bytes(image[src:src+4], order) >> 26 == 3
+                           for src, _ in references.get(after.vram, ()))
+                or any(fn.vram <= address < fn.vram+fn.size for address in explicit)
+                or any(d.rom is not None and d.rom < fn.rom+fn.size and fn.rom < d.rom+d.size for d in data)
+                or image[fn.rom:fn.rom+fn.size] != b''.join(line.word.to_bytes(4, order) for line in fn.lines)):
+            continue
+        if any(any(not fn.rom <= source < fn.rom+fn.size for source, _ in references.get(address, ()))
+               for address in range(fn.vram, fn.vram+fn.size, 4)):
+            continue
+        if any(not match.start() % 4 for address in range(fn.vram, fn.vram+fn.size, 4)
+               for match in re.finditer(re.escape(address.to_bytes(4, order)), image)):
+            continue
+        index_owner = owner(fn)[0]
+        segment = segments[index_owner]
+        if sum(s.contains(fn.vram, fn.size) for s in segments) != 1:
+            continue
+        for other in ordered:
+            if (other is fn or owner(other) != owner(fn) or other.vram not in calls
+                    or not any(not fn.rom <= src < fn.rom+fn.size
+                               and int.from_bytes(image[src:src+4], order) >> 26 == 3
+                               for src, _ in references.get(other.vram, ()))
+                    or abs(other.rom-fn.rom) > 0x800):
+                continue
+            key = (other.rom, other.vram)
+            if key not in closed:
+                closed[key] = called_extent(image, other.rom, min(segment.rom_end, other.rom+0x4000),
+                                            other.vram, big_endian=console.big_endian,
+                                            cpu=console.cpu_variant, asm_check=console.asm_reason)
+            length = closed[key]
+            if not length or length < fn.size:
+                continue
+            for at in range(other.rom, other.rom+length-fn.size+1, 4):
+                if _same_stale_instructions(image, fn.rom, at, fn.size, order):
+                    stale.add((fn.rom, fn.vram))
+                    break
+            if (fn.rom, fn.vram) in stale:
+                break
+    return stale
+
+
+def _same_stale_instructions(image, first, second, size, order):
+    """Accept exact copies or one consistent relocation, retaining register and instruction shapes."""
+    same = 0
+    delta = None
+    for offset in range(0, size, 4):
+        a = int.from_bytes(image[first+offset:first+offset+4], order)
+        b = int.from_bytes(image[second+offset:second+offset+4], order)
+        if a == b:
+            same += 1
+            continue
+        op = a >> 26
+        if op in (2, 3) and b >> 26 == op:
+            change = ((b & 0x3ffffff) - (a & 0x3ffffff))*4
+        elif (op in (9, 32, 33, 35, 36, 37, 40, 41, 43, 49, 53, 57, 61)
+              and a >> 16 == b >> 16 and (a >> 21) & 31 not in (0, 29, 30, 31)):
+            change = (b & 0xffff) - (a & 0xffff)
+        else:
+            return False
+        if not change or abs(change) > 0x10000 or change % 4 or delta is not None and change != delta:
+            return False
+        delta = change
+    return same >= 6
+
 
 def terminal_loaded_record(fn, previous, image, order, segments, functions, references, lines, entered, data):
     """A loaded pointer and an adjacent address passed in a stack record, after a closed overlay."""
