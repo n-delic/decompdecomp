@@ -6,6 +6,7 @@ import pytest
 
 from decompnet import batch_compile, compile_sessions, compiler, elfobj, toolchains
 from decompnet.app import deep_compilation
+from tests.test_rom_explorer import project  # noqa: F401
 
 PREFIX = '''/* machine draft, tried by autopilot */
 #ifndef M2C_DEFINES
@@ -116,3 +117,64 @@ def test_the_pool_batches_one_functions_queued_candidates(monkeypatch):
     assert batches and batches[0] == ['a', 'b', 'alone', 'c']
     assert [r.obj for r in results] == [b'a', b'b', b'alone:alone', b'c']
     assert CancelledError  # (imported for the pool's cancelled-ticket path)
+
+
+def test_rust_judges_real_random_rewrite_batches_against_python(project, monkeypatch):  # noqa: F811
+    import json
+
+    from decompnet import scoring
+    from decompnet.app import mcp_gateway
+    from decompnet.rom import match
+
+    if not (gateway := mcp_gateway.built()) or not scoring._native_mips_decoder_compatible():
+        pytest.skip("needs the Rust gateway and matching Capstone")
+    if not toolchains.installed("gcc-2.7.2-kmc"):
+        pytest.skip("needs KMC GCC")
+
+    net, pid, root = project
+    monkeypatch.setenv("DECOMP_MCP_GATEWAY", str(gateway))
+    proj = net.project_row("game", sync=False)
+    cfg = json.loads(proj["config"])
+    cfg["compiler"]["flags"] = ["-O2", "-G0"]
+    with net.store.tx() as db:
+        db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), pid))
+    proj = net.project_row("game", sync=False)
+    fn = net._function("reader", "game")
+    sources = [f"int reader(int x) {{ return x < 0 ? x - {i} : x + {i}; }}" for i in range(1, 9)]
+    exact = net._compile(proj, "", sources[0], fn)
+    assert exact.ok, exact.log
+    target = elfobj.extract_function(exact.obj, "reader")
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET target=?, relocs='[]', size=?, n_insns=? WHERE id=?",
+                   (target.code, len(target.code), len(target.code) // 4, fn["id"]))
+    fn = net._function("reader", "game")
+    group = []
+    for source in sources:
+        ticket = deep_compilation.Ticket(source, (), lambda: pytest.fail("expected a shared compiler run"), lambda: None)
+        ticket.batch = ((pid, fn["id"]), net, proj, "", fn)
+        ticket.batch_source = source
+        ticket.random_rewrite = True
+        assert ticket.future.set_running_or_notify_cancel()
+        group.append(ticket)
+    pool = deep_compilation.Pool(1, maximum=True, remote=False)
+    with compile_sessions.session():
+        pool._run_batch(group)
+
+    outcomes = []
+    for ticket in group:
+        result = ticket.future.result(timeout=10)
+        assert result.batched and ticket.batch_judgment is not None
+        batch = ticket.batch_judgment
+        candidate, diff, clean = batch.candidate, batch.diff, batch.clean
+        assert batch.compiled is result and batch.scope == net._random_batch_scope(fn, proj)
+        original = match.link(result.obj, fn["name"], net._rom_target(fn), net.symbols(pid), net.reader(proj, fn))
+        expected = scoring._diff(net._target_obj(fn, proj), original.candidate, details=False)
+        assert candidate == original.candidate and clean == (not original.problems)
+        assert (diff.score, diff.bytes_match, diff.max_score, diff.rows) == (
+            0 if original.exact else max(1, expected.score), original.exact, expected.max_score, [],
+        )
+        outcomes.append(diff.bytes_match)
+    assert outcomes == [True] + [False] * 7
+    with (root / "game.rom").open("ab") as stream:
+        stream.write(b"new image identity")
+    assert group[0].batch_judgment.scope != net._random_batch_scope(fn, proj)

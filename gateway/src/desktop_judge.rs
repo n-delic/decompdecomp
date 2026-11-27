@@ -44,6 +44,69 @@ struct Judge {
 }
 
 impl Judge {
+    fn project_view(&mut self, request: &mut Value) -> Result<Reader<'_>, String> {
+        if let Some(inputs) = request
+            .as_object_mut()
+            .and_then(|req| req.remove("project_inputs"))
+        {
+            let key = request["project_key"]
+                .as_str()
+                .ok_or("missing project key")?;
+            self.project = Some((key.to_owned(), rom_project::Project::load(inputs)?));
+        }
+        let (key, project) = self.project.as_ref().ok_or("missing desktop ROM project")?;
+        if request["project_key"].as_str() != Some(key.as_str()) {
+            return Err("desktop ROM project changed".into());
+        }
+        Ok(Reader(project.view(request["rom_offset"].as_i64())?))
+    }
+
+    async fn judge_batch(&mut self, request: &mut Value) -> Result<Value, String> {
+        let mut reader = if request["overlay"].is_null() {
+            Some(self.project_view(request)?)
+        } else {
+            None
+        };
+        let objects = request["objects"]
+            .as_array()
+            .filter(|items| items.len() <= 8)
+            .ok_or("invalid compiler batch")?;
+        let Some(comparison) = mips_diff::PreparedComparison::from_value(&request["comparison"])?
+        else {
+            return Ok(Value::Null);
+        };
+        let align = request["align_branches"].as_bool().unwrap_or(false);
+        let mut results = Vec::with_capacity(objects.len());
+        for object in objects {
+            let linked = if let Some(reader) = reader.as_mut() {
+                mips_rom::link(
+                    &json!({"object": object, "target": request["target"]}),
+                    reader,
+                )
+                .await
+            } else {
+                mips_uso::link(&json!({"object": object, "name": request["target"]["name"],
+                                      "target": request["target"]["code"], "info": request["overlay"]}))
+            };
+            let result = match linked {
+                Ok(link) if link["code"].is_string() => {
+                    match comparison.summary(&link["code"], &link["relocs"], align) {
+                        Ok(score) if score["score"].is_u64() => json!({
+                            "code": link["code"], "relocs": link["relocs"], "exact": link["exact"],
+                            "clean": link["problems"].as_array().is_some_and(Vec::is_empty),
+                            "score": score["score"], "max_score": score["max_score"],
+                            "bytes_match": score["bytes_match"],
+                        }),
+                        _ => Value::Null,
+                    }
+                }
+                _ => Value::Null,
+            };
+            results.push(result);
+        }
+        Ok(json!(results))
+    }
+
     async fn perform(
         &mut self,
         mut message: Value,
@@ -63,22 +126,10 @@ impl Judge {
                 mips_rom::link(request, &mut StdioReader { input, output }).await
             }
             Some("rom_mips") => {
-                if let Some(inputs) = request
-                    .as_object_mut()
-                    .and_then(|req| req.remove("project_inputs"))
-                {
-                    let key = request["project_key"]
-                        .as_str()
-                        .ok_or("missing project key")?;
-                    self.project = Some((key.to_owned(), rom_project::Project::load(inputs)?));
-                }
-                let (key, project) = self.project.as_ref().ok_or("missing desktop ROM project")?;
-                if request["project_key"].as_str() != Some(key.as_str()) {
-                    return Err("desktop ROM project changed".into());
-                }
-                let mut reader = Reader(project.view(request["rom_offset"].as_i64())?);
+                let mut reader = self.project_view(request)?;
                 mips_rom::link(request, &mut reader).await
             }
+            Some("judge_mips_batch") => self.judge_batch(request).await,
             _ => Err("unknown desktop judge operation".into()),
         }
     }

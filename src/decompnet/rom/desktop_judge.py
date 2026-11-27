@@ -5,13 +5,16 @@ import hashlib
 import json
 import subprocess
 from contextlib import contextmanager
+from dataclasses import asdict
 from pathlib import Path
 from queue import LifoQueue
 
 from .. import scoring
 from ..app import mcp_gateway
+from ..elfobj import FunctionObj, Reloc, unmangle
 from ..hostenv import NO_WINDOW
 from . import verifier_link
+from .symbols import AUTO_NAME
 
 
 def _identity(path):
@@ -20,6 +23,14 @@ def _identity(path):
     except FileNotFoundError:
         return None
     return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns
+
+
+def image_identity(root, image):
+    root = Path(root)
+    manifest = root / "memory_regions.json"
+    manifest_id = _identity(manifest)
+    payload_id = _identity(root / json.loads(manifest.read_bytes())["file"]) if manifest_id else None
+    return _identity(root / image), manifest_id, payload_id
 
 
 class RustJudge:
@@ -100,27 +111,52 @@ class RustJudge:
                 return self._exchange(action, {**request, "callback_reader": True}, lookup)
 
             return verifier_link.link_rom(obj, target, symbols, read, exchange)
+        return verifier_link.link_rom(obj, target, symbols, read,
+                                      lambda action, request, _: self._project_request(action, request, symbols, read))
+
+    def _project_request(self, action, request, symbols, read):
         try:
             inputs = read.inputs(symbols)
-            root = Path(inputs["root"])
-            manifest = root / "memory_regions.json"
-            manifest_id = _identity(manifest)
-            payload_id = _identity(root / json.loads(manifest.read_bytes())["file"]) if manifest_id else None
-            identities = _identity(root / inputs["image"]), manifest_id, payload_id
+            identities = image_identity(inputs["root"], inputs["image"])
             key = hashlib.sha256(json.dumps((inputs, identities), sort_keys=True).encode()).hexdigest()
         except (OSError, ValueError, KeyError, TypeError):
             return None
+        request["project_key"] = key
+        if key != self.project_key:
+            request["project_inputs"] = inputs
+        result = self._exchange(action, request)
+        if result is not None:
+            self.project_key = key
+        return result
 
-        def exchange(action, request, _lookup):
-            request["project_key"] = key
-            if key != self.project_key:
-                request["project_inputs"] = inputs
-            result = self._exchange(action, request)
-            if result is not None:
-                self.project_key = key
-            return result
-
-        return verifier_link.link_rom(obj, target, symbols, read, exchange)
+    def batch(self, objects, target, canonical, symbols, read, overlay=None):
+        if not scoring.native_mips_comparison(canonical, canonical):
+            return None
+        known = (lambda name: name == target.name) if overlay is not None else (
+            lambda name: name in symbols.by_name or bool(AUTO_NAME.match(name)))
+        plan = asdict(target)
+        plan["code"] = target.code.hex()
+        request = {"objects": [unmangle(obj, known).hex() for obj in objects], "target": plan,
+                   "comparison": verifier_link.comparison_input(canonical), "overlay": overlay,
+                   "align_branches": scoring.ALIGN_BRANCH_TARGETS}
+        if overlay is None:
+            request["rom_offset"] = read.function["rom_offset"]
+            reply = self._project_request("judge_mips_batch", request, symbols, read)
+        else:
+            reply = self._exchange("judge_mips_batch", request)
+        if not isinstance(reply, list) or len(reply) != len(objects):
+            return None
+        results = []
+        for row in reply:
+            if row is None:
+                results.append(None)
+                continue
+            candidate = FunctionObj(target.name, canonical.arch, target.big_endian, bytes.fromhex(row["code"]),
+                                    [Reloc.from_json(item) for item in row["relocs"]])
+            score = 0 if row["exact"] else max(1, row["score"])
+            diff = scoring.DiffResult(score, row["max_score"], [], row["exact"])
+            results.append((candidate, diff, row["clean"]))
+        return results
 
     def data(self, plan, lookup):
         return self._exchange("rom_data_mips", plan, lookup)

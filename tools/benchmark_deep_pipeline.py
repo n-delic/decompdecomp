@@ -17,7 +17,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from decompnet import compile_sessions, compiler, elfobj, toolchains
+from decompnet import compile_sessions, compile_timing, compiler, elfobj, toolchains
 from decompnet.app import deep_compilation, deep_permuter, deep_throughput, search_history, trial_bookkeeping
 from decompnet.app.engine import RomNetwork
 from decompnet.project import compiler_config
@@ -65,13 +65,18 @@ def ranked_replay(rows, variants, backend, helper):
     return proposals, {**metrics, 'rank_seconds_with_verification': time.monotonic()-started}
 
 
-def benchmark(root, functions, variants, workers, slots, declarations, full_search=False, balanced=False, profile=False, search_seconds=60, replay_order=None, ranker=None, source_statements=0):
+def benchmark(root, functions, variants, workers, slots, declarations, full_search=False, balanced=False, profile=False, search_seconds=60, replay_order=None, ranker=None, source_statements=0, local_batches=False):
     if full_search:
         # Load the legacy module alias before worker threads can import it concurrently.
         importlib.import_module('decompnet.arch.mips_runtime')
     net = RomNetwork(root/'benchmark.db', root)
     cfg = dict(kind='rom', platform='n64', big_endian=True,
                compiler=dict(toolchain='gcc-2.7.2-kmc', flags=['-O2','-G0','-mips3','-mgp32','-mfp32']))
+    if local_batches:
+        image = bytes(16)
+        (root / 'game.rom').write_bytes(image)
+        cfg['rom'] = {'file': 'game.rom'}
+        cfg['segments'] = [{'name': 'main', 'rom_start': 0, 'rom_end': len(image), 'vram': 0x80001000}]
     header = '\n'.join(f'extern int helper_{i}(int);' for i in range(declarations))
     result = compiler.compile_source(compiler_config(root, cfg), '', 'int f(int x){return x+999999;}')
     if not result.ok:raise RuntimeError(result.log)
@@ -99,7 +104,7 @@ def benchmark(root, functions, variants, workers, slots, declarations, full_sear
     agent, _ = net.local_agent('permuter-benchmark')
     proj = net.store.one('SELECT * FROM projects WHERE id=1')
     rows = net.store.all('SELECT * FROM functions ORDER BY id')
-    pool = deep_compilation.Pool(slots, maximum=not balanced)
+    pool = deep_compilation.Pool(slots, maximum=not balanced, remote=not local_batches)
     syncs = {'forced':0,'ordinary':0};lock = threading.Lock();sync = net.progress.sync
     def observed(slug, **kwargs):
         with lock:syncs['forced' if kwargs.get('force') else 'ordinary'] += 1
@@ -153,7 +158,13 @@ def benchmark(root, functions, variants, workers, slots, declarations, full_sear
         metrics = pool.metrics.snapshot()
         history = net.store.one('SELECT COUNT(*) AS n FROM reuse_trials')['n']
         digest_rows = [(row['matched'], row['tested']) for row in results] if replay_order else results
-        return dict(functions=functions, variants=variants, workers=workers, slots=slots,
+        judged = sum(len(scores) for scores in results) if not (full_search or replay_order) else None
+        timings = compile_timing.snapshot()
+        return dict(judged_candidates_per_second=judged/seconds if judged is not None else None,
+                    batch_judged=timings.get('batch_judged', 0),
+                    batch_misses_used=timings.get('batch_judge_misses_used', 0),
+                    batch_rechecks=timings.get('batch_rechecks', 0),
+                    functions=functions, variants=variants, workers=workers, slots=slots,
                     header_bytes=len(header.encode()), source_statements=source_statements, seconds=seconds,
                     compiler_invocations=metrics['pool_compiler_invocations'],
                     compiles_per_second=metrics['pool_compiler_invocations']/seconds,
@@ -180,6 +191,8 @@ def main():
     parser.add_argument('--replay-order', choices=('current', 'cpu', 'metal'),
                         help='Replay a fixed synthetic proposal pool with one known exact variant per function.')
     parser.add_argument('--source-statements', type=int, default=0, help='Neutral statement pairs per function body.')
+    parser.add_argument('--local-batches', action='store_true',
+                        help='Compile local batches and give the native judge a scratch ROM image.')
     parser.add_argument('--ranker', type=Path, help='Compiled deep_candidate_metal helper.')
     args = parser.parse_args()
     if args.replay_order and args.full_search:
