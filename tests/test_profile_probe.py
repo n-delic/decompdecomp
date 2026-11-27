@@ -814,3 +814,9 @@ void f(s32 arg0) {
     assert family == 'draft_constants'
     assert 'g(0, 90.0f)' in child and 'g(1, 270.0f)' in child and 'case 0:' in child
     assert profile_probe.draft_constants('void f(void) {}', 'f', facts(asm=asm), ['-mgp32']) == []
+
+
+def test_the_drafts_unsigned_conversions_are_written_back_with_the_constants():
+    draft = 'void f(s32 a) {\n    f64 d;\n    s32 v = a & 0x10;\n    d = (f64) v;\n    if (v < 0) {\n        d += 4294967296.0;\n    }\n    g(d);\n}\n'
+    [(_, child)] = profile_probe.draft_constants(draft, 'f', facts(), ['-mgp32', '-O1'])
+    assert 'd = (f64) (u32) v;' in child and '4294967296' not in child

@@ -75,7 +75,8 @@ RESERVE = 3  # compiles left in a search's allowance before one more profile: it
 # v6: -fforce-addr for targets that read offsets off a held symbol address
 # v7: the draft's address-named tables are judged as record arrays under -O1 too
 # v8: the draft's float-bit arguments and switch width are judged under -O1 too (draft_constants)
-SIGNATURE = 'profile-probe-v8:'
+# v9: ... and its unsigned-to-double conversions
+SIGNATURE = 'profile-probe-v9:'
 FP_FLAGS = ('-mfp32', '-mfp64')
 # libultra's own names: osXxx, __osXxx, __rmon*, __sc*, the routines whose compiler was the library's, not the game's
 LIBRARY_NAME = re.compile(r'^_{0,2}(?:os[A-Z]|rmon|sc[A-Z])')
@@ -519,12 +520,16 @@ def run(search, agent, proj, fn, source, *, climb=True) -> bool:
 
 
 def draft_constants(text, name, facts, flags) -> list[tuple[str, str]]:
-    """`text` with the float bit patterns m2c passed as integers written as float arguments, and its switch as wide as
-    the target's range check, as one child. Each repair alone left a call-heavy dispatcher short of exact: its machine
-    draft scored 2275 under `-O1`, 250 with the floats, and 0 with the empty `case` too."""
-    from decomprepair import float_bit_argument_repairs, switch_range_repairs
+    """`text` with the float bit patterns m2c passed as integers written as float arguments, its expansions of
+    unsigned-to-double conversions written back, and its switch as wide as the target's range check, as one child.
+    Each repair alone left a call-heavy dispatcher short of exact: its machine draft scored 2275 under `-O1`, 250 with
+    the floats, and 0 with the empty `case` too. A spawner's draft scored 2975, and 2390 with the floats and the
+    conversions."""
+    from decomprepair import float_bit_argument_repairs, switch_range_repairs, unsigned_double_bias_fold
     child = None
     for _, repaired in float_bit_argument_repairs.variants(text, name, facts.header, facts.arch, flags)[:1]:
+        child = repaired
+    for _, repaired in unsigned_double_bias_fold.variants(child or text, name, facts.asm)[:1]:
         child = repaired
     for _, repaired in switch_range_repairs.variants(child or text, name, facts.asm)[:1]:
         child = repaired
