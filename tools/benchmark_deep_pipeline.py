@@ -162,6 +162,7 @@ def benchmark(root, functions, variants, workers, slots, declarations, full_sear
         timings = compile_timing.snapshot()
         return dict(judged_candidates_per_second=judged/seconds if judged is not None else None,
                     batch_judged=timings.get('batch_judged', 0),
+                    combined_elf_batches=timings.get('combined_elf_batches', 0),
                     batch_misses_used=timings.get('batch_judge_misses_used', 0),
                     batch_rechecks=timings.get('batch_rechecks', 0),
                     functions=functions, variants=variants, workers=workers, slots=slots,

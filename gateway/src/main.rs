@@ -30,6 +30,7 @@ mod mips_diff;
 mod matching_blocks;
 mod mips_rom;
 mod mips_uso;
+mod mips_batch;
 mod rom_project;
 mod verifier;
 mod window;

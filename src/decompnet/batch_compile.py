@@ -16,10 +16,62 @@ from __future__ import annotations
 
 import io
 import re
+from contextvars import ContextVar
+from dataclasses import dataclass
+from functools import cached_property
 
 from . import compile_sessions, compiler
 
 MAX = 8  # candidates per run: most of the saving, and a failing candidate costs the others little
+
+
+# Only local N64 random-rewrite compile workers install this hook.
+combined_judge = ContextVar("combined_elf_judge", default=None)
+
+
+@dataclass
+class CombinedCandidate:
+    """A split entry with a lazily materialized ELF for the ordinary judge, if needed."""
+
+    combined: bytes
+    suffix: int
+    log: str
+    batch_verdict: tuple | None
+    effective_settings: dict | None = None
+
+    ok = True
+    language = "c"
+    batched = True
+
+    @cached_property
+    def obj(self):
+        return self.combined[:self.suffix] + b"\0" + self.combined[self.suffix + 1:]
+
+
+def _split_combined(result, sources):
+    from .inline_helpers import PREFIX
+
+    judge = combined_judge.get()
+    # Generated aggregate helpers still require the existing per-object emission check.
+    if judge is None or any(PREFIX in source for source in sources):
+        return None
+    try:
+        judged = judge(result.obj, len(sources))
+    except Exception:
+        return None  # Optional native acceleration must never stop the compiler fallback.
+    if judged is None:
+        return None
+    scope, rows = judged
+    candidates = []
+    for status, suffix, verdict in rows:
+        if status == "ready":
+            candidates.append(CombinedCandidate(result.obj, suffix, result.log,
+                                                (scope, verdict) if verdict is not None else None))
+        else:
+            compiler.compile_timing.add(f"batch_alone_{status}", 1)
+            candidates.append(None)
+    compiler.compile_timing.add("combined_elf_batches", 1)
+    return candidates
 
 
 def _definition(source: str, name: str):
@@ -90,7 +142,11 @@ def compile_batch(cfg: compiler.CompilerConfig, header: str, sources: list[str],
             compiler.compile_timing.add('batched_candidates', len(members))
             result = compiler._compile_as(cfg, work, root, '\n'.join(parts), 'c')
             if result.ok and result.obj:
-                for (index, _), candidate in zip(members, _split(result, [sources[i] for i, _ in members], name)):
+                batch_sources = [sources[i] for i, _ in members]
+                candidates = _split_combined(result, batch_sources)
+                if candidates is None:
+                    candidates = _split(result, batch_sources, name)
+                for (index, _), candidate in zip(members, candidates or ()):
                     results[index] = candidate
                 break
             compiler.compile_timing.add('batch_failed', 1)

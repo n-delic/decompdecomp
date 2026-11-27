@@ -10,7 +10,7 @@ from concurrent.futures import CancelledError, Future
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 
-from .. import compile_sessions, compile_sharing, compile_timing, compile_worker, compiler
+from .. import batch_compile, compile_sessions, compile_sharing, compile_timing, compile_worker, compiler
 from ..candidate_work import preparation as candidate_preparation
 
 
@@ -20,7 +20,7 @@ def _bucket(prefix, size):
 
 @dataclass(frozen=True)
 class BatchJudgment:
-    compiled: compiler.CompileResult
+    compiled: compiler.CompileResult | batch_compile.CombinedCandidate
     scope: tuple
     candidate: object
     diff: object
@@ -212,8 +212,18 @@ class Pool:
             group[0].check()
             token = compile_timing.ORIGIN.set('batch')
             try:
-                with compiler.cancellable(group[0].check), compile_timing.collect(group[0].compile_counts, append=True):
-                    results = net._compile_batch(proj, header, [t.batch_source for t in group], fn)
+                options = os.environ
+                native = (getattr(net, "_judge_random_batch", None)
+                          if options.get("DECOMP_N64_BATCH_JUDGE") != "0"
+                          and options.get("DECOMP_N64_COMBINED_ELF") != "0"
+                          and all(getattr(ticket, "random_rewrite", False) for ticket in group) else None)
+                token_split = batch_compile.combined_judge.set(
+                    (lambda obj, count: native(fn, proj, obj, count=count)) if native else None)
+                try:
+                    with compiler.cancellable(group[0].check), compile_timing.collect(group[0].compile_counts, append=True):
+                        results = net._compile_batch(proj, header, [t.batch_source for t in group], fn)
+                finally:
+                    batch_compile.combined_judge.reset(token_split)
             finally:
                 compile_timing.ORIGIN.reset(token)
         except BaseException as error:
@@ -221,6 +231,11 @@ class Pool:
                 ticket.future.set_exception(error)
             return
         if results and os.environ.get("DECOMP_N64_BATCH_JUDGE") != "0":
+            for ticket, result in zip(group, results):
+                if isinstance(result, batch_compile.CombinedCandidate) and result.batch_verdict is not None:
+                    scope, verdict = result.batch_verdict
+                    ticket.batch_judgment = BatchJudgment(result, scope, *verdict)
+                    compile_timing.add("batch_judged", 1)
             self._judge_random_batch(group, results, net, proj, fn)
         alone = sum(1 for index in range(len(group)) if not results or results[index] is None)
         if alone:
@@ -252,7 +267,8 @@ class Pool:
         if judge is None:
             return
         eligible = [(ticket, result) for ticket, result in zip(group, results)
-                    if result is not None and result.ok and result.obj and getattr(result, "batched", False)
+                    if result is not None and not isinstance(result, batch_compile.CombinedCandidate)
+                    and result.ok and result.obj and getattr(result, "batched", False)
                     and getattr(ticket, "random_rewrite", False) and not ticket.stopped.is_set()]
         if len(eligible) < 2:
             return

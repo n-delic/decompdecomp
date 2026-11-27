@@ -454,10 +454,17 @@ impl<'a, R: Reader> Linker<'a, R> {
 }
 
 pub async fn link<R: Reader>(request: &Value, reader: &mut R) -> Result<Value, String> {
-    let object = bytes(&request["object"])?;
+    link_bytes(&bytes(&request["object"])?, &request["target"], reader).await
+}
+
+pub(crate) async fn link_bytes<R: Reader>(
+    object: &[u8],
+    target: &Value,
+    reader: &mut R,
+) -> Result<Value, String> {
     let target: Target =
-        serde_json::from_value(request["target"].clone()).map_err(|error| error.to_string())?;
-    let Some(elf) = Elf::read(&object) else {
+        serde_json::from_value(target.clone()).map_err(|error| error.to_string())?;
+    let Some(elf) = Elf::read(object) else {
         return Ok(Value::Null);
     };
     if elf
