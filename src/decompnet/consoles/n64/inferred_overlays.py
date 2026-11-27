@@ -293,7 +293,7 @@ def drop_pointer_fragments(image, found, taken=()):
     return [segment for segment in found if segment[0] not in remove]
 
 
-def split_concatenated(image, found, check=lambda: None):
+def split_concatenated(image, found, check=lambda: None, *, taken=()):
     """Split adjacent banks when two called entries share an address and a data gap."""
     from ...arch.mips_code_recovery import called_extent
 
@@ -335,12 +335,78 @@ def split_concatenated(image, found, check=lambda: None):
             if before >= 8 and before >= 4*max(1, before_old) and after >= 8:
                 candidates.append((end, boundary, target))
         if len(candidates) != 1:
-            result.append((lo, hi, vram))
+            separate = _separated_banks(image, lo, hi, targets, entries, check) if not candidates else None
+            if separate:
+                left, right = separate
+                gap_start, gap_end = left[1], right[0]
+                shifts = (left[2]-left[0], right[2]-right[0])
+                for start, end, _ in (*taken, *found):
+                    check()
+                    if start < 0 or end > len(image) or start >= end or (start | end) % 4:
+                        continue
+                    words = struct.unpack_from(f'>{(end-start)//4}I', image, start)
+                    calls = (0x80000000 | ((word & 0x3ffffff) << 2) for word in words if word >> 26 == 3)
+                    if any(gap_start <= target-shift < gap_end for target in calls for shift in shifts):
+                        separate = None
+                        break
+            if separate is None:
+                result.append((lo, hi, vram))
+            else:
+                result.extend(separate)
+                changed.update(start for start, _, _ in separate)
             continue
         end, boundary, target = candidates[0]
         result.extend(((lo, end, target), (boundary, hi, vram + boundary-lo)))
         changed.update((lo, boundary))
     return sorted(result), changed
+
+
+def _separated_banks(image, lo, hi, targets, entries, check):
+    """Separate two independently called banks around a frame-free data gap."""
+    from ...arch.mips_code_recovery import called_extent
+
+    if len(targets)*len(entries) > _MAX_PAIRS:
+        return None
+    scores = collections.Counter(target-at for target in targets for at in entries
+                                 if not (target-at) % 16 and 0x7f000000 < target-at < 0x81000000)
+    mappings = [mapping for mapping, count in scores.items() if count >= 8]
+    if len(mappings) != 2:
+        return None
+    called = {}
+    for mapping in mappings:
+        check()
+        called[mapping] = sorted(at for target in targets if lo <= (at := target-mapping) < hi-8
+                                 and called_extent(image, at, hi, target, cpu='vr4300'))
+    if any(len(called[mapping]) < 8 for mapping in mappings):
+        return None
+    frames = [at for at in entries if is_frame(int.from_bytes(image[at:at+4], 'big'))]
+    candidates = []
+    for first, second in (mappings, mappings[::-1]):
+        ends = set()
+        for at in frames:
+            check()
+            size = called_extent(image, at, hi, at+first, cpu='vr4300')
+            if size:
+                ends.add(at+size)
+        for start in frames:
+            if not called_extent(image, start, hi, start+second, cpu='vr4300'):
+                continue
+            for end in ends:
+                if not 128 <= start-end <= 8192 or any(end <= at < start for at in frames):
+                    continue
+                if (any(int.from_bytes(image[at:at+4], 'big') == JR_RA for at in range(end, start, 4))
+                        or any(end <= target-mapping < start for target in targets for mapping in mappings)):
+                    continue
+                early = sum(at < end for at in called[first])
+                late = sum(at >= start for at in called[second])
+                if (early < 8 or late < 8 or len(called[first])-early > early//4
+                        or len(called[second])-late > late//4):
+                    continue
+                if not (0x80000400 <= lo+first < end+first <= 0x80800000
+                        and 0x80000400 <= start+second < hi+second <= 0x80800000):
+                    continue
+                candidates.append(((lo, end, lo+first), (start, hi, start+second)))
+    return candidates[0] if len(candidates) == 1 else None
 
 
 def extend_adjacent_frame(image, found):

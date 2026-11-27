@@ -202,3 +202,41 @@ def test_tiny_observed_fragments_join_the_corroborated_runtime_bank():
     observed.append((0, 4, 0x80200000))
     mapped, _ = inferred_overlays.runtime_mappings(image, [old], observed)
     assert mapped[0] == (0, 4, 0x80040000)
+
+
+def test_separate_called_banks_leave_intervening_data_unmapped():
+    image = bytearray(0x4000)
+    rng = random.Random(491)
+    def group(first, last):
+        selected = [first, last]
+        while len(selected) < 17:
+            at = rng.randrange(first+32, last-32, 16)
+            if all(abs(at-other) >= 48 for other in selected):
+                selected.append(at)
+        return sorted(selected)
+    groups = [group(0, 0x1800), group(0x1a00, 0x3f00)]
+    mappings = (0x80010000, 0x80022000)
+    for group, mapping in zip(groups, mappings):
+        for i, at in enumerate(group):
+            target = group[(i+1) % len(group)] + mapping
+            jump = 0x08000000 | (((at+24+mapping) >> 2) & 0x3ffffff)
+            words = (0x27bdffe8, 0xafbf0014, 0x0c000000 | ((target >> 2) & 0x3ffffff),
+                     0x00000000, jump, 0, 0x8fbf0014, 0x03e00008, 0x27bd0018)
+            struct.pack_into('>9I', image, at, *words)
+    end = groups[0][-1] + 36
+    start = groups[1][0]
+    image[end:start] = b'\x01\x02\x03\x04' * ((start-end)//4)
+    found = [(0, len(image), 0x80400000)]
+    result, changed = inferred_overlays.split_concatenated(image, found)
+    assert result == [(0, end, mappings[0]), (start, len(image), start+mappings[1])]
+    assert changed == {0, start}
+    # A call from an already mapped bank can also make the gap executable.
+    target = mappings[0] + end
+    image.extend(struct.pack('>I', 0x0c000000 | ((target >> 2) & 0x3ffffff)))
+    assert inferred_overlays.split_concatenated(image, found, taken=[(0x4000, 0x4004, 0x80000400)]) == (found, set())
+    # A frame hidden in the gap makes its ownership uncertain.
+    struct.pack_into('>I', image, end+4, 0x27bdffe8)
+    assert inferred_overlays.split_concatenated(image, found) == (found, set())
+    # A leaf return is also evidence that the gap may contain code.
+    struct.pack_into('>2I', image, end+4, 0x01020304, 0x03e00008)
+    assert inferred_overlays.split_concatenated(image, found) == (found, set())

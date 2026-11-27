@@ -650,7 +650,8 @@ def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_rep
     before_mapping = found
     found, runtime = inferred_overlays.runtime_mappings(rom, found, loaded.get('moved_ranges', ()), taken)
     found = inferred_overlays.extend_adjacent_frame(rom, found)
-    found, banks = inferred_overlays.split_concatenated(rom, found, getattr(log, 'check_cancel', lambda: None))
+    found, banks = inferred_overlays.split_concatenated(rom, found, getattr(log, 'check_cancel', lambda: None),
+                                                       taken=taken)
     found, scoped = inferred_overlays.recover(rom, found, taken, getattr(log, 'check_cancel', lambda: None),
                                              changed=runtime | banks)
     # Corrected addresses can expose a called prologue whose frame lies beyond
