@@ -551,3 +551,78 @@ def test_reimport_aborts_if_entries_change_after_preservation_stage(tmp_path, mo
     assert (root/'old.z64').read_bytes() == b'original'
     assert not (root/'rom.z64').exists()
     assert net.project_store(pid).one('SELECT name FROM functions WHERE project_id=?',pid)['name'] == 'changed'
+
+
+def test_reimport_rechecks_saved_c_for_exact_entry_recreated_after_boundary_repair(tmp_path):
+    from decompnet.app.engine.importing import _recreated_matches
+
+    net = RomNetwork(tmp_path/'app.db', tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute('INSERT INTO projects(slug,name,root,arch,config) VALUES(?,?,?,?,?)',
+                         ('game','Game',str(tmp_path),'mips','{}')).lastrowid
+        for name, address, data in [('returned',0x80001000,b'\0'*8), ('different',0x80002000,b'\x01'*8)]:
+            db.execute('INSERT INTO functions(project_id,name,vram,rom_offset,size,n_insns,target,relocs,status) '
+                       'VALUES(?,?,?,?,?,?,?,?,?)',(pid,name,address,address & 0xffff,8,2,data,'[]','open'))
+    old = {'name':'returned','vram':0x80001000,'rom_offset':0x1000,'size':8,'target':b'\0'*8,
+           'status':'matched','matched_source':'int returned(void) { return 0; }','matched_agent_id':None}
+    changed = {**old,'name':'different','vram':0x80002000,'rom_offset':0x2000}
+    gone = {'returned':old,'different':changed}
+    assert _recreated_matches(net,pid,gone,False) == []
+    recovered = _recreated_matches(net,pid,gone,True)
+    assert recovered == [('returned',old['matched_source'],None)]
+    net.attempt = lambda *args, **kwargs: (_ for _ in ()).throw(NetworkError('Compiler unavailable.'))
+    net._judge_kept_matches('game',recovered,lambda *_:None)
+    saved = net.project_store(pid).one("SELECT status,best_source FROM functions WHERE project_id=? AND name='returned'",pid)
+    assert saved['status'] == 'open' and saved['best_source'] == old['matched_source']
+
+
+def test_reimport_queues_a_match_recreated_by_boundary_repair(tmp_path, monkeypatch):
+    import hashlib
+
+    root = tmp_path/'game'
+    root.mkdir()
+    (root/'old.z64').write_bytes(b'original')
+    net = RomNetwork(tmp_path/'app.db', tmp_path)
+    image = bytes(16)
+    cfg = {'kind':'rom', 'platform':'n64', 'big_endian':True,
+           'rom':{'file':'old.z64','sha1':'same','analysis_sha1':hashlib.sha1(image).hexdigest()},
+           'segments':[], 'compiler':{'toolchain':'gcc-2.7.2-kmc','flags':['-O2']}}
+    with net.store.tx() as db:
+        pid = db.execute('INSERT INTO projects(slug,name,root,arch,config) VALUES(?,?,?,?,?)',
+                         ('game','Game',str(root),'mips',json.dumps(cfg))).lastrowid
+        db.execute('INSERT INTO functions(project_id,name,vram,rom_offset,size,n_insns,target,relocs,status,matched_source) '
+                   'VALUES(?,?,?,?,?,?,?,?,?,?)',(pid,'returned',0x80001008,8,4,1,bytes(4),'[]','matched','int returned(void) { return 0; }'))
+
+    class TestConsole(Console):
+        id = 'n64'
+        name = 'Nintendo 64'
+        arch = 'mips'
+        def debug_info(self, program, known):
+            return None
+        def default_compiler(self, info, guess):
+            return 'gcc-2.7.2-kmc'
+        def default_flags(self, toolchain, gp):
+            return []
+        def after_import(self, net, slug, chosen, log):
+            pass
+
+    def replacement(work, *args, **kwargs):
+        line = split.AsmLine(0,0x80001000,0,'nop','')
+        fn = split.RomFunction('new',0x80001000,0,'code',[line],work/'new.s')
+        return split.SplitResult([fn],[],[split.Segment('code',0,16,0x80001000)],{},work/'splat.yaml','KMC','',image='rom.z64')
+
+    def repair(network, slug, log):
+        with network.project_store(pid).tx() as db:
+            db.execute('INSERT INTO functions(project_id,name,vram,rom_offset,size,n_insns,target,relocs,status) '
+                       'VALUES(?,?,?,?,?,?,?,?,?)',(pid,'returned',0x80001008,8,4,1,bytes(4),'[]','open'))
+
+    monkeypatch.setattr(split, 'split_rom', replacement)
+    monkeypatch.setattr('decompnet.app.boundary_repairs.apply_entry_fixes', repair)
+    monkeypatch.setattr('decompnet.app.boundary_review.refresh_shared_entries', lambda *args:None)
+    console = TestConsole()
+    net.console = lambda _:console
+    picked = Picked('n64',image,'rom.z64',{'title':'Game','size':16,'sha1':'same',
+                    'game_code':'DEMO','region':'Test','compiler_guess':'KMC'},True)
+    rejudge = []
+    net.import_split(console,picked,reimport_slug='game',rejudge_out=rejudge,log=lambda *_:None)
+    assert rejudge == [('returned','int returned(void) { return 0; }',None)]

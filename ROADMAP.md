@@ -168,7 +168,9 @@
 
 - N64 reimport stages non-overlapping existing entries omitted by the new split when the analysis image and each
   body still match. It retains them only when a temporary split reproduces both the new and existing bodies.
-  Planned: equivalent staged reimport adapters for the other ROM consoles and review for competing boundaries.
+  Across ROM consoles, when boundary repair recreates an omitted matched entry with identical bytes and placement,
+  its saved C is judged again and remains attached as a best attempt if it cannot be judged. Planned: equivalent
+  staged reimport adapters for the other ROM consoles and review for competing boundaries.
 
 - Done: N64 imports scan all unowned intervals in corroborated loader banks,
   following newly recovered calls and materialized callback addresses to completion.
