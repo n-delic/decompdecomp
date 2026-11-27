@@ -1000,6 +1000,10 @@ def run_m2c(asm_text: str, name: str, target: str, context_header: str = "", dat
     return drafted
 
 
+# m2c numbers the switches of a function that has several: `/* switch 1; irregular */`
+_IRREGULAR_SWITCH = re.compile(r"/\*\s*(?:switch \d+;\s*)?irregular\s*\*/")
+
+
 def _run_m2c(asm_text: str, name: str, target: str, context_header: str = "", data_asm: str | None = None,
              timeout: float = 20, valid: bool = False, strict: bool = False, options: tuple[str, ...] = ()) -> str | None:
     if any(option not in ('--no-switches', '--no-stack-spill', '--gotos-only', '--stack-structs') for option in options):
@@ -1065,7 +1069,7 @@ def _run_m2c(asm_text: str, name: str, target: str, context_header: str = "", da
             if strict:
                 raise DraftError(reason or (_failure(res) if out or res.stderr or res.returncode else 'm2c produced no C for this function.'))
             return None
-        if valid and "--no-switches" not in options and "/* irregular */" in out:
+        if valid and "--no-switches" not in options and _IRREGULAR_SWITCH.search(out):
             # a switch m2c could not structure leaves `case` labels outside any `switch`; as gotos it compiles
             return _run_m2c(original, name, target, context_header, data_asm, timeout, valid, strict,
                             (*options, "--no-switches"))
