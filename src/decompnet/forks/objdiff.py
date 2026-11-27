@@ -89,35 +89,50 @@ def _run_compatible(args: list[str], cwd: Path, timeout: float = 600) -> str:
         return _run(retry, cwd=cwd, timeout=timeout)
 
 
-def _exclude_stubs(project: Path, cfg: dict, rep: dict) -> dict:
-    """Assembly placeholders are undecompiled even when their bytes compare identically."""
+def stub_symbols(text: str, names) -> set[str]:
+    """Names whose source definition is an assembly placeholder, not recovered C."""
     from . import csource
 
-    units = {u.get("name"): u for u in cfg.get("units", [])}
+    # Only parse a name if a placeholder line can mention it: a unit can have
+    # thousands of real C definitions and very few assembly stubs.
+    lines = [line for line in text.splitlines()
+             if any(macro in line for macro in ('INCLUDE_ASM', 'GLOBAL_ASM', 'INCLUDE_RODATA_FN'))]
+    if not lines:
+        return set()
+    found = set()
+    for name in names:
+        if not any(name.split('::')[-1] in line for line in lines):
+            continue
+        span = csource.find(text, name)
+        if span and csource.is_stub(text[span[0]:span[1]]):
+            found.add(name)
+    return found
+
+
+def _exclude_stubs(project: Path, cfg: dict, rep: dict) -> dict:
+    """Assembly placeholders are undecompiled even when their bytes compare identically."""
+    units = {(u.get('name') or u.get('path')): u for u in cfg.get('units') or cfg.get('objects') or []}
     removed_count = removed_bytes = 0
     for unit in rep.get("units", []):
         source = (units.get(unit.get("name"), {}).get("metadata") or {}).get("source_path")
         if not source:
             continue
         path = (project / source).resolve()
-        if project.resolve() not in path.parents:
-            continue
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        # A stub recognized by csource is a single line containing one of these macros and the
-        # function's simple name. Avoid parsing every C definition in a large, mostly recovered file.
-        stub_lines = [line for line in text.splitlines()
-                      if any(macro in line for macro in ("INCLUDE_ASM", "GLOBAL_ASM", "INCLUDE_RODATA_FN"))]
-        if not stub_lines:
+        names = [fn['name'] for fn in unit.get('functions', [])]
+        if project.resolve() not in path.parents or path.suffix.lower() in ('.s', '.asm'):
+            stubs = set(names)
+        else:
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                stubs = set(names)  # An old object without readable source is not C evidence.
+            else:
+                stubs = stub_symbols(text, names)
+        if not stubs:
             continue
         count = size = 0
         for fn in unit.get("functions", []):
-            if not any(fn["name"].split("::")[-1] in line for line in stub_lines):
-                continue
-            span = csource.find(text, fn["name"])
-            if span and csource.is_stub(text[span[0]:span[1]]):
+            if fn['name'] in stubs:
                 if float(fn.get("fuzzy_match_percent") or 0) >= 100:
                     count += 1
                     size += int(fn.get("size") or 0)
@@ -127,6 +142,20 @@ def _exclude_stubs(project: Path, cfg: dict, rep: dict) -> dict:
         _subtract_matches(unit.get("measures", {}), count, size)
     _subtract_matches(rep.get("measures", {}), removed_count, removed_bytes)
     return rep
+
+
+def exclude_diff_stubs(result: FunctionDiff, text: str) -> FunctionDiff:
+    """Unit diffs and reports agree: exact assembly placeholders are not C matches."""
+    names = set(result.unit_scores)
+    if result.symbol:
+        names.add(result.symbol)
+    stubs = stub_symbols(text, names)
+    for name in stubs:
+        if name in result.unit_scores:
+            result.unit_scores[name] = None
+    if result.symbol in stubs:
+        result.match_percent = None
+    return result
 
 
 def _subtract_matches(measures: dict, count: int, size: int) -> None:

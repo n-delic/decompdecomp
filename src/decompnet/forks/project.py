@@ -2235,8 +2235,20 @@ class ForkProject:
         from .linkedimages import stale
         entry = next((u for u in self.objdiff_config().get("units", []) if u.get("name") == unit.name), {})
         base = None if stale(self.root, entry, {}) else unit.base
-        return objdiff.diff(unit.target, base, symbol, cwd=self.root, options=self.diff_options(unit),
-                            project=self.root if unit.mappings else None, unit=unit.name)
+        result = objdiff.diff(unit.target, base, symbol, cwd=self.root, options=self.diff_options(unit),
+                              project=self.root if unit.mappings else None, unit=unit.name)
+        if unit.source:
+            source = (self.root / unit.source).resolve()
+            if self.root.resolve() in source.parents and source.suffix.lower() not in ('.s', '.asm'):
+                try:
+                    return objdiff.exclude_diff_stubs(result, source.read_text(encoding='utf-8', errors='replace'))
+                except OSError:
+                    pass
+            # An object left by an earlier build is not evidence of recovered C
+            # when its source cannot be checked for assembly placeholders.
+            result.unit_scores = dict.fromkeys(result.unit_scores)
+            result.match_percent = None
+        return result
 
     # ------------------------------------------------------------------ linking (dtk-template projects)
     # A file whose code and data match is linked into the game: configure.py marks it Matching, the build then
