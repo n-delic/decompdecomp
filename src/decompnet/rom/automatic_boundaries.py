@@ -380,7 +380,7 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
 
     recovered_data=[]
     predecessors={(fn.rom+fn.size,fn.vram+fn.size):fn for fn in result if fn.size>=8}
-    kept=[];dropped=markers=recovered_shared=recovered_fallthrough=recovered_continuations=shared_delay_entries=return_wrappers=backward_loops=0;ordered=sorted(result,key=lambda f:(owner(f),f.rom))
+    kept=[];dropped=markers=recovered_shared=recovered_fallthrough=recovered_continuations=shared_delay_entries=return_wrappers=backward_loops=cache_prefixes=0;ordered=sorted(result,key=lambda f:(owner(f),f.rom))
     for i,fn in enumerate(ordered):
         previous=kept[-1] if kept else None;following=ordered[i+1] if i+1<len(ordered) else None
         successor = following if fn.size == 4 else original_entries.get((fn.rom+4, fn.vram+4))
@@ -466,6 +466,17 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
                                    entry_aliases={**previous.entry_aliases,fn.vram:fn.name})
                 data.append(DataSymbol(fn.name,fn.vram,fn.rom,0,'func'))
                 backward_loops += 1
+                continue
+        if (previous is not None and owner(previous)[0] >= 0 and owner(previous) == owner(fn)
+                and previous.vram not in direct_calls and fn.vram in direct_calls
+                and 8 <= previous.size <= 64 and fn.size >= 16 and fn.lines[0].word >> 26 == 47):
+            external = explicit | pointers | {address for address, sources in references.items()
+                if any(not previous.rom <= src < fn.rom+fn.size for src, _ in sources)}
+            if cache_fallthrough(previous,fn,image,console,order,segments,external,data):
+                kept[-1] = replace(previous,lines=previous.lines+fn.lines,labels=previous.labels|fn.labels,
+                                   entry_aliases={**previous.entry_aliases,fn.vram:fn.name})
+                data.append(DataSymbol(fn.name,fn.vram,fn.rom,0,'func'))
+                cache_prefixes += 1
                 continue
         same_owner = previous is not None and owner(previous) == owner(fn)
         possible_fallthrough = (same_owner and 8 <= previous.size <= 128 and fn.lines
@@ -594,6 +605,8 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
         log(f'Recovered {recovered_shared} closed leaves with independently entered assembly tails.')
     if recovered_fallthrough:
         log(f'Recovered {recovered_fallthrough} straight initializers with preserved framed entries.')
+    if cache_prefixes:
+        log(f'Joined {cache_prefixes} proven cache-writing fallthroughs, preserving their called entries.')
     if backward_loops:
         log(f'Joined {backward_loops} backward-entered assembly loops, preserving their callable entries.')
     if return_wrappers:
@@ -602,8 +615,60 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
         log(f'Joined {recovered_continuations} unentered framed continuations.')
     if shared_delay_entries:
         log(f'Preserved {shared_delay_entries} called NOP entries shared with a return delay slot.')
-    return kept if dropped or markers or recovered_data or recovered_shared or recovered_fallthrough or recovered_continuations or shared_delay_entries or return_wrappers or backward_loops else result if changed else functions
+    return kept if dropped or markers or recovered_data or recovered_shared or recovered_fallthrough or recovered_continuations or shared_delay_entries or return_wrappers or backward_loops or cache_prefixes else result if changed else functions
 
+
+
+def identified_sdk_tail(console, image, tail):
+    """Keep separately identifiable SDK routines intact for SDK classification."""
+    import hashlib
+
+    code = image[tail.rom:tail.rom+tail.size]
+    if (tail.size in console.sdk_assembly_sizes and console.sdk_assembly_identity(code,big_endian=console.big_endian)):
+        return True
+    lo, hi = console.sdk_shape_sizes
+    if lo <= tail.size <= hi and console.sdk_shape_identity(code,big_endian=console.big_endian):
+        return True
+    return bool(tail.size in console.sdk_linked_sizes
+                and console.sdk_linked_identity(code,hashlib.sha1(image).hexdigest()))
+
+
+def cache_fallthrough(head, tail, image, console, order, segments, entered, data):
+    """A global pointer update falls into a separately called cache-writing leaf."""
+    import rabbitizer
+
+    from ..arch.mips import _mips_uses, rabbitizer_category
+    from ..arch.mips_assets import read
+
+    if (head.piece or tail.piece or not 8 <= head.size <= 64 or tail.size < 16
+            or head.rom+head.size != tail.rom or head.vram+head.size != tail.vram
+            or head.entry_aliases or tail.entry_aliases
+            or sum(segment.contains(head.vram,head.size+tail.size) for segment in segments) != 1
+            or any(head.vram <= address < tail.vram+tail.size and address != tail.vram for address in entered)):
+        return False
+    end = tail.rom+tail.size
+    if (end > len(image) or any(d.rom is not None and d.rom < end and head.rom < d.rom+d.size for d in data)
+            or image[head.rom:end] != b''.join(line.word.to_bytes(4,order) for fn in (head,tail) for line in fn.lines)
+            or len(tail.lines) < 2 or any(line.word >> 26 != 47 for line in tail.lines[:2])):
+        return False
+    if identified_sdk_tail(console,image,tail):
+        return False
+    for line in head.lines:
+        instruction = rabbitizer.Instruction(line.word,line.vram,rabbitizer_category(console.cpu_variant))
+        uses = _mips_uses(line.word,console.cpu_variant)
+        if (not instruction.isValid() or instruction.hasDelaySlot() or uses is None
+                or {29,31} & (uses[0] | uses[1])
+                or instruction.getOpcodeName() in ('eret','break','syscall','teq','tne','tge','tgeu','tlt','tltu')):
+            return False
+    facts = read(head.vram,image[head.rom:tail.rom],big_endian=console.big_endian,cpu=console.cpu_variant)
+    addresses = {kind:{event['place']['value'] for event in facts['events']
+                       if event.get('kind') == kind and event.get('place',{}).get('kind') == 'constant'
+                       and 0x80000000 <= event['place']['value'] < 0x80800000}
+                 for kind in ('load','store')}
+    if not addresses['load'] & addresses['store']:
+        return False
+    return (assembly_extent(image,tail.rom,end,tail.vram,console,order,allow_cache=True) == tail.size
+            and assembly_extent(image,head.rom,end,head.vram,console,order,allow_cache=True) == head.size+tail.size)
 
 
 def backward_loop_entry(head, body, image, console, order, segments, entered, data):
@@ -616,6 +681,8 @@ def backward_loop_entry(head, body, image, console, order, segments, entered, da
     end = body.rom+body.size
     if (end > len(image) or any(d.rom is not None and d.rom < end and head.rom < d.rom+d.size for d in data)
             or image[head.rom:end] != b''.join(line.word.to_bytes(4,order) for fn in (head,body) for line in fn.lines)):
+        return False
+    if identified_sdk_tail(console,image,body):
         return False
     branch = head.lines[0].word
     if branch >> 26 not in (20,21,22,23):
@@ -656,6 +723,8 @@ def shared_return_wrapper(head, body, continuation, image, console, order, segme
             or image[head.rom:end] != b''.join(line.word.to_bytes(4,order)
                                                 for fn in (head,body,continuation) for line in fn.lines)):
         return False
+    if identified_sdk_tail(console,image,body):
+        return False
     first, high, low = (line.word for line in head.lines)
     if first != 0x03e0c825 or high >> 16 != 0x3c1f or low >> 16 != 0x27ff:
         return False
@@ -692,6 +761,8 @@ def shared_called_leaf(head, tail, image, console, order, segments, entered, dat
     if any(d.rom is not None and d.rom < end and head.rom < d.rom+d.size for d in data):
         return False
     if image[head.rom:end] != b''.join(line.word.to_bytes(4,order) for fn in (head,tail) for line in fn.lines):
+        return False
+    if identified_sdk_tail(console,image,tail):
         return False
     options = dict(big_endian=console.big_endian, cpu=console.cpu_variant, asm_check=console.asm_reason)
     if leaf_extent(image,head.rom,end,head.vram,**options) != head.size+tail.size:

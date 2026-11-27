@@ -76,3 +76,42 @@ def test_refresh_keeps_automatic_shared_entry_out_of_unresolved_review(tmp_path)
     row = net.store.one('SELECT status,meta FROM functions WHERE name=?', 'prefix')
     assert row['status'] == 'open'
     assert 'boundary_review' not in json.loads(row['meta'])
+
+
+def test_argument_move_can_share_an_independently_called_tail():
+    console = SimpleNamespace(arch='mips', big_endian=True, boundary_reason=lambda code: None)
+    prefix = function('prefix', 0x80001000, 0x100, [(0x00802825, 'or')])
+    tail = function('tail', 0x80001004, 0x104, [(0x03e00008, 'jr'), (0, 'nop')])
+    caller = function('caller', 0x80002000, 0x200, [(0x0c000400, 'jal'), (0x0c000401, 'jal')])
+    segments = [Segment('one', 0x100, 0x200, 0x80001000)]
+    assert intentional([prefix, tail, caller], console, segments)['prefix']['tail'] == 'tail'
+    for word in (0x03e02825, 0x0080f825, 0x00812825):
+        prefix = function('prefix', 0x80001000, 0x100, [(word, 'or')])
+        assert not intentional([prefix, tail, caller], console, segments)
+
+
+def test_import_refresh_reproves_shared_entries_after_boundary_edits(tmp_path):
+    import json
+
+    from decompnet.app.boundary_review import refresh_shared_entries
+    from decompnet.app.engine import RomNetwork
+    from decompnet.consoles import get
+    from decompnet.rom.split import function_asm
+
+    net = RomNetwork(tmp_path / 'audit.db', tmp_path)
+    prefix = function('prefix', 0x80001000, 0x100, [(0x00802825, 'or')])
+    tail = function('tail', 0x80001004, 0x104, [(0x03e00008, 'jr'), (0, 'nop')])
+    caller = function('caller', 0x80002000, 0x200, [(0x0c000400, 'jal'), (0x0c000401, 'jal')])
+    segments = [Segment('one', 0x100, 0x200, 0x80001000)]
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,arch,root,config) VALUES('game','Game','mips',?,'{}')", (str(tmp_path),)).lastrowid
+        for fn in (prefix, tail, caller):
+            target = b''.join(line.word.to_bytes(4, 'big') for line in fn.lines)
+            db.execute("INSERT INTO functions(project_id,name,vram,rom_offset,size,n_insns,target,status,unit,asm,meta) VALUES(?,?,?,?,?,?,?,'open',?,?,?)",
+                       (pid, fn.name, fn.vram, fn.rom, fn.size, len(fn.lines), target, fn.segment, function_asm(fn), '{}'))
+    refresh_shared_entries(net, {'id': pid}, get('n64'), segments)
+    row = net.store.one('SELECT meta FROM functions WHERE name=?', 'prefix')
+    meta = json.loads(row['meta'])
+    assert meta['boundary_override_source'] == 'shared_entry'
+    assert meta['shared_entry']['tail'] == 'tail'
+    assert 'boundary_review' not in meta

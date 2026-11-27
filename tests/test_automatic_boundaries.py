@@ -1137,3 +1137,44 @@ def test_backward_loop_repair_keeps_the_real_entry():
     assert result[0].size == 28
     assert result[0].entry_aliases == {BASE+8: functions[1].name}
     assert any(d.vram == BASE+8 and d.kind == 'func' for d in data)
+
+
+@pytest.mark.parametrize('case', ['valid', 'unmatched_store', 'bad_tail', 'external', 'data'])
+def test_cache_fallthrough_preserves_the_called_tail(case):
+    from decompnet.rom.automatic_boundaries import cache_fallthrough
+
+    words = [0x3c088000, 0x8d050100, 0x24a5ffc0, 0xad050100, 0x00402825,
+             0xbcad0000, 0xbcad0010, 0x24840004, 0x03e00008, 0]
+    if case == 'unmatched_store':
+        words[3] = 0xad050104
+    if case == 'bad_tail':
+        words[6] = 0
+    image, functions, segments = fixture(words, cuts=(0, 20, 40))
+    entered = {BASE+4} if case == 'external' else set()
+    data = [DataSymbol('data', BASE+24, 24, 4, 'data')] if case == 'data' else []
+    assert cache_fallthrough(*functions, image, consoles.get('n64'), 'big', segments, entered, data) == (case == 'valid')
+
+
+def test_cache_fallthrough_repair_keeps_the_tail_symbol():
+    words = [0x3c088000, 0x8d050100, 0x24a5ffc0, 0xad050100, 0x00402825,
+             0xbcad0000, 0xbcad0010, 0x24840004, 0x03e00008, 0,
+             0x0c000000 | ((BASE+20) >> 2 & 0x3ffffff), 0, 0x03e00008, 0]
+    image, functions, segments = fixture(words, cuts=(0, 20, 40, 56))
+    data = []
+    result = repair(functions, data, image, consoles.get('n64'), segments)
+    assert result[0].size == 40
+    assert result[0].entry_aliases == {BASE+20: functions[1].name}
+    assert any(d.vram == BASE+20 and d.kind == 'func' for d in data)
+
+
+@pytest.mark.parametrize('kind', ['assembly', 'shape', 'linked'])
+def test_cache_fallthrough_does_not_absorb_identified_sdk_tail(monkeypatch, kind):
+    from decompnet.rom.automatic_boundaries import cache_fallthrough
+
+    words = [0x3c088000, 0x8d050100, 0x24a5ffc0, 0xad050100, 0x00402825,
+             0xbcad0000, 0xbcad0010, 0x24840004, 0x03e00008, 0]
+    image, functions, segments = fixture(words, cuts=(0, 20, 40))
+    console = consoles.get('n64')
+    monkeypatch.setattr(console, f'sdk_{kind}_identity', lambda *args, **kwargs: {'name': 'sdk'})
+    monkeypatch.setattr(console, f'sdk_{kind}_sizes', (0, 100) if kind == 'shape' else (20,))
+    assert not cache_fallthrough(*functions, image, console, 'big', segments, set(), [])
