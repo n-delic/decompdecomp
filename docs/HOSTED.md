@@ -310,10 +310,10 @@ places and checks candidate-defined data. A code match still requires the
 candidate's data to agree with the ROM. Each verifier slot caches a Rust
 ROM reader and symbol table for the pinned pack revision. It selects the
 caller's overlay, validates supplied overlay payloads, rejects ambiguous
-mappings and preserves project symbol aliases. Python still prepares the
-scratch pack and supplies jump-table extent and private ECOFF symbol
-evidence where needed. The jump-table analyser reads through the same Rust
-overlay view. Unsupported object formats and older workers can use the
-existing Python linker. The
-adapter and verifier negotiate this on their private connection and use the
-same hosted queue protocol.
+mappings and preserves project symbol aliases. Rust also validates guarded
+jump tables against that overlay view and reads private procedure extents
+and names from embedded ECOFF records. Python still prepares the scratch
+pack and provides import analysis and full interactive diagnostics.
+Unsupported object formats and older workers can use the existing Python
+linker. The adapter and verifier negotiate this on their private connection
+and use the same hosted queue protocol.

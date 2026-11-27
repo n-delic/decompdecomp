@@ -35,7 +35,6 @@ struct Prepared {
     start: usize,
     size: usize,
     big_endian: bool,
-    mdebug: bool,
     relocs: Vec<Reference>,
 }
 
@@ -66,7 +65,7 @@ struct Linker<'a, R> {
     target_code: &'a [u8],
     code: &'a [u8],
     function_section: usize,
-    mdebug: bool,
+    metadata: &'a crate::mips_ecoff::Procedures<'a>,
     target_at: BTreeMap<i64, (u8, i64)>,
     reader: &'a mut R,
     sections: HashMap<usize, Vec<(usize, u8, Symbol<'a>)>>,
@@ -161,22 +160,6 @@ impl<'a, R: Reader> Linker<'a, R> {
             .ok_or_else(|| "invalid MIPS data section".into())
     }
 
-    async fn named(
-        &mut self,
-        section: usize,
-        offset: i64,
-        known: Option<(String, i64)>,
-    ) -> Result<Option<(String, i64)>, String> {
-        if known.is_some() || !self.mdebug {
-            return Ok(known);
-        }
-        let value = self
-            .reader
-            .ask(json!({"elf_name": [section, offset]}))
-            .await?;
-        serde_json::from_value(value).map_err(|error| error.to_string())
-    }
-
     async fn vote_bases(&mut self, relocs: &[Reference]) -> Result<(), String> {
         let mut votes: HashMap<usize, HashMap<i64, usize>> = HashMap::new();
         let mut holds = HashMap::new();
@@ -189,7 +172,7 @@ impl<'a, R: Reader> Linker<'a, R> {
             {
                 continue;
             }
-            if let Some((name, _)) = self.named(row.section, off, row.named.clone()).await? {
+            if let Some((name, _)) = row.named.clone() {
                 if self.resolve(&name).await?.is_some() {
                     continue;
                 }
@@ -301,7 +284,7 @@ impl<'a, R: Reader> Linker<'a, R> {
         }
         let off = row.section_off.ok_or("missing MIPS section offset")?;
         let key = (row.section, off);
-        let named = self.named(row.section, off, row.named.clone()).await?;
+        let named = row.named.clone();
         if row.section == self.function_section {
             if let Some((name, residual)) = named {
                 if name == self.target.name {
@@ -447,7 +430,14 @@ pub async fn link<R: Reader>(request: &Value, reader: &mut R) -> Result<Value, S
         // Allocated SHF_COMPRESSED sections need the compatibility reader.
         return Ok(Value::Null);
     }
-    let Some(prepared) = mips_elf::evidence(&elf, &target.name) else {
+    let Some(symbols) = elf
+        .section(".symtab")
+        .and_then(|section| elf.symbols(section))
+    else {
+        return Ok(Value::Null);
+    };
+    let metadata = crate::mips_ecoff::functions(&elf, &symbols);
+    let Some(prepared) = mips_elf::evidence(&elf, &target.name, &metadata) else {
         return Ok(Value::Null);
     };
     let prepared: Prepared = serde_json::from_value(prepared).map_err(|error| error.to_string())?;
@@ -456,10 +446,6 @@ pub async fn link<R: Reader>(request: &Value, reader: &mut R) -> Result<Value, S
             json!({"problems": ["the compiler produced code in the wrong byte order for this game"]}),
         );
     }
-    let symbols = elf
-        .section(".symtab")
-        .and_then(|section| elf.symbols(section))
-        .ok_or("invalid ELF symbols")?;
     let code = object
         .get(prepared.start..prepared.start + prepared.size)
         .ok_or("invalid ELF function")?;
@@ -473,7 +459,7 @@ pub async fn link<R: Reader>(request: &Value, reader: &mut R) -> Result<Value, S
             target_code: &target_code,
             code,
             function_section: prepared.section,
-            mdebug: prepared.mdebug,
+            metadata: &metadata,
             target_at: target
                 .relocs
                 .iter()

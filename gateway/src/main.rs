@@ -22,6 +22,8 @@ mod native;
 mod rom_judge;
 mod mips_link;
 mod mips_elf;
+mod mips_ecoff;
+mod mips_dispatch;
 mod mips_rom;
 mod rom_project;
 mod verifier;

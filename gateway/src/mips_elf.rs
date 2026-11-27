@@ -349,10 +349,10 @@ fn addend(row: &Reloc, partner: i64) -> Parsed<i64> {
     }
 }
 
-pub(crate) fn evidence(elf: &Elf, name: &str) -> Parsed<Value> {
+pub(crate) fn evidence(elf: &Elf, name: &str, metadata: &crate::mips_ecoff::Procedures<'_>) -> Parsed<Value> {
     let symtab = elf.section(".symtab")?;
     let symbols = elf.symbols(symtab)?;
-    let (index, start, size) = elf.function(&symbols, name)?;
+    let (index, start, size) = elf.function(&symbols, name).or_else(|| metadata.get(name).copied())?;
     let section = elf.sections.get(index)?;
     if section.kind == NOBITS || section.flags & 0x800 != 0 {
         // SHF_COMPRESSED
@@ -410,7 +410,8 @@ pub(crate) fn evidence(elf: &Elf, name: &str) -> Parsed<Value> {
                 symbol.value + value
             }
         });
-        let named = offset.and_then(|off| named_symbol(&tables[&symtab], symbol.section, off));
+        let named = offset.and_then(|off| named_symbol(&tables[&symtab], symbol.section, off)
+            .or_else(|| crate::mips_ecoff::symbol_at(metadata, usize::from(symbol.section), off)));
         output.push((row.offset, json!({
             "off": row.offset, "type": row.kind, "residual": residual, "symbol": symbol.name,
             "external": external.then(|| canonical(symbol)), "section": symbol.section, "section_symbol": symbol.kind == 3,
@@ -430,9 +431,12 @@ pub fn prepare(request: &Value) -> Result<Value, String> {
     let name = request["name"]
         .as_str()
         .ok_or("missing MIPS function name")?;
-    // Leave unknown variants and private ECOFF-only procedure boundaries with the existing parser.
     Ok(Elf::read(&bytes)
-        .and_then(|elf| evidence(&elf, name))
+        .and_then(|elf| {
+            let symbols = elf.symbols(elf.section(".symtab")?)?;
+            let metadata = crate::mips_ecoff::functions(&elf, &symbols);
+            evidence(&elf, name, &metadata)
+        })
         .unwrap_or(Value::Null))
 }
 

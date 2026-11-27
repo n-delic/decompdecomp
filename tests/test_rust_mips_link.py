@@ -50,7 +50,7 @@ def audit_worker():
                 if "project_inputs" in request:
                     assert not inputs_loaded, "the slot reloaded the same verification pack"
                     inputs_loaded = True
-                assert not request.keys() & {"read", "resolve", "name_at", "next_start", "label", "library_name"}, request
+                assert not request.keys() & {"read", "resolve", "name_at", "next_start", "label", "library_name", "switch_extent", "elf_name"}, request
                 return lookup(request)
 
             return exchange(operation, plan, guard if lookup else None)
@@ -143,21 +143,24 @@ def test_real_mips_objects_have_the_same_verdict_on_the_shared_queue(tmp_path, t
                    (baseline.linked_code, json.dumps(relocs), len(baseline.linked_code),
                     len(baseline.linked_code) // 4, VRAM - 0x80000000, proj["id"]))
 
+    request = {"slug": "game", "function": {"name": "f1", "vram": VRAM, "target": baseline.linked_code.hex()},
+               "compiler": compiler, "header_sha256": hashlib.sha256(header.encode()).hexdigest()}
+    scores = queue_parity(tmp_path, net, request, sources)
+    assert scores[:2] == [0, 1]
+    assert all(score > 0 for score in scores[2:4])
+    assert scores[-1] is None
+
+
+def queue_parity(tmp_path, net, request, sources):
     folder = tmp_path / "hosted"
     hosted_export.export(net, "game", folder / "projects" / "game.sqlite3", log=lambda _: None)
     pack = folder / "packs" / "game.sqlite3"
     hosted_pack.export_pack(net, "game", pack)
     digest = hosted_pack.digest(pack)
-    request = {
-        "slug": "game", "function": {"name": "f1", "vram": VRAM, "target": baseline.linked_code.hex()},
-        "compiler": compiler, "pack_sha256": digest, "header_sha256": hashlib.sha256(header.encode()).hexdigest(),
-    }
+    request = {**request, "pack_sha256": digest}
     python_judge = hosted_judge.Packs(pack.parent, tmp_path / "python-cache")
     expected = [python_judge.judge({**request, "source": source}) for source in sources]
-    assert all("error" not in reply for reply in expected)
-    assert [reply["score"] for reply in expected[:2]] == [0, 1], expected
-    assert all(reply["score"] > 0 for reply in expected[2:4])
-    assert expected[-1]["score"] is None
+    assert all("error" not in reply for reply in expected), expected
 
     tokens = {role: subprocess.run(gateway("add-user", "--dir", str(folder), "--name", role, "--role", role),
                                    capture_output=True, text=True, check=True).stdout.strip()
@@ -186,3 +189,5 @@ def test_real_mips_objects_have_the_same_verdict_on_the_shared_queue(tmp_path, t
     finally:
         server.terminate()
         server.wait(5)
+
+    return [reply["score"] for reply in expected]

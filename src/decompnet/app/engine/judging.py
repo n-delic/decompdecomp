@@ -107,14 +107,14 @@ class JudgeMixin:
             while len(session.targets) > 16:session.targets.popitem(last=False)
         return obj
 
-    def _evaluate(self, fn, proj, obj: bytes):
+    def _evaluate(self, fn, proj, obj: bytes, *, diagnostics=True):
         from ...attempt_status import update
         update('checking', fn['name'])
         if not self.is_rom(proj):
             return super()._evaluate(fn, proj, obj)
         # The verdict needs only the link. The advisory diagnostics and their search cache belong to the full engine;
         # an engine without them (a bare Core, as tests/test_overlay_reader.py judges with) gets the verdict alone.
-        diagnose = getattr(self, '_link_diagnostics', None)
+        diagnose = getattr(self, '_link_diagnostics', None) if diagnostics else None
         link_scope = self._diagnostic_scope(fn, proj) if diagnose is not None else None
         with compile_timing.phase('link'):
             target = self._rom_target(fn)
@@ -731,13 +731,15 @@ class JudgeMixin:
         if not result.ok:
             compiler_flags.remember(self,toolchain,flags,result.log)
             return False, None, result.log
-        cand, verdict, problems = self._evaluate(fn, proj, result.obj)
+        # The queue consumes a score and link problems; full diagnostics would analyse the same table again.
+        options = {"diagnostics": False} if evidence else {}
+        cand, verdict, problems = self._evaluate(fn, proj, result.obj, **options)
         if cand is None:
             return False, None, "the function isn't in what it compiled to"
         compare = scoring.score_evidence if evidence else scoring.diff
         d = compare(self._target_obj(fn, proj), cand)
         matched = verdict if verdict is not None else d.bytes_match
-        if not matched and proj['arch'] == 'mips':
+        if not evidence and not matched and proj['arch'] == 'mips':
             self._last_judge_checks = dict(self._candidate_checks(fn, proj, result.obj))
         return matched, d, "\n".join(problems)
 

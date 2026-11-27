@@ -117,13 +117,13 @@ impl<'a, R: Reader> Linker<'a, R> {
         } else {
             symbol.value + value
         };
-        let known = mips_elf::named_symbol(self.symbols, symbol.section, off)
-            .map(|(name, residual)| (name.to_owned(), residual));
-        if let Some((name, residual)) = self.named(section, off, known).await? {
+        let named = mips_elf::named_symbol(self.symbols, symbol.section, off)
+            .or_else(|| crate::mips_ecoff::symbol_at(self.metadata, section, off));
+        if let Some((name, residual)) = named {
             if name == self.target.name {
                 return Ok((Some(self.target.vram + residual), None));
             }
-            if let Some(base) = self.resolve(&name).await? {
+            if let Some(base) = self.resolve(name).await? {
                 return Ok((Some(base + residual), None));
             }
         }
@@ -266,17 +266,34 @@ impl<'a, R: Reader> Linker<'a, R> {
         if instructions_exact
             && size < 4 * code_pointers.len()
             && (2..=256).contains(&code_pointers.len())
-            && code_pointers.iter().copied().eq((0..).step_by(4))
+            && code_pointers
+                .iter()
+                .copied()
+                .eq((0..code_pointers.len()).map(|i| i * 4))
         {
-            let reply = self
-                .reader
-                .ask(json!({"switch_extent": [address, code_pointers]}))
-                .await?;
-            let reads: Vec<Read> = serde_json::from_value(reply["required"].clone())
-                .map_err(|error| error.to_string())?;
-            self.required.extend(reads);
-            if let Some(extent) = reply["extent"].as_u64() {
-                size = extent as usize;
+            let code = crate::mips_dispatch::words(self.target_code, self.target.big_endian);
+            for at in 6..code.len().saturating_sub(1) {
+                let Some(dispatch) =
+                    crate::mips_dispatch::at(&code, self.target_code.len(), self.target.vram, at)
+                else {
+                    continue;
+                };
+                let rom = self
+                    .read(dispatch.address, dispatch.count * 4, true)
+                    .await?;
+                if rom.is_some_and(|rom| {
+                    dispatch.validates(
+                        &rom,
+                        self.target.big_endian,
+                        self.target.vram,
+                        self.target_code.len(),
+                    )
+                }) && dispatch.address == address
+                    && dispatch.count == code_pointers.len()
+                {
+                    size = dispatch.count * 4;
+                    break;
+                }
             }
         }
         let Some(rom) = self.read(address, size, true).await? else {
