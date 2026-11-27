@@ -102,10 +102,12 @@ def link_rom(obj, target, symbols, read, exchange):
                       bytes.fromhex(reply["linked"]), mismatches, missing, required)
 
 
-def compare_mips(target, candidate, align_branches, exchange):
+def compare_mips(target, candidate, align_branches, exchange, *, details=False):
     def function(fn):
         return {"name": fn.name, "big_endian": fn.big_endian, "code": fn.code.hex(),
                 "relocs": [reloc.to_json() for reloc in fn.relocs]}
 
-    return exchange("compare_mips", {"target": function(target), "candidate": function(candidate),
-                                     "align_branches": align_branches})
+    request = {"target": function(target), "candidate": function(candidate), "align_branches": align_branches}
+    if details:
+        request["details"] = True
+    return exchange("compare_mips", request)

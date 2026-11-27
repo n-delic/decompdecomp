@@ -608,8 +608,10 @@ def _ago(ts: float | None) -> str:
     return f"{s}s ago" if s < 120 else f"{s // 60}m ago" if s < 7200 else f"{s // 3600}h ago"
 
 
-def score_candidate(target, candidate, verdict):
-    diff = scoring.diff(target, candidate)
+def score_candidate(target, candidate, verdict, *, compare=None):
+    diff = compare(target, candidate) if compare is not None else None
+    if diff is None:
+        diff = scoring.diff(target, candidate)
     if verdict is not None:
         return scoring.DiffResult(0 if verdict else max(1, diff.score), diff.max_score, diff.rows, verdict)
     return diff
@@ -2296,10 +2298,17 @@ class Network:
         return False, None, getattr(result, "effective_settings", None)
 
     def _score_candidate(self, fn, proj, cand, verdict):
+        return self._compare_candidate(proj, self._target_obj(fn, proj), cand, verdict)
+
+    def _compare_candidate(self, proj, target, candidate, verdict=None, *, advisory=False):
         from .app import attempt_workers
 
-        args = (self._target_obj(fn, proj), cand, verdict)
-        return attempt_workers.run("score", args, lambda: score_candidate(*args))
+        args = (target, candidate, verdict)
+        console = getattr(self, "console", None)
+        native = attempt_workers.active() and console is not None and console(proj).rust_desktop_judge
+        if advisory and not native:
+            return score_candidate(*args)
+        return attempt_workers.run("score", (*args, True) if native else args, lambda: score_candidate(*args))
 
     def _attempt_unlimited(self, agent: Agent, function: str, source: str, project: str | None = None) -> dict:
         """Compile, score and record one attempt. Returns {"text", "score", "matched"} (score None: didn't compile)."""

@@ -21,7 +21,7 @@ def attempt_during_update(tmp_path, monkeypatch, net, slug, function, sources, e
     started = tmp_path / "attempt-started"
     release = tmp_path / "attempt-release"
     trace = tmp_path / "worker-trace"
-    marker = "                    result = perform(reader, build, *request)"
+    marker = "                    result = perform(reader, judge, build, *request)"
     assert marker in original
 
     def instrument(version):
@@ -155,3 +155,137 @@ def test_project_attempt_records_across_worker_update(fork, tmp_path, monkeypatc
                           ("double scale(double x) { return x * 3.0; }",
                            "double scale(double x) { return x * 7.0; }"),
                           SCALE, ("project-build", "project-diff"), update_kind)
+
+
+def audit_rust_judge(methods, trace):
+    """Instrument the worker to compare the Rust and Python paths on the same object."""
+    from decompnet import scoring
+    from decompnet.rom import match
+
+    scoring.instruction_alignment._kernel = lambda: None
+    native_link, native_diff = methods.link, methods.diff
+
+    def link(judge, obj, target, symbols, read):
+        token = match.rom_linker.set(None)
+        try:
+            expected = match.link(obj, target.name, target, symbols, read)
+        finally:
+            match.rom_linker.reset(token)
+        actual = native_link(judge, obj, target, symbols, read)
+        assert actual is not None and actual == expected, (actual, expected)
+        with open(trace, "a", encoding="utf-8") as log:
+            log.write("link\n")
+        return actual
+
+    def diff(judge, target, candidate):
+        expected = scoring.diff(target, candidate)
+        actual = native_diff(judge, target, candidate)
+        assert actual is not None and actual == expected, (actual, expected)
+        with open(trace, "a", encoding="utf-8") as log:
+            log.write("diff\n")
+        return actual
+
+    methods.link, methods.diff = link, diff
+
+
+@pytest.mark.parametrize("toolchain", ["gcc-2.7.2-kmc", "ido-7.1"])
+def test_n64_desktop_attempt_and_interactive_diff_use_rust(project, monkeypatch, toolchain):  # noqa: F811
+    import hashlib
+
+    from decompnet import scoring
+    from decompnet.app import mcp_gateway
+    from decompnet.rom.match import RomTarget, link
+
+    if not (program := mcp_gateway.built()) or not scoring._native_mips_decoder_compatible():
+        pytest.skip("needs a built gateway and matching Capstone")
+    if not toolchains.installed(toolchain):
+        pytest.skip(f"{toolchain} is not installed")
+
+    net, pid, root = project
+    exact = """
+        volatile int D_80000050[2] = {6, 7};
+        int reader(int x) { if (x < 0) return D_80000050[0]; return D_80000050[1]; }
+    """
+    cfg = json.loads(net.project_row("game")["config"])
+    cfg["compiler"] = {"toolchain": toolchain, "flags": list(toolchains.get(toolchain).flags)}
+    with net.store.tx() as db:
+        db.execute("INSERT INTO context_versions(project_id, version, header, created_at, unit) VALUES(?,1,'',0,'')", (pid,))
+        db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), pid))
+        db.execute("INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)",
+                   (pid, "D_80000050", 0x80000050, 8, "data"))
+
+    row = net._function("reader", "game")
+    compiled = net._compile(net.project_row("game"), "", exact, row)
+    assert compiled.ok, compiled.log
+    image = bytearray((root / "game.rom").read_bytes())
+    image[0x50:0x58] = bytes.fromhex("0000000600000007")
+    baseline = link(compiled.obj, "reader", RomTarget("reader", row["vram"], b"", []), net.symbols(pid),
+                    lambda addr, size: bytes(image[addr - row["vram"]:addr - row["vram"] + size]))
+    assert baseline.linked_code and not baseline.problems
+    assert baseline.candidate.relocs and len(baseline.linked_code) <= 0x50
+    image[:len(baseline.linked_code)] = baseline.linked_code
+    (root / "game.rom").write_bytes(image)
+    cfg["rom"]["sha1"] = hashlib.sha1(image).hexdigest()
+    relocations = [(r.offset, r.type, 0x80000050 + r.addend) for r in baseline.candidate.relocs]
+    with net.store.tx() as db:
+        db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), pid))
+        db.execute("UPDATE functions SET target=?, relocs=?, size=?, n_insns=? WHERE id=?",
+                   (baseline.linked_code, json.dumps(relocations), len(baseline.linked_code),
+                    len(baseline.linked_code) // 4, row["id"]))
+
+    trace = root / "rust-trace"
+    worker = root / "audit_worker.py"
+    original = attempt_workers.WORKER_SOURCE.read_text()
+    worker.write_text(original.replace('    serve()', f'''
+    from tests.test_attempt_workers import audit_rust_judge
+    audit_rust_judge(RustJudge, {str(trace)!r})
+    serve()'''))
+    monkeypatch.setattr(attempt_workers, "WORKER_SOURCE", worker)
+    monkeypatch.setenv("DECOMP_MCP_GATEWAY", str(program))
+    monkeypatch.setattr(scoring.instruction_alignment, "_kernel", lambda: None)
+    pool = attempt_workers.Pool(root, size=1)
+    agent, _ = net.local_agent("rust-attempt")
+    net.claim_row(agent, "game", "reader")
+
+    try:
+        # First a linked-data miss with identical instructions, then changed control flow,
+        # then the same function and data as the ROM.
+        cases = (exact.replace("6, 7", "6, 8"),
+                 exact.replace("if (x < 0) return", "if (x == 5) return x; if (x > 0) return"),
+                 exact)
+        for index, source in enumerate(cases):
+            net.attempt_workers = pool
+            trace.write_text("")
+            attempt = net.attempt(agent, "reader", source, "game")
+            assert {"link", "diff"} <= set(trace.read_text().splitlines())
+            assert attempt["matched"] == (index == 2) and attempt["score"] is not None, attempt
+            net._diffs.clear()
+            trace.write_text("")
+            actual = net.function_diff("game", "reader")
+            phases = trace.read_text().splitlines()
+            assert "link" in phases and "diff" in phases
+            net._diffs.clear()
+            net.attempt_workers = None
+            expected = net.function_diff("game", "reader")
+            assert actual == expected
+            assert actual["score"] == attempt["score"]
+            if index == 0:
+                assert actual["score"] == 1 and actual["checks"]["instructions"]["exact"]
+                assert actual["checks"]["data"]
+                # Replace the image while the same native worker remains alive.
+                with (root / "game.rom").open("r+b") as stream:
+                    stream.seek(0x57)
+                    stream.write(b"\x08")
+                net._roms.pop(pid, None)
+                net._diffs.clear()
+                net.attempt_workers = pool
+                refreshed = net.function_diff("game", "reader")
+                assert refreshed["score"] == 0 and not refreshed["checks"]["data"]
+                (root / "game.rom").write_bytes(image)
+                net._roms.pop(pid, None)
+            if index == 1:
+                assert any(row[0] != " " for row in actual["rows"])
+            if index == 2:
+                assert actual["percent"] == 100
+    finally:
+        pool.close()

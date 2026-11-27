@@ -1,4 +1,4 @@
-//! Instruction normalization and score-only diff classification for queued MIPS candidates.
+//! Instruction normalization and diff classification for MIPS candidates.
 
 mod disasm;
 
@@ -11,6 +11,7 @@ use serde_json::{json, Value};
 
 use crate::matching_blocks::{matching_blocks, Block};
 use crate::mips_link::bytes;
+use crate::rom_judge::{DELETION, INSERTION, REORDER};
 
 pub const VERSION: u64 = 1;
 
@@ -61,11 +62,13 @@ struct Request {
     target: Function,
     candidate: Function,
     align_branches: bool,
+    #[serde(default)]
+    details: bool,
 }
 
 struct Insn {
     offset: i64,
-    size: i64,
+    encoding: Vec<u8>,
     mnemonic: String,
     operands: String,
 }
@@ -214,7 +217,10 @@ impl<'a> Flow<'a> {
                 .map(|(i, insn)| (insn.offset, i))
                 .collect();
             if let Some(last) = insns.last() {
-                offsets.insert(last.offset + last.size.max(1), insns.len());
+                offsets.insert(
+                    last.offset + (last.encoding.len() as i64).max(1),
+                    insns.len(),
+                );
             }
             offsets
         };
@@ -297,6 +303,7 @@ fn compare(left: &[Insn], right: &[Insn], request: &Request, bytes_match: bool) 
         .map(|(&key, &count)| (key, -count))
         .collect();
     let (mut missing, mut extra) = (BTreeMap::new(), BTreeMap::new());
+    let mut rows = Vec::new();
     let (mut a, mut b, mut penalty) = (0, 0, 0);
     for block in blocks {
         for insn in &left[a..block.a] {
@@ -304,6 +311,22 @@ fn compare(left: &[Insn], right: &[Insn], request: &Request, bytes_match: bool) 
         }
         for insn in &right[b..block.b] {
             *extra.entry(insn.text()).or_insert(0) += 1;
+        }
+        if request.details {
+            for k in 0..(block.a - a).max(block.b - b) {
+                let l = left[a..block.a].get(k);
+                let r = right[b..block.b].get(k);
+                let mark = match (l, r) {
+                    (Some(_), Some(_)) => "|",
+                    (Some(_), None) => "<",
+                    _ => ">",
+                };
+                rows.push((
+                    mark,
+                    l.map_or_else(String::new, Insn::text),
+                    r.map_or_else(String::new, Insn::text),
+                ));
+            }
         }
         for k in 0..block.size {
             let (i, j) = (block.a + k, block.b + k);
@@ -332,9 +355,53 @@ fn compare(left: &[Insn], right: &[Insn], request: &Request, bytes_match: bool) 
                 }
             }
             penalty += cost;
+            if request.details {
+                let (lt, rt) = (l.text(), r.text());
+                let mark = match cost {
+                    0 => " ",
+                    STACK_MOVE => "s",
+                    REGISTER_MOVE => "r",
+                    _ => "i",
+                };
+                if !bytes_match && lt == rt && l.encoding != r.encoding {
+                    let hex = crate::mips_rom::hex;
+                    rows.push((
+                        "|",
+                        format!("{lt} [bytes {}]", hex(&l.encoding)),
+                        format!("{rt} [bytes {}]", hex(&r.encoding)),
+                    ));
+                } else {
+                    rows.push((mark, lt, rt));
+                }
+            }
         }
         a = block.a + block.size;
         b = block.b + block.size;
+    }
+    if request.details {
+        let mut reordered = 0;
+        for (text, count) in &missing {
+            reordered += (*count).min(extra.get(text).copied().unwrap_or(0));
+        }
+        if reordered != 0 {
+            let moved = |text: &str| {
+                !text.is_empty() && missing.contains_key(text) && extra.contains_key(text)
+            };
+            for (mark, l, r) in &mut rows {
+                if matches!(*mark, "|" | "<" | ">") && (moved(l) || moved(r)) {
+                    *mark = "o";
+                }
+            }
+        }
+        let deletions = missing.values().sum::<u64>() - reordered;
+        let insertions = extra.values().sum::<u64>() - reordered;
+        let score = if bytes_match {
+            0
+        } else {
+            (penalty as u64 + reordered * REORDER + deletions * DELETION + insertions * INSERTION)
+                .max(1)
+        };
+        return json!({"score": score, "max_score": left.len().max(1) as u64 * INSERTION, "rows": rows, "bytes_match": bytes_match});
     }
     json!({"operand_penalty": penalty, "missing": missing, "extra": extra, "bytes_match": bytes_match})
 }
@@ -401,6 +468,32 @@ mod tests {
                 json!({"operand_penalty": 1 + 5 + 150, "missing": {}, "extra": {}, "bytes_match": false})
             );
         }
+    }
+
+    #[test]
+    fn detailed_rows_show_reorders_and_hidden_encodings() {
+        let mut request = functions(
+            &[0x0080_1021, 0xac82_0004],
+            &[0xac82_0004, 0x0080_102d],
+            true,
+        );
+        request["details"] = json!(true);
+        let result = evidence(&request).unwrap();
+        assert_eq!(result["score"], 60);
+        assert_eq!(result["max_score"], 200);
+        assert_eq!(result["bytes_match"], false);
+        assert_eq!(
+            result["rows"],
+            json!([
+                ["o", "", "sw $v0, 4($a0)"],
+                [
+                    "|",
+                    "move $v0, $a0 [bytes 00801021]",
+                    "move $v0, $a0 [bytes 0080102d]"
+                ],
+                ["o", "sw $v0, 4($a0)", ""]
+            ])
+        );
     }
 
     #[test]

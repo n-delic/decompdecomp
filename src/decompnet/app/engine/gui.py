@@ -10,13 +10,13 @@ import logging
 import re
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
-from ... import compilermap, consoles, scoring, toolchains
+from ... import compilermap, consoles, toolchains
 from ...network import CLAIM_ORDERS, IN_BUILD, Network, NetworkError, set_aside
 from ...project import compiler_for
-from .. import saves
+from .. import attempt_workers, saves
 
 # What the notification centre tells: news a person wants to hear about, not every claim and attempt agents make.
 NOTIFY_KINDS = ("match", "link", "autopilot", "compiler", "reopen", "not_c", "knowledge", "collab", "import", "reimport", "files",
@@ -551,6 +551,15 @@ class GuiMixin:
         key = (fn["id"], hashlib.sha1(source.encode()).hexdigest(), ctx["version"], proj["config"])
         if key in self._diffs:
             return self._diffs[key] | {"kind": kind}
+        worker = attempt_workers.attempt(self) if self.console(proj).rust_desktop_judge else nullcontext()
+        with worker:
+            out = self._function_diff_result(proj, fn, ctx, source)
+        if len(self._diffs) > 128:
+            self._diffs.pop(next(iter(self._diffs)))
+        self._diffs[key] = out
+        return out | {"kind": kind}
+
+    def _function_diff_result(self, proj, fn, ctx, source):
         result = self._compile(proj, ctx["header"], source, fn)
         if not result.ok:
             out = {"rows": None, "error": result.log.strip()[-3000:] or "it didn't compile", "source": source}
@@ -559,9 +568,7 @@ class GuiMixin:
             if cand is None:
                 out = {"rows": None, "error": f"the object has no function named `{fn['name']}`", "source": source}
             else:
-                d = scoring.diff(self._target_obj(fn, proj), cand)
-                if verdict is not None:
-                    d = scoring.DiffResult(0 if verdict else max(1, d.score), d.max_score, d.rows, verdict)
+                d = self._score_candidate(fn, proj, cand, verdict)
                 from ...diff_summary import text as summary_text
                 from ...source_lines import mismatches as source_mismatches
                 from ..allocation_priority import hints as allocation_hints
@@ -579,10 +586,7 @@ class GuiMixin:
                        "problems": problems, "source": source,
                        "checks": self._candidate_checks(fn, proj, result.obj),
                        "address_rows": self._candidate_addresses(fn, result.obj)}
-        if len(self._diffs) > 128:
-            self._diffs.pop(next(iter(self._diffs)))
-        self._diffs[key] = out
-        return out | {"kind": kind}
+        return out
 
     def function_preview(self, slug: str, name: str) -> dict:
         """The drawer's first paint reads one function, never generates drafts or inspects whole projects."""

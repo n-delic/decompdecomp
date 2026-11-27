@@ -581,11 +581,15 @@ def _native_mips_decoder_compatible():
         return False
 
 
+def native_mips_comparison(target: FunctionObj, candidate: FunctionObj) -> bool:
+    return (target.arch == candidate.arch == "mips" and _native_mips_decoder_compatible()
+            and target.cpu not in arch.get("mips").variants
+            and all(fn.name.isascii() and all(r.symbol.isascii() for r in fn.relocs) for fn in (target, candidate)))
+
+
 def score_evidence(target: FunctionObj, candidate: FunctionObj) -> ScoreEvidence:
     native = mips_comparer.get()
-    if (native is not None and target.arch == candidate.arch == "mips" and _native_mips_decoder_compatible()
-            and target.cpu not in arch.get("mips").variants
-            and all(fn.name.isascii() and all(r.symbol.isascii() for r in fn.relocs) for fn in (target, candidate))):
+    if native is not None and native_mips_comparison(target, candidate):
         result = native(target, candidate, ALIGN_BRANCH_TARGETS)
         if result is not None:
             return ScoreEvidence(**result)
