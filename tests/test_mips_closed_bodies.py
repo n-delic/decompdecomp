@@ -119,3 +119,14 @@ def test_frame_pointer_body_requires_preserved_frame_and_closed_entry(damage):
     if damage == 'enter_epilogue': words[4] = 0x10000001
     data = image(words)
     assert called_extent(data, 0, len(data), BASE) == (len(data) if damage is None else None)
+
+
+@pytest.mark.parametrize('damage', [None, 'enter_pop', 'wrong_restore', 'delay_pop_twice'])
+def test_frame_pointer_body_can_pop_before_return(damage):
+    words = [0x27bdffe0, 0xafbf001c, 0xafbe0018, 0x03a0f021,
+             0x24840001, 0x03c0e821, 0x8fbf001c, 0x8fbe0018, 0x27bd0020, 0x03e00008, 0]
+    if damage == 'enter_pop': words[4] = 0x10000003
+    if damage == 'wrong_restore': words[7] = 0x8fbe0014
+    if damage == 'delay_pop_twice': words[-1] = 0x27bd0020
+    data = image(words)
+    assert called_extent(data, 0, len(data), BASE) == (len(data) if damage is None else None)
