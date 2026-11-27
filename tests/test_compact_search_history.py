@@ -5,7 +5,7 @@ import json
 import pytest
 
 from decompnet import payload_links
-from decompnet.app import agent_tokens, database_storage, search_history
+from decompnet.app import agent_tokens, database_storage, search_history, trial_bookkeeping
 from decompnet.network import Network
 
 
@@ -114,6 +114,37 @@ def test_oversized_deep_feedback_keeps_negative_cache_and_other_search_evidence(
     assert row['outcome']=='miss' and row['reason']=='already checked'
     assert json.loads(net.store.one("SELECT feedback FROM reuse_trials WHERE signature='local-source-review:hash'")[0])==large
     assert search_history.prune(net.store,Log())==0
+
+
+def test_miss_batch_survives_stop_and_reopen_and_identical_upsert_does_not_write(data):
+    from pathlib import Path
+
+    from decompnet.store import Store
+
+    net, _, _, fid = data
+    first = 'deep-v1:first'
+    second = 'deep-v1:second'
+    rich = json.dumps({'score': 42, 'rows': [['instruction' * 70]], 'output': 'fingerprint'})
+    with pytest.raises(RuntimeError, match='Stop'), trial_bookkeeping.scope():
+        for value in ('50', rich, rich):
+            search_history.record_miss(net.store, fid, first, 'measured', value)
+        search_history.record_miss(net.store, fid, second, 'other candidate', '100')
+        assert trial_bookkeeping.current().statement_count == 2
+        assert search_history.miss_feedback(net.store, fid, first, {}) == rich
+        raise RuntimeError('Stop')
+    reopened = Store(Path(net.store.path))
+    try:
+        assert search_history.miss_feedback(reopened, fid, first, {}, read=True) == rich
+        assert search_history.miss_feedback(reopened, fid, second, {}, read=True) == '100'
+        assert reopened.one("SELECT typeof(feedback) FROM main.reuse_trials WHERE signature=?", first)[0] == 'blob'
+        before = reopened.conn.total_changes
+        search_history.record_miss(reopened, fid, first, 'measured', rich)
+        search_history.record_miss(reopened, fid, second, 'other candidate', '100')
+        assert reopened.conn.total_changes == before
+        search_history.record_miss(reopened, fid, first, 'new measurement', '35')
+        assert search_history.miss_feedback(reopened, fid, first, {}, read=True) == '35'
+    finally:
+        reopened.conn.close()
 
 
 def test_zero_day_cleanup_is_rejected_and_reference_map_can_rebuild(data):

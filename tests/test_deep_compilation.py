@@ -7,7 +7,15 @@ from types import MethodType
 import pytest
 
 from decompnet import compile_sessions, compile_sharing, compiler
-from decompnet.app import deep_compilation, deep_permuter, experiment_evidence, permute, repair_ranking
+from decompnet.app import (
+    deep_compilation,
+    deep_permuter,
+    experiment_evidence,
+    permute,
+    repair_ranking,
+    search_history,
+    trial_bookkeeping,
+)
 from decompnet.network import Network
 from tests.test_deep_permuter import Log
 from tests.test_permute import AGENT, FakeNet
@@ -351,6 +359,23 @@ def test_local_lookahead_overlaps_compiles_and_primes_history(monkeypatch):
             for ticket in search._ahead.values():ticket.counted=True;ticket.future.result(3)
         assert primed==[sources]
     finally:search.compile_pool.close()
+
+
+def test_pending_miss_keeps_speculation_from_recompiling(monkeypatch):
+    net, search = setup(monkeypatch)
+    fn, proj = net.function(), net.project_row('game')
+    source = 'int f(void){return 99;}'
+    search.best = 40
+    try:
+        search._prime_trials(AGENT, proj, fn, [source], None)
+        scope = search._primed_scopes[search._recent_key(proj, fn, source, None)]
+        key = search_history.signature(scope, source)
+        with trial_bookkeeping.scope():
+            search_history.record_miss(net.store, fn['id'], key, 'measured in this turn', '42')
+            with deep_compilation.chunk(search, AGENT, proj, fn, [source], None):
+                assert not search._ahead
+    finally:
+        search.compile_pool.close()
 
 
 def test_recent_identity_cache_preserves_keys_and_invalidates_every_capture(monkeypatch):
