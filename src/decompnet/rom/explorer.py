@@ -218,9 +218,14 @@ def analyse(image, segments, functions, symbols, *, big_endian=True, progress=la
         # A validated child can start inside another asset's source range. Give it its own usable preview.
         evidence = sorted((clues[i] for i in sorted(active['clue'])),
                           key=lambda c: (c['confidence']!='validated', c['offset']!=lo))
-        for i in sorted(active['transfer']):
-            transfer=ranges[i]
-            evidence.append(dict(label='Loader source range',confidence='inferred',reason=f"Call arguments describe ROM {transfer['start']:#x}–{transfer['end']:#x} (exclusive); may contain code or assets."))
+        if active['transfer']:
+            count = len(active['transfer'])
+            if count == 1:
+                transfer = ranges[next(iter(active['transfer']))]
+                reason = f"Call arguments describe ROM {transfer['start']:#x}–{transfer['end']:#x} (exclusive); may contain code or assets."
+            else:
+                reason = f'{count} possible loader source ranges overlap; inspect the loader chains for each extent.'
+            evidence.append(dict(label='Loader source range', confidence='inferred', reason=reason))
         kind, confidence = 'unknown', 'unknown'
         if owners:kind, confidence = 'code', 'recorded'
         elif any('preview_settings' in e for e in evidence):

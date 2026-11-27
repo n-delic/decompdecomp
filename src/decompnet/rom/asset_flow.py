@@ -194,15 +194,40 @@ def trace(image,segments,functions,adapter,*,contracts=None,argument_count=4,big
                 note='Static, block-local evidence. Named contracts and unknown-helper candidates are distinct. DMA may be asynchronous; pass/read links do not prove successful loading or asset type. Branch joins, indirect values, file IDs and mutable memory can remain unresolved.')
 
 
+def chain_ids(report, row):
+    """Read interned chain IDs, including scans saved before interning."""
+    if 'loader_chain_set' in row:
+        return report.get('loader_chain_sets', [])[row['loader_chain_set']]
+    return row.get('loader_chains', [])
+
+
 def attach(report,flow):
-    """Attach bounded chain IDs to every intersecting display row, preserving full extents."""
-    report['loader_flow']=flow
-    rows=report['regions'];starts=[r['start'] for r in rows]
-    for row in rows:row['loader_chains']=[]
-    for i,chain in enumerate(flow['chains']):
-        chain['id']=str(i)
-        source=chain['source']
-        first=max(0,bisect.bisect_right(starts,source['start'])-1)
-        for row in rows[first:]:
-            if row['start']>=source['end']:break
-            row['loader_chains'].append(str(i))
+    """Intern identical overlapping chain sets instead of repeating them per row."""
+    report['loader_flow'] = flow
+    rows = report['regions']
+    starts = [r['start'] for r in rows]
+    events = {}
+    for i, chain in enumerate(flow['chains']):
+        chain['id'] = str(i)
+        source = chain['source']
+        first = max(0, bisect.bisect_right(starts, source['start']) - 1)
+        last = bisect.bisect_left(starts, source['end'])
+        events.setdefault(first, []).append((True, i))
+        events.setdefault(last, []).append((False, i))
+    active, sets, interned = set(), [], {}
+    previous = None
+    identity = None
+    for i, row in enumerate(rows):
+        if i in events:
+            for add, chain in events[i]:
+                (active.add if add else active.discard)(chain)
+            previous = None
+        if previous is None:
+            previous = tuple(str(j) for j in sorted(active))
+            identity = interned.get(previous)
+            if identity is None:
+                identity = len(sets)
+                interned[previous] = identity
+                sets.append(previous)
+        row['loader_chain_set'] = identity
+    report['loader_chain_sets'] = sets

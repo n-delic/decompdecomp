@@ -102,7 +102,7 @@ def test_copy_decompress_read_and_consumer_chain_preserves_evidence_and_extent()
     report=explorer.analyse(image,segments,[],[],ranges=[c['source'] for c in flow['chains']])
     asset_flow.attach(report,flow)
     row=next(r for r in report['regions'] if r['start']==256)
-    assert row['end']==288 and row['loader_chains']
+    assert row['end']==288 and asset_flow.chain_ids(report,row)
     assert sum(report['totals'].values())==len(image)
 
 
@@ -376,3 +376,29 @@ def test_wide_store_is_a_barrier_for_ee_and_vr4300_buffer_chains():
     code=bytearray(image);last=functions[0]['size']-12;code[last:last+4]=words(0x3f<<26 | 17<<21)
     flow=asset_flow.trace(bytes(code),segs,functions,mips_assets.read)
     assert all(not any(step.get('callee')=='render' for step in chain['steps']) for chain in flow['chains'])
+
+
+def test_overlapping_loader_chains_share_sets_and_preserve_all_extents():
+    from decompnet.rom import asset_flow, explorer
+
+    image = bytes(4096)
+    ranges = [dict(start=0, end=4096) for _ in range(200)]
+    report = explorer.analyse(image, [], [], [], ranges=ranges)
+    flow = dict(chains=[dict(source=r.copy(), function=f'loader_{i}', steps=[]) for i, r in enumerate(ranges)])
+    asset_flow.attach(report, flow)
+    assert len(report['loader_chain_sets']) == 1
+    assert all(len(asset_flow.chain_ids(report, row)) == 200 for row in report['regions'])
+    clue = next(e for e in report['regions'][0]['evidence'] if e['label'] == 'Loader source range')
+    assert '200 possible' in clue['reason']
+    assert sum(e['label'] == 'Loader source range' for e in report['regions'][0]['evidence']) == 1
+
+
+def test_interned_loader_sets_change_at_range_boundaries_and_read_old_maps():
+    from decompnet.rom import asset_flow
+
+    report = {'regions': [dict(start=x, end=x+4) for x in range(0, 16, 4)]}
+    flow = {'chains': [dict(source=dict(start=0, end=8)), dict(source=dict(start=4, end=12))]}
+    asset_flow.attach(report, flow)
+    assert [list(asset_flow.chain_ids(report, row)) for row in report['regions']] == [
+        ['0'], ['0', '1'], ['1'], []]
+    assert asset_flow.chain_ids({}, {'loader_chains': ['7']}) == ['7']

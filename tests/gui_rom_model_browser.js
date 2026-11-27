@@ -14,3 +14,8 @@ assert.equal(rows.length,1);
 assert.equal(rows[0].refs,2);
 assert.equal(rows[0].region,'bank');
 assert.equal(rows[0].assetView,'3d model');
+context.esc=value=>String(value);
+context.labeledRegion={detected_asset:{media:'model',vertices:4,triangles:2,meshes:[{label:'Mesh 1',vertices:4}]}};
+const html=vm.runInContext('romNativeModelHTML(labeledRegion)',context);
+assert.match(html,/Mesh 1 · 4 vertices/);
+assert.doesNotMatch(html,/undefined/);
