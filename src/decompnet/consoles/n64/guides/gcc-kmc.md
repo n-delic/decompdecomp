@@ -1749,3 +1749,10 @@ expression into the register the temporary would have copied from. A frame large
 explaining the gap between the argument area and the lowest saved register, is a `volatile u64 scratch;` the original
 had. If the member form of `M2C_FIELD` fixes the loads but moves a store late, put that one access back to the pointer
 form. See docs/COMPILER_MATCHING_LEARNINGS.md, "A 189-instruction record loop".
+
+## The same run at two places: write it as a helper
+
+An SDK routine that repeats a step with the same early returns (a page-chain walk in two loops) was written with one
+static function. Written out at both places a controller-pak routine scored 14865; as one `static __inline__` helper it
+was exact at `-O2` and `-O3`. The order its address arguments are passed in decides those locals' stack slots.
+decomp-repair `repeated_run_helper` writes it (docs/learnings/finding/repeated-run-static-inline-helper.md).
