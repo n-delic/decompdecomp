@@ -122,6 +122,11 @@ class BriefMixin:
                 current.add(syms.name_at(int(name[-8:],16))[0])
         return current
 
+    def _callee_prototypes(self, proj, fn, ctx=None) -> tuple[list[str], set[str]]:
+        from ..callee_prototypes import of_callees
+        ctx = ctx or self._context(proj["id"], fn["unit"])
+        return of_callees(self, proj, fn, self._asm_text(fn, proj), ctx["header"])
+
     def _draft_plan(self, fn, proj, names=None, ctx=None) -> tuple[str, str, str]:
         """(key, toolchain, context) of a function's machine draft: its compiler (its address range's), the
         declarations of the shared header it uses, and what the key says it's made from. m2c reads a function's own
@@ -133,8 +138,9 @@ class BriefMixin:
         ctx = ctx or self._context(proj["id"], fn["unit"])
         roots = self._current_names(proj, seeds.asm_names(fn["asm"] or "") if names is None else names)
         roots.add(fn['name'])  # a renamed overlay's stored entry can still carry its old spelling
-        used = self._header_index(proj["id"], ctx).used(roots)
-        context = "\n".join(d.text for d in used if not d.text.startswith("#"))
+        callees, types = self._callee_prototypes(proj, fn, ctx)
+        used = self._header_index(proj["id"], ctx).used(roots | types)
+        context = "\n".join([d.text for d in used if not d.text.startswith("#")] + callees)
         from ..return_contract_evidence import m2c_context
         context = m2c_context(self,proj,fn,context,ctx['header'])
         bindings = [(name,self.symbols(proj['id']).resolve(name)) for name in sorted(roots)]
