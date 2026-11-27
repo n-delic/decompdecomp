@@ -48,3 +48,19 @@ def test_longer_observation_requires_many_cross_bank_interior_calls():
     assert ambiguous(rom, known)
     struct.pack_into('>I', rom, 0x401c, 0)
     assert not ambiguous(rom, known)
+
+
+def test_resident_callers_can_prove_an_overlapping_runtime_bank():
+    rom, ram, known = fixture()
+    # Callers live in another resident mapping, not in the newly observed bank.
+    ram.extend(bytes(0x201000-len(ram)))
+    callers = bytes(rom[0x2800:0x2830])
+    rom[0x4000:0x4030] = callers
+    ram[0x200000:0x200030] = callers
+    rom[0x2800:0x2830] = bytes(0x30)
+    ram[0x101800:0x101830] = bytes(0x30)
+    known = [(0x4000, 0x4100, 0x80200000), (0x5000, 0x6000, 0x80100100)]
+    assert regions(rom, [ram], known) == [(0x1100, 0x1314, 0x80100100)]
+    # Missing a verified caller leaves fewer than three independent targets.
+    ram[0x200020:0x200030] = bytes(16)
+    assert not regions(rom, [ram], known)

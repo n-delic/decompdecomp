@@ -53,9 +53,10 @@ def ambiguous(rom, known, *, check=lambda: None):
 def regions(rom, dumps, known, *, check=lambda: None):
     """Find missing ROM code with a runtime-observed mapping and independent calls.
 
-    A call and its target must both match the same unique contiguous ROM/RAM
-    region in one snapshot. Several distinct targets are required, and existing
-    ROM ranges with different mappings are never displaced.
+    A caller must match its known ROM mapping and each target must match a
+    unique contiguous ROM/RAM region in the same snapshot. Several distinct
+    targets corroborate the new mapping, including calls from resident code.
+    Existing ROM ranges with different mappings are never displaced.
     """
     groups = defaultdict(list)
     for dump in dumps:
@@ -84,16 +85,21 @@ def regions(rom, dumps, known, *, check=lambda: None):
                 if not found:
                     continue
                 lo, hi, vram = found
-                if lo <= offset < hi and vram+offset-lo == pc:
-                    checked.add(target)
-                    groups[vram-lo].append((lo, hi, target, offset))
+                # Resident code may call an overlay that replaces another bank
+                # at the same RAM address. The caller and target are both
+                # byte-verified in this snapshot; distinct calls corroborate it.
+                checked.add(target)
+                groups[vram-lo].append((lo, hi, target, offset))
     result = []
     for delta, observations in groups.items():
         if len({target for _,_,target,_ in observations}) < 3:
             continue
-        lo = max(row[0] for row in observations)
+        intersection = max(row[0] for row in observations)
+        lo = min(row[0] for row in observations)
         hi = min(row[1] for row in observations)
-        if lo >= hi or any(a < hi and lo < b and v-a != delta for a,b,v in known):
+        # Every observed span has the same mapping and must overlap. Their
+        # block-aligned starts can differ by up to 15 bytes.
+        if intersection >= hi or any(a < hi and lo < b and v-a != delta for a,b,v in known):
             continue
         cursor = lo
         for a,b,v in sorted(known):

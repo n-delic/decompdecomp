@@ -283,8 +283,8 @@ def find(rom_path: Path, rom: bytes, taken, found=(), *, log=print, stop=lambda:
     programs += runtime_refpack.find(rom, dumps, decoded, known+added+occupied_programs, check=check)
     occupied_programs = [(0, len(runtime_zlib._payload(rom, row)), row['vram']) for row in programs]
     programs += runtime_mio_chunks.find(rom, dumps, decoded, known+added+occupied_programs, check=check)
-    overlaps = runtime_overlays.regions(rom, late_dumps, known+added, check=getattr(log, 'check_cancel', lambda: None))
+    overlaps = runtime_overlays.regions(rom, dumps+late_dumps, known+added, check=getattr(log, 'check_cancel', lambda: None))
     if overlaps:
-        log(f'Found {len(overlaps)} independently corroborated overlapping code bank(s) in later runtime snapshots.')
+        log(f'Found {len(overlaps)} independently corroborated overlapping code bank(s) in runtime snapshots.')
     return {"segments": added, "overlap_segments": overlaps, "decoded": len(decoded), "moved": moved, "moved_ranges": sorted(moved_ranges),
             "decoded_programs": programs}
