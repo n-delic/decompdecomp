@@ -20,15 +20,15 @@ def test_observation_requires_original_and_uses_isolated_snapshots(tmp_path, mon
         return SimpleNamespace(timed_out=False)
 
     monkeypatch.setattr(runtime_textures.emulator, 'run', run)
-    monkeypatch.setattr(detector, 'regions', lambda image, snapshots: list(snapshots))
+    monkeypatch.setattr(detector, 'regions', lambda image, snapshots: [dict(offset=1, size=1, layout='test')])
     status = {}
     assert runtime_textures.observe(b'analysis', rom, '0' * 40, status=status) == []
     assert status['state'] == 'failed'
     assert not calls
-    assert runtime_textures.observe(b'analysis', rom, sha1(rom.read_bytes()).hexdigest(), status=status) == [b'ram'] * 4
+    assert runtime_textures.observe(b'analysis', rom, sha1(rom.read_bytes()).hexdigest(), status=status) == [dict(offset=1, size=1, layout='test')]
     assert status['state'] == 'complete'
-    assert calls == [(rom, runtime_textures.VIS[-1], 120)]
-    assert runtime_textures.observe(b'analysis', rom, ['0' * 40, sha1(rom.read_bytes()).hexdigest()]) == [b'ram'] * 4
+    assert calls == [(rom, runtime_textures.VIS[-1], 120)] * 2
+    assert runtime_textures.observe(b'analysis', rom, ['0' * 40, sha1(rom.read_bytes()).hexdigest()]) == [dict(offset=1, size=1, layout='test')]
 
 
 def test_observation_is_optional_and_reports_failure(tmp_path, monkeypatch):
@@ -103,8 +103,8 @@ def test_observation_tries_menu_input_if_no_texture_is_visible(tmp_path, monkeyp
         return runtime_textures.emulator.Run(vis=vis)
 
     monkeypatch.setattr(runtime_textures.emulator, 'run', run)
-    monkeypatch.setattr(detector, 'regions', lambda image, snapshots: [b'asset'] if b'menus' in snapshots else [])
-    assert runtime_textures.observe(b'image', rom, sha1(rom.read_bytes()).hexdigest()) == [b'asset']
+    monkeypatch.setattr(detector, 'regions', lambda image, snapshots: [dict(offset=1, size=1, layout='test')] if b'menus' in snapshots else [])
+    assert runtime_textures.observe(b'image', rom, sha1(rom.read_bytes()).hexdigest()) == [dict(offset=1, size=1, layout='test')]
     assert len(calls) == 2 and calls[1]['inputs'] and not calls[1]['expansion_pak']
 
 
@@ -132,3 +132,26 @@ def test_packed_title_assets_do_not_skip_gameplay_and_merge_banks(tmp_path, monk
     assets = runtime_textures.observe(b'image', rom, sha1(rom.read_bytes()).hexdigest())
     assert len(calls) == 2 and len(assets) == 1
     assert [t['preview_settings']['offset'] for t in assets[0]['textures']] == [1, 2]
+
+
+def test_idle_textures_do_not_prevent_scripted_gameplay_capture(tmp_path, monkeypatch):
+    rom = tmp_path / 'game.z64'
+    rom.write_bytes(bytes.fromhex('80371240') + b'original')
+    monkeypatch.setattr(runtime_textures.emulator, 'installed', lambda: tmp_path)
+    calls = []
+
+    def run(path, vis, *, dumps, **kwargs):
+        calls.append(kwargs)
+        for dump in dumps.values():
+            dump.write_bytes(b'game' if kwargs.get('inputs') else b'idle')
+        return runtime_textures.emulator.Run(vis=vis)
+
+    def scan(image, snapshots):
+        same = dict(offset=100, size=16, layout='direct')
+        return [same, dict(offset=200, size=16, layout='game')] if b'game' in snapshots else [same]
+
+    monkeypatch.setattr(runtime_textures.emulator, 'run', run)
+    monkeypatch.setattr(detector, 'regions', scan)
+    assets = runtime_textures.observe(b'image', rom, sha1(rom.read_bytes()).hexdigest())
+    assert len(calls) == 2 and calls[1]['inputs']
+    assert [asset['offset'] for asset in assets] == [100, 200]
