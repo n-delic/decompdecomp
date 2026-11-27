@@ -1111,3 +1111,29 @@ def test_shared_assembly_return_wrapper_joins_all_three_parts():
     assert result[0].size == 36
     assert result[0].entry_aliases == {BASE+12: functions[1].name, BASE+28: functions[2].name}
     assert {d.vram for d in data} >= {BASE+12, BASE+28}
+
+
+@pytest.mark.parametrize('case', ['valid', 'no_back_edge', 'bad_target', 'external', 'data'])
+def test_backward_loop_preserves_the_callable_entry(case):
+    from decompnet.rom.automatic_boundaries import backward_loop_entry
+
+    words = [0x51000004, 0x00001025, 0x90880000, 0x5100fffc, 0, 0x03e00008, 0]
+    if case == 'no_back_edge':
+        words[3] = 0x51000001
+    if case == 'bad_target':
+        words[0] = 0x5100ffff
+    image, functions, segments = fixture(words, cuts=(0, 8, 28))
+    entered = {BASE+12} if case == 'external' else set()
+    data = [DataSymbol('table', BASE+12, 12, 4, 'data')] if case == 'data' else []
+    assert backward_loop_entry(*functions, image, consoles.get('n64'), 'big', segments, entered, data) == (case == 'valid')
+
+
+def test_backward_loop_repair_keeps_the_real_entry():
+    words = [0x51000004, 0x00001025, 0x90880000, 0x5100fffc, 0, 0x03e00008, 0,
+             0x0c000000 | ((BASE+8) >> 2 & 0x3ffffff), 0, 0x03e00008, 0]
+    image, functions, segments = fixture(words, cuts=(0, 8, 28, 44))
+    data = []
+    result = repair(functions, data, image, consoles.get('n64'), segments)
+    assert result[0].size == 28
+    assert result[0].entry_aliases == {BASE+8: functions[1].name}
+    assert any(d.vram == BASE+8 and d.kind == 'func' for d in data)
