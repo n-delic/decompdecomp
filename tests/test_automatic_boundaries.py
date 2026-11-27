@@ -26,6 +26,28 @@ def fixture(words=BODY,cuts=(0,12,32),order='big'):
     return image,functions,[Segment('code',0,len(image),BASE)]
 
 
+@pytest.mark.parametrize('case', ['padding', 'pointer', 'interior_pointer', 'called_padding', 'not_called_next',
+                                  'not_loop', 'data', 'different_delay'])
+def test_unentered_transfers_after_a_called_self_loop_are_alignment(case):
+    loop = 0x08000000 | ((BASE >> 2) & 0x3ffffff)
+    call_loop = 0x0c000000 | ((BASE >> 2) & 0x3ffffff)
+    call_next = 0x0c000000 | (((BASE+16) >> 2) & 0x3ffffff)
+    words = [loop, 0, 0x56578b7e, 0x0633f6e9, *BODY, call_loop, 0, call_next, 0, 0x03e00008, 0]
+    if case == 'called_padding': words[-4] = 0x0c000000 | (((BASE+8) >> 2) & 0x3ffffff)
+    if case == 'not_called_next': words[-4] = 0
+    if case == 'not_loop': words[0] += 1
+    image, functions, segments = fixture(words, cuts=(0, 8, 16, 48, 72))
+    functions[1].lines.append(functions[2].lines[0])  # the second transfer borrowed the next prologue
+    if case in ('pointer', 'interior_pointer'):
+        image += (BASE+(8 if case == 'pointer' else 12)).to_bytes(4, 'big')
+    if case == 'different_delay':
+        functions[1].lines[-1] = replace(functions[1].lines[-1], word=0)
+    data = [DataSymbol('inside', BASE+8, 8, 4, 'data')] if case == 'data' else []
+    result = repair(functions, data, image, consoles.get('n64'), segments)
+    assert any(fn.rom == 8 for fn in result) == (case != 'padding')
+    assert any(fn.rom == 16 and fn.lines[0].word == BODY[0] for fn in result)
+
+
 @pytest.mark.parametrize('protected', [False, True])
 def test_padded_ordered_addresses_into_another_code_bank_are_data(protected):
     targets = [BASE+0x1000, BASE+0x1004, BASE+0x1004, BASE+0x1008, BASE+0x100c]
