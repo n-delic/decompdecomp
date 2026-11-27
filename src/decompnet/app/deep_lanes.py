@@ -11,6 +11,7 @@ a cancel. A child that can't start or stops makes the pass run that turn in the 
 """
 from __future__ import annotations
 
+import itertools
 import json
 import logging
 import os
@@ -19,6 +20,7 @@ import subprocess
 import sys
 import threading
 import time
+from concurrent.futures import Future
 from pathlib import Path
 
 from ..hostenv import NO_WINDOW
@@ -44,13 +46,15 @@ class Unavailable(Exception):
 
 
 class Lane:
-    def __init__(self, net, *, background):
+    def __init__(self, net, *, background, shared_slots=None):
         home = str(net.workspace)
         log_path = Path(home) / '.decomp' / 'logs' / 'deep-lanes.log'
         log_path.parent.mkdir(parents=True, exist_ok=True)
         argv = [sys.executable, '-m', 'decompnet.app.deep_lanes', '--child', net.store.path, home]
         if background:
             argv.append('--background')
+        if shared_slots is not None:
+            argv.append('--shared-compiles')
         with log_path.open('ab') as errors:
             # Buffered: unbuffered, reading lines made a system call per byte, and that one reader thread used more
             # of the app's processor than everything else together on a pass with 288 search threads.
@@ -58,25 +62,50 @@ class Lane:
                                             creationflags=NO_WINDOW)
         self.messages = queue.Queue()
         self.lock = threading.Lock()
-        threading.Thread(target=self._read, daemon=True, name='deep-lane-output').start()
+        self.shared_slots = shared_slots
+        self.reader = threading.Thread(target=self._read, daemon=True, name='deep-lane-output')
+        self.reader.start()
 
     def _read(self):
+        leases = {}
         try:
             for line in self.process.stdout:
                 try:
-                    self.messages.put(json.loads(line))
+                    message = json.loads(line)
                 except ValueError:
                     continue
+                kind = message.get('kind')
+                if kind == 'compile-request':
+                    key = message['lease']
+                    ticket = leases[key] = self.shared_slots.request()
+                    ticket.add_done_callback(lambda done, key=key: self._grant(key, done))
+                elif kind == 'compile-release':
+                    self.shared_slots.finish(leases.pop(message['lease']))
+                else:
+                    self.messages.put(message)
         finally:
             self.messages.put(None)
+            if leases:
+                # The child may have disappeared while waiting or owning a permit.
+                self.process.wait()
+                for ticket in leases.values():
+                    self.shared_slots.finish(ticket)
+
+    def _grant(self, key, ticket):
+        if not ticket.cancelled():
+            try:
+                self.send({'action': 'compile-grant', 'lease': key})
+            except Unavailable:
+                pass  # The reader returns the permit when the child exits.
 
     def alive(self):
         return self.process.poll() is None
 
     def send(self, message):
         try:
-            self.process.stdin.write((json.dumps(message) + '\n').encode())
-            self.process.stdin.flush()
+            with self.lock:
+                self.process.stdin.write((json.dumps(message) + '\n').encode())
+                self.process.stdin.flush()
         except (OSError, ValueError) as error:
             raise Unavailable() from error
 
@@ -91,12 +120,42 @@ class Lane:
         except subprocess.TimeoutExpired:
             self.process.kill()
             self.process.wait()
+        self.reader.join()
+
+
+class RemoteSlots:
+    """A lane's compiler threads borrow permits from the app over the existing pipe."""
+
+    def __init__(self, emit):
+        self.emit = emit
+        self.ident = itertools.count()
+        self.pending = {}
+        self.lock = threading.Lock()
+
+    def request(self):
+        ticket = Future()
+        with self.lock:
+            key = next(self.ident)
+            self.pending[key] = ticket
+        ticket.key = key
+        self.emit({'kind': 'compile-request', 'lease': key})
+        return ticket
+
+    def grant(self, key):
+        with self.lock:
+            if ticket := self.pending.get(key):
+                ticket.set_result(None)
+
+    def finish(self, ticket):
+        with self.lock:
+            del self.pending[ticket.key]
+        self.emit({'kind': 'compile-release', 'lease': ticket.key})
 
 
 class Lanes:
     """Up to `count` children, started as turns need them; each runs one turn at a time."""
 
-    def __init__(self, net, count, slots, *, maximum=False):
+    def __init__(self, net, count, slots, *, maximum=False, shared_slots=None):
         self.net, self.count, self.maximum = net, max(1, count), maximum
         # Each lane's share of the machine: compiles mostly wait on the compiler, so about two in flight per core
         # keep every core busy. An equal slice of a large configured slot count (256 over 24 lanes) gave each lane
@@ -104,7 +163,11 @@ class Lanes:
         # (Measured with two per core and a lookahead of two to four: the slots were 15% busy, the lanes waiting
         # on each other's candidates; four per core lets a lane's window reach eight.)
         share = max(4, -(-4 * (os.cpu_count() or 1) // self.count))
+        # The per-process count sizes queues and threads. The app's gate limits actual concurrent compiles.
         self.slots = max(2, min(256, share, slots // self.count if slots else share))
+        self.shared_slots = shared_slots
+        if shared_slots is not None:
+            self.slots = min(self.slots, shared_slots.limit)
         self.idle = queue.Queue()
         self.started = 0
         self.lock = threading.Lock()
@@ -129,7 +192,7 @@ class Lanes:
                     self.started += 1
             if start:
                 try:
-                    return Lane(self.net, background=not self.maximum)
+                    return Lane(self.net, background=not self.maximum, shared_slots=self.shared_slots)
                 except OSError as error:
                     with self.lock:
                         self.started -= 1
@@ -265,7 +328,7 @@ class _Cancelled(Exception):
     pass
 
 
-def child(db_path, workspace, background):
+def child(db_path, workspace, background, shared_compiles=False):
     """Own one engine; run the turns the pass sends, one at a time. stdout carries only JSON lines."""
     from . import deep_compilation, deep_permuter
     from .deep_sweep import Sweeps
@@ -293,11 +356,14 @@ def child(db_path, workspace, background):
             out.write(data)
             out.flush()
 
+    shared_slots = RemoteSlots(emit) if shared_compiles else None
+
     def pool_for(slots, maximum):
         if (slots, maximum) not in pools:
             # In-thread compiles: this process is a lane of its own, so a child per compile thread
             # (compile_worker.py, for the app's one interpreter) would only add a process and a round trip.
-            pools[(slots, maximum)] = deep_compilation.Pool(slots, maximum=maximum, remote=False)
+            pool = pools[(slots, maximum)] = deep_compilation.Pool(slots, maximum=maximum, remote=False)
+            pool.shared_slots = shared_slots
         return pools[(slots, maximum)]
 
     def run(message):
@@ -399,7 +465,9 @@ def child(db_path, workspace, background):
     def read():
         for line in sys.stdin:
             message = json.loads(line)
-            if message.get('action') == 'cancel':
+            if message.get('action') == 'compile-grant':
+                shared_slots.grant(message['lease'])
+            elif message.get('action') == 'cancel':
                 if stop := cancels.get(message.get('ident')):
                     stop.set()
             else:
@@ -427,4 +495,4 @@ def child(db_path, workspace, background):
 
 
 if __name__ == '__main__' and len(sys.argv) >= 4 and sys.argv[1] == '--child':
-    child(sys.argv[2], sys.argv[3], '--background' in sys.argv[4:])
+    child(sys.argv[2], sys.argv[3], '--background' in sys.argv[4:], '--shared-compiles' in sys.argv[4:])

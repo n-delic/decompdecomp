@@ -317,3 +317,55 @@ def test_discarding_a_lookahead_window_counts_used_cancelled_and_wasted_tickets(
     assert counted == {'ahead_used': 2, 'ahead_cancelled': 1, 'ahead_wasted': 2}
     assert search.tested == 2 and tickets['d'].counted and tickets['e'].counted  # (running work spends allowance)
     assert search._ahead == {}  # (a window is discarded once)
+
+
+def test_foreground_compile_passes_queued_workers_and_idle_slots_go_to_the_sweep():
+    gate = Admission(2)
+    sweep = gate.group(2)
+    first, second = sweep.request(), sweep.request()
+    assert first.done() and second.done()
+    waiting = sweep.request()
+    foreground = gate.request()
+    assert not waiting.done() and not foreground.done()
+    sweep.finish(first)
+    assert foreground.done() and not waiting.done()
+    gate.release()
+    assert waiting.done()
+    sweep.finish(second)
+    sweep.finish(waiting)
+    assert gate.active == sweep.active == 0
+
+
+def test_a_full_sweep_does_not_block_other_admission_and_cancelled_requests_are_skipped():
+    gate = Admission(3)
+    sweep = gate.group(1)
+    first = sweep.request()
+    cancelled, waiting = sweep.request(), sweep.request()
+    sweep.finish(cancelled)
+    foreground = gate.request()
+    assert foreground.done()
+    assert not waiting.done()
+    sweep.finish(first)
+    assert waiting.done()
+    sweep.finish(waiting)
+    gate.release()
+    assert gate.active == sweep.active == 0
+
+
+def test_sweep_capacity_reserves_one_slot_for_foreground_only():
+    gate = Admission(2)
+    sweep = gate.group(2)
+    with gate.capacity(2, foreground_reserve=1):
+        first, second = sweep.request(), sweep.request()
+        assert first.done() and second.done()
+        background = gate.request(background=True)
+        assert not background.done()
+        foreground = gate.request()
+        assert foreground.done() and gate.active == 3
+        gate.release()
+        assert not background.done()
+        sweep.finish(first)
+        assert background.done()
+        gate.release()
+        sweep.finish(second)
+    assert gate.limit == 2 and gate.active == 0

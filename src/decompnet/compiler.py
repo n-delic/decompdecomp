@@ -51,6 +51,7 @@ _SLOTS = Admission(_COMPILER_THREADS)
 _BACKGROUND_SLOTS = threading.BoundedSemaphore(max(1, _COMPILER_THREADS - 1))
 _SCHEDULING = threading.local()
 _ARTIFACT_SINK = contextvars.ContextVar("compiler_artifact_sink", default=None)
+_SHARED_SLOTS = contextvars.ContextVar("compiler_shared_slots", default=None)
 _LOCAL_SLOTS = contextvars.ContextVar('compiler_local_slots', default=None)
 _CANCEL_CHECK = contextvars.ContextVar("compiler_cancel_check", default=None)
 
@@ -65,8 +66,9 @@ def _slot():
     queued = time.monotonic()
     gates = ([('search', _LOCAL_SLOTS.get())] if _LOCAL_SLOTS.get() is not None else [])
     gates += ([('background', _BACKGROUND_SLOTS)] if getattr(_SCHEDULING, 'background', False) else [])
-    gates += [('shared', _SLOTS)]
-    executing = False
+    shared = _SHARED_SLOTS.get()
+    if shared is None and not isinstance(_SLOTS, Admission):
+        gates.append(('shared', _SLOTS))
     try:
         for name, gate in gates:
             started = time.monotonic()
@@ -78,15 +80,60 @@ def _slot():
                 finally:compile_timing.add('waiting_'+name, -1)
             acquired.append(gate)
             compile_timing.add('queue_'+name, time.monotonic()-started)
-        if check := _CANCEL_CHECK.get():
-            check()
-        compile_timing.add('queue', time.monotonic() - queued)
-        compile_timing.add('executing', 1);executing = True
-        yield
+        check = _CANCEL_CHECK.get()
+        with _shared_slot(shared, check):
+            if check:
+                check()
+            compile_timing.add('queue', time.monotonic() - queued)
+            compile_timing.add('executing', 1)
+            try:
+                yield
+            finally:
+                compile_timing.add('executing', -1)
     finally:
-        if executing:compile_timing.add("executing", -1)
         for gate in reversed(acquired):
             gate.release()
+
+
+@contextmanager
+def _shared_slot(shared, check):
+    if shared is None and not isinstance(_SLOTS, Admission):
+        yield  # A caller using an ordinary semaphore acquired it with the other local gates.
+        return
+    started = time.monotonic()
+    ticket = (shared.request() if shared is not None else
+              _SLOTS.request(background=getattr(_SCHEDULING, 'background', False)))
+    waiting = not ticket.done()
+    if waiting:
+        compile_timing.add('waiting_shared', 1)
+    try:
+        try:
+            while True:
+                try:
+                    ticket.result(timeout=.05 if check else None)
+                    break
+                except TimeoutError:
+                    check()
+        finally:
+            if waiting:
+                compile_timing.add('waiting_shared', -1)
+        compile_timing.add('queue_shared', time.monotonic() - started)
+        yield
+    finally:
+        if shared is not None:
+            shared.finish(ticket)
+        elif not ticket.cancel():
+            ticket.result()
+            _SLOTS.release()
+
+
+@contextmanager
+def shared_slots(gate):
+    token = _SHARED_SLOTS.set(gate)
+    try:
+        yield
+    finally:
+        _SHARED_SLOTS.reset(token)
 
 
 @contextmanager

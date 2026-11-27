@@ -128,7 +128,14 @@ def remote(*, background=False):
         check = compiler._CANCEL_CHECK.get() or (lambda: None)
         try:
             with compiler._slot():
-                return state['worker'].compile(cfg, header, source, trusted, check)
+                try:
+                    return state['worker'].compile(cfg, header, source, trusted, check)
+                except BaseException:
+                    # A cancelled caller still owns the permit until the child stops compiling.
+                    if compiler._SHARED_SLOTS.get() is not None:
+                        state['worker'].close()
+                        state['worker'] = None
+                    raise
         except Unavailable:
             state['worker'] = None
             state['failed'] = True

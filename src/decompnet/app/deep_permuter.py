@@ -2423,6 +2423,8 @@ def _full_run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, 
     admission = ExitStack()
     admission.enter_context(compiler._SLOTS.capacity(pool.count))
     admission.enter_context(compile_timing.collect(pool.metrics))
+    if shared := getattr(pool, 'shared_slots', None):
+        admission.enter_context(compiler.shared_slots(shared))
     try:
         tried_twin = 0
         twins = getattr(net, 'twins', None) if slug not in net.links else None
