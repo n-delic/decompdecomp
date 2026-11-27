@@ -24,6 +24,23 @@ typedef double f64;
 ''' + seeds.M2C_MACROS + '\n'
 
 
+def _object_prefix(config: dict) -> Path:
+    """Use the project build's existing C object prefix, including a selected version folder."""
+    prefixes = set()
+    for entry in config.get('units', []):
+        source = (entry.get('metadata') or {}).get('source_path')
+        base = entry.get('base_path')
+        if not isinstance(source, str) or not isinstance(base, str):
+            continue
+        source_path, object_path = Path(source + '.o'), Path(base)
+        if (source_path.is_absolute() or object_path.is_absolute() or '..' in source_path.parts
+                or '..' in object_path.parts or len(object_path.parts) <= len(source_path.parts)):
+            continue
+        if object_path.parts[-len(source_path.parts):] == source_path.parts:
+            prefixes.add(object_path.parts[:-len(source_path.parts)])
+    return Path(*next(iter(prefixes))) if len(prefixes) == 1 else Path('build')
+
+
 def prepare(project, log=print, *, limit: int = 32, units: set[str] | None = None, stop=None) -> list[str]:
     """Prepare a bounded batch of source-less units with app-verified reference objects.
 
@@ -33,6 +50,7 @@ def prepare(project, log=print, *, limit: int = 32, units: set[str] | None = Non
     """
     cfg = copy.deepcopy(project.objdiff_config())
     original = (project.root / 'objdiff.json').read_bytes()
+    object_prefix = _object_prefix(cfg)
     refs = (project.root / STATE / 'objdiff-references').resolve()
     if project.root.resolve() not in refs.parents:
         return []
@@ -95,7 +113,7 @@ def prepare(project, log=print, *, limit: int = 32, units: set[str] | None = Non
             entry['metadata'] = {**entry.get('metadata', {}), 'source_path': source.relative_to(project.root).as_posix(),
                                  'autopilot_scaffold': True,
                                  'draft_assembly': assembly.resolve().relative_to(project.root.resolve()).as_posix()}
-            entry['base_path'] = 'build/' + source.relative_to(project.root).as_posix() + '.o'
+            entry['base_path'] = (object_prefix / (source.relative_to(project.root).as_posix() + '.o')).as_posix()
             unit = project._units_of({'units': [entry]})[0]
             log(f'Preparing C candidate: {source.relative_to(project.root)}')
             # Some generic object rules do not make parent directories themselves.
@@ -114,7 +132,7 @@ def prepare(project, log=print, *, limit: int = 32, units: set[str] | None = Non
         (project.root / 'objdiff.json').write_bytes(original)
         for source in made:
             source.unlink(missing_ok=True)
-            obj = project.root / ('build/' + source.relative_to(project.root).as_posix() + '.o')
+            obj = project.root / object_prefix / (source.relative_to(project.root).as_posix() + '.o')
             if project.root.resolve() in obj.resolve().parents:
                 obj.unlink(missing_ok=True)
         raise

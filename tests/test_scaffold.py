@@ -298,3 +298,31 @@ def test_autopilot_prepares_every_batch_and_stop_keeps_completed_units(tmp_path,
     assert ForkEngine.autopilot_prepare(fake, 'demo', all_units=True, stop=stop, progress=lambda *args: None) == [17]
     assert len(synced) == 2
     assert sum(bool(u.get('metadata', {}).get('autopilot_scaffold')) for u in fp.objdiff_config()['units']) == 35
+
+
+def test_scaffold_uses_the_project_versioned_object_directory(tmp_path, monkeypatch):
+    fp = project(tmp_path)
+    cfg = json.loads((tmp_path / 'objdiff.json').read_text())
+    cfg['units'].insert(0, {'name': 'game/main', 'base_path': 'build/us/srcus/main.c.o',
+                            'metadata': {'source_path': 'srcus/main.c'}})
+    (tmp_path / 'objdiff.json').write_text(json.dumps(cfg))
+    def build(unit):
+        assert unit.base == tmp_path / 'build/us/src/decompdecomp/demo.c.o'
+        unit.base.write_bytes(b'candidate')
+        return True, ''
+    monkeypatch.setattr(fp, 'build_unit', build)
+    assert prepare(fp) == ['src/decompdecomp/demo.c']
+    entry = fp.objdiff_config()['units'][1]
+    assert entry['base_path'] == 'build/us/src/decompdecomp/demo.c.o'
+
+
+def test_scaffold_does_not_guess_between_different_object_directories():
+    from decompnet.forks.scaffold import _object_prefix
+
+    cfg = {'units': [
+        {'base_path': 'build/us/src/a.c.o', 'metadata': {'source_path': 'src/a.c'}},
+        {'base_path': 'build/jp/src/b.c.o', 'metadata': {'source_path': 'src/b.c'}},
+    ]}
+    assert _object_prefix(cfg).as_posix() == 'build'
+    assert _object_prefix({'units': [{'base_path': '../out/src/a.c.o',
+                                      'metadata': {'source_path': 'src/a.c'}}]}).as_posix() == 'build'
