@@ -214,7 +214,9 @@ def _missing_halves(source: str) -> str:
     """`(second half of f64)` is where m2c read the odd register of a pair that holds a single (a function that uses
     every callee-saved register as a single and a double in one of them): no register file can be renamed to give the
     double room. C has no such operand; a zero stands in, so the draft compiles and the search can start from it."""
-    return re.sub(r"\(second half of f64\)|\bsecond half of f64\b", "0.0", source)
+    source = re.sub(r"\(second half of f64\)|\bsecond half of f64\b", "0.0", source)
+    # two zero words glued into a double are 0.0; built from the words, the comparison reads them back from the stack
+    return re.sub(r"\bGLUE_F64\(\s*(?:0U?|0\.0)\s*,\s*0U?\s*\)", "0.0", source)
 
 
 def _array_pointers(source: str) -> str:

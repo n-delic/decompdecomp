@@ -85,3 +85,20 @@ def test_a_single_kept_in_a_saved_register_is_never_moved_into_a_temporary():
     saved = "".join(f"lwc1 $f{n}, {4 * n}($a0)\nadd.s $f{n}, $f{n}, $f{n}\n" for n in range(20, 32))
     code = saved + "ldc1 $f20, 0($a1)\nadd.d $f0, $f20, $f20\n"
     assert m2c_fp64.pair_free(code) == code  # no saved register is free: the code stays as it is
+
+
+def test_a_double_zero_built_from_the_zero_register_stays_a_pair():
+    # -mfp32: renaming $f1 away left m2c reading an unset register in every comparison with 0.0
+    zero = "mtc1 $zero, $f0\nmtc1 $zero, $f1\nc.eq.d $f14, $f0\nc.lt.d $f0, $f12\n"
+    assert m2c_fp64.pair_free(zero) == zero
+
+
+def test_two_single_zeros_no_double_reads_are_still_split():
+    singles = "mtc1 $zero, $f4\nmtc1 $zero, $f5\nswc1 $f4, 0($a0)\nswc1 $f5, 4($a0)\n"
+    assert '$f5' not in m2c_fp64.pair_free(singles)
+
+
+def test_two_zero_words_glued_into_a_double_are_a_zero():
+    from decompnet import m2c_types
+    assert m2c_types.repair("x = (a != GLUE_F64(0U, 0U));") == "x = (a != 0.0);"
+    assert m2c_types.repair("x = GLUE_F64(var, 0U);") == "x = GLUE_F64(var, 0U);"
