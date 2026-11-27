@@ -653,7 +653,13 @@ def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_rep
         if result := runtime_zlib.add(config, workdir, original, original_rom, taken,
                                       loaded['decoded_programs'], log):
             return result
-    from .boot_mapping import extend_startup_data, extend_startup_trap, mark_boot_version, recover
+    from .boot_mapping import (
+        extend_startup_data,
+        extend_startup_descriptor,
+        extend_startup_trap,
+        mark_boot_version,
+        recover,
+    )
     from .rsp_prefix import trim
 
     found = trim(rom, found, taken, log)
@@ -661,6 +667,7 @@ def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_rep
     found = bridge_loaded_prologues(rom, found, loaded.get('segments', ()), taken, log)
     recover(config, rom, found, log)
     extend_startup_trap(config, rom, log)
+    extend_startup_descriptor(config, rom, log)
     extend_startup_data(config, rom, log)
     mark_boot_version(config, rom, log)
     if not packed and taken and (slots := shared_dma.read(original_rom, taken, found)):
