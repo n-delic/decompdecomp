@@ -24,21 +24,31 @@ typedef double f64;
 ''' + seeds.M2C_MACROS + '\n'
 
 
-def _object_prefix(config: dict) -> Path:
-    """Use the project build's existing C object prefix, including a selected version folder."""
-    prefixes = set()
+def _object_layout(config: dict) -> tuple[Path, bool]:
+    """Infer the C object directory and whether the build retains the source suffix."""
+    layouts = set()
     for entry in config.get('units', []):
         source = (entry.get('metadata') or {}).get('source_path')
         base = entry.get('base_path')
         if not isinstance(source, str) or not isinstance(base, str):
             continue
-        source_path, object_path = Path(source + '.o'), Path(base)
+        source_path, object_path = Path(source), Path(base)
         if (source_path.is_absolute() or object_path.is_absolute() or '..' in source_path.parts
-                or '..' in object_path.parts or len(object_path.parts) <= len(source_path.parts)):
+                or '..' in object_path.parts):
             continue
-        if object_path.parts[-len(source_path.parts):] == source_path.parts:
-            prefixes.add(object_path.parts[:-len(source_path.parts)])
-    return Path(*next(iter(prefixes))) if len(prefixes) == 1 else Path('build')
+        for keep_suffix in (True, False):
+            expected = Path(source + '.o') if keep_suffix else source_path.with_suffix('.o')
+            if (len(object_path.parts) > len(expected.parts)
+                    and object_path.parts[-len(expected.parts):] == expected.parts):
+                layouts.add((object_path.parts[:-len(expected.parts)], keep_suffix))
+    if len(layouts) == 1:
+        prefix, keep_suffix = next(iter(layouts))
+        return Path(*prefix), keep_suffix
+    return Path('build'), True
+
+
+def _object_prefix(config: dict) -> Path:
+    return _object_layout(config)[0]
 
 
 def prepare(project, log=print, *, limit: int = 32, units: set[str] | None = None, stop=None) -> list[str]:
@@ -50,7 +60,7 @@ def prepare(project, log=print, *, limit: int = 32, units: set[str] | None = Non
     """
     cfg = copy.deepcopy(project.objdiff_config())
     original = (project.root / 'objdiff.json').read_bytes()
-    object_prefix = _object_prefix(cfg)
+    object_prefix, keep_suffix = _object_layout(cfg)
     refs = (project.root / STATE / 'objdiff-references').resolve()
     if project.root.resolve() not in refs.parents:
         return []
@@ -124,7 +134,9 @@ def prepare(project, log=print, *, limit: int = 32, units: set[str] | None = Non
             entry['metadata'] = {**entry.get('metadata', {}), 'source_path': source.relative_to(project.root).as_posix(),
                                  'autopilot_scaffold': True,
                                  'draft_assembly': assembly.resolve().relative_to(project.root.resolve()).as_posix()}
-            entry['base_path'] = (object_prefix / (source.relative_to(project.root).as_posix() + '.o')).as_posix()
+            candidate_path = source.relative_to(project.root)
+            object_name = Path(str(candidate_path) + '.o') if keep_suffix else candidate_path.with_suffix('.o')
+            entry['base_path'] = (object_prefix / object_name).as_posix()
             unit = project._units_of({'units': [entry]})[0]
             log(f'Preparing C candidate: {source.relative_to(project.root)}')
             # Some generic object rules do not make parent directories themselves.
@@ -143,7 +155,9 @@ def prepare(project, log=print, *, limit: int = 32, units: set[str] | None = Non
         (project.root / 'objdiff.json').write_bytes(original)
         for source in made:
             source.unlink(missing_ok=True)
-            obj = project.root / object_prefix / (source.relative_to(project.root).as_posix() + '.o')
+            candidate_path = source.relative_to(project.root)
+            object_name = Path(str(candidate_path) + '.o') if keep_suffix else candidate_path.with_suffix('.o')
+            obj = project.root / object_prefix / object_name
             if project.root.resolve() in obj.resolve().parents:
                 obj.unlink(missing_ok=True)
         raise

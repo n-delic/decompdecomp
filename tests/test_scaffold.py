@@ -1,6 +1,7 @@
 """Only app-verified source-less units get probed C candidates, with rollback on unsupported builds."""
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -326,3 +327,28 @@ def test_scaffold_does_not_guess_between_different_object_directories():
     assert _object_prefix(cfg).as_posix() == 'build'
     assert _object_prefix({'units': [{'base_path': '../out/src/a.c.o',
                                       'metadata': {'source_path': 'src/a.c'}}]}).as_posix() == 'build'
+
+
+def test_scaffold_uses_object_suffix_from_existing_c_units(tmp_path, monkeypatch):
+    fp = project(tmp_path)
+    cfg = json.loads((tmp_path / 'objdiff.json').read_text())
+    cfg['units'].insert(0, {'name': 'main', 'base_path': 'build/us/src/main.o',
+                            'metadata': {'source_path': 'src/main.c'}})
+    (tmp_path / 'objdiff.json').write_text(json.dumps(cfg))
+    def build(unit):
+        assert unit.base == tmp_path / 'build/us/src/decompdecomp/demo.o'
+        unit.base.write_bytes(b'candidate')
+        return True, ''
+    monkeypatch.setattr(fp, 'build_unit', build)
+    assert prepare(fp) == ['src/decompdecomp/demo.c']
+    assert fp.objdiff_config()['units'][1]['base_path'] == 'build/us/src/decompdecomp/demo.o'
+
+
+def test_scaffold_ambiguous_object_suffix_falls_back_safely():
+    from decompnet.forks.scaffold import _object_layout
+
+    cfg = {'units': [
+        {'base_path': 'build/src/a.o', 'metadata': {'source_path': 'src/a.c'}},
+        {'base_path': 'build/src/b.c.o', 'metadata': {'source_path': 'src/b.c'}},
+    ]}
+    assert _object_layout(cfg) == (Path('build'), True)
