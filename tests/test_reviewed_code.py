@@ -24,6 +24,11 @@ def test_reviewed_extension_reduces_raw_tail_and_keeps_parent_mapping():
     assert extend_config(before,[{'vram':0x80000000,'size':32}])['segments'][-1]==[48]
 
 
+def test_unmapped_function_identifies_the_mapping_to_review():
+    with pytest.raises(ExportError, match='missing.*ROM offset 0x100.*Review its ROM-to-memory mapping'):
+        extend_config(config(), [{'name': 'missing', 'vram': 0x80000000, 'rom_offset': 0x100, 'size': 4}])
+
+
 def test_reviewed_extension_refuses_to_cross_another_parent_or_consume_data():
     for kind,end in [('bin',52),('data',32),('code',32)]:
         c=config();c['segments'][1]['type']=kind

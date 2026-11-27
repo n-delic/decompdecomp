@@ -93,9 +93,13 @@ def graphics_spans(image):
         words = struct.unpack_from('>1024I', image, code)
         first = words[0]
         targets = {word & 0x03ffffff for word in words if word >> 26 in (2, 3)}
-        if (first >> 26 == 2 and 0x01000400 <= first & 0x03ffffff < 0x01000800
-                and sum(map(_vector, words)) >= _MIN_VECTORS
-                and sum(0x01000400 <= target < 0x01000800 for target in targets) >= 3):
+        jump_entry = (first >> 26 == 2 and 0x01000400 <= first & 0x03ffffff < 0x01000800
+                      and sum(0x01000400 <= target < 0x01000800 for target in targets) >= 3)
+        # Some vector programs start with setup instead of a jump and encode their IMEM calls
+        # without the 0x04000000 region bits. The known boot, entry and body must all agree.
+        vector_entry = (image[code:code+12] == bytes.fromhex('4a00002cc81f201bc81e201c')
+                        and sum(0x400 <= target < 0x800 for target in targets) >= 3)
+        if (jump_entry or vector_entry) and sum(map(_vector, words)) >= _MIN_VECTORS:
             yield start, end
 
     # Some bootstrapped graphics programs fill the 4 KiB task image with

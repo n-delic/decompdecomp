@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 from collections import Counter, defaultdict
+from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
 
@@ -16,7 +17,8 @@ from ..network import NetworkError
 from ..rom import split
 from ..rom.symbols import Symbol
 
-MIN_BYTES = 32  # Short all-purpose stubs give poor evidence for a new boundary.
+MIN_BYTES = 8  # A MIPS return and its delay slot; shorter labels are not complete CPU functions.
+MIN_AUTOMATIC_BYTES = 32  # Short all-purpose stubs give poor evidence for a new boundary.
 MAX_BYTES = 256 * 1024
 MAX_OBJECT_BYTES = 8 * 1024 * 1024
 
@@ -93,7 +95,14 @@ def _location(body, original, regions, segments, prior):
         owners = {seg.vram + raw - seg.rom_start for seg in segments
                   if seg.rom_start <= raw and raw + len(body) <= seg.rom_end and (raw - seg.rom_start) % 4 == 0}
         if len(owners) == 1 and not any(region.compressed for region, _ in overlay_hits):
-            return {'region': 'raw', 'offset': raw, 'vram': owners.pop(), 'position': raw}
+            native = [(region, offset) for region, offset in overlay_hits
+                      if not region.compressed and region.offset + offset == raw]
+            result = {'region': 'raw', 'offset': raw, 'vram': owners.pop(), 'position': raw}
+            if len(native) == 1:
+                result.update(native_region=str(native[0][0].offset), native_offset=native[0][1])
+            elif len(native) > 1:
+                result['native_ambiguous'] = True
+            return result
     if len(overlay_hits) == 1:
         region, offset = overlay_hits[0]
         if not region.compressed:
@@ -130,6 +139,7 @@ def _preview(net, slug, donor_slug, log):
         raise NetworkError('The current analysis image has a different layout from the original ROM.')
     console = net.console(proj)
     regions = console.donor_text_regions(original)
+    by_region = {str(region.offset): region for region in regions}
     prior = cfg.get('donor_overlays', {})
     existing = net.project_store(proj['id']).all(
         'SELECT name,vram,rom_offset,size,status FROM functions WHERE project_id=? AND rom_offset IS NOT NULL', proj['id'])
@@ -138,29 +148,62 @@ def _preview(net, slug, donor_slug, log):
         'SELECT name,unit,meta FROM functions WHERE project_id=?', other['id']):
         symbols[row['unit']].add(json.loads(row['meta'] or '{}').get('symbol') or row['name'].partition('@')[0])
     seen = {}
+    coverage = {'units': 0, 'units_without_indexed_functions': 0, 'unavailable_units': 0,
+                'uncompared_functions': 0, 'unlocated_functions': 0, 'examples': []}
     check = getattr(log, 'check_cancel', lambda: None)
     update = getattr(log, 'progress', lambda **_: None)
     units = fp.units()
+    # Large imported projects often repeat thousands of identical eight-byte
+    # stubs. Cache only short bodies, keeping the cache bounded in memory.
+    @lru_cache(maxsize=4096)
+    def locate_short(code):
+        return _location(code, original, regions, segments, prior)
+
     for done, unit in enumerate(units):
         check()
         update(phase='Checking donor function bytes', done=done, total=len(units))
-        if not symbols[unit.name] or unit.target is None:
+        coverage['units'] += 1
+        names = symbols[unit.name]
+        if not names:
+            coverage['units_without_indexed_functions'] += 1
+            continue
+        if unit.target is None:
+            coverage['unavailable_units'] += 1
+            coverage['uncompared_functions'] += len(names)
+            if len(coverage['examples']) < 20:coverage['examples'].append(unit.name)
             continue
         path = unit.target.resolve()
         if not path.is_relative_to(fp.root.resolve()) or not path.is_file():
+            coverage['unavailable_units'] += 1
+            coverage['uncompared_functions'] += len(names)
+            if len(coverage['examples']) < 20:coverage['examples'].append(unit.name)
             continue
+        compared = set()
         try:
-            for name, code in _bodies(path, symbols[unit.name]):
+            for name, code in _bodies(path, names):
                 check()
-                found = _location(code, original, regions, segments, prior)
+                found = (locate_short(code) if len(code) < MIN_AUTOMATIC_BYTES else
+                         _location(code, original, regions, segments, prior))
                 if found is None:
+                    compared.add(name)
+                    coverage['unlocated_functions'] += 1
                     continue
                 key = (found['region'], found['offset'], len(code))
                 if key in seen:
+                    compared.add(name)
                     continue
-                seen[key] = {**found, 'size': len(code), 'name': name}
+                reason = ('Multiple loader sections claim this body.' if found.get('native_ambiguous') else
+                          console.donor_candidate_review(code, found['vram'],
+                              region=by_region.get(found.get('native_region', found['region'])),
+                              offset=found.get('native_offset', found['offset'])))
+                if len(code) < MIN_AUTOMATIC_BYTES and not reason:
+                    reason = 'This short body needs independent entry-point evidence.'
+                seen[key] = {**found, 'size': len(code), 'name': name, 'review_reason': reason}
+                compared.add(name)
         except (ELFError, OSError, ValueError):
-            continue
+            coverage['unavailable_units'] += 1
+            if len(coverage['examples']) < 20:coverage['examples'].append(unit.name)
+        coverage['uncompared_functions'] += len(names - compared)
     proposals = []
     for _, entry in sorted(seen.items()):
         pos = entry['position']
@@ -168,7 +211,9 @@ def _preview(net, slug, donor_slug, log):
                     row['rom_offset'] < pos + entry['size'] and pos < row['rom_offset'] + row['size']]
         if any(r['rom_offset'] == pos and r['size'] == entry['size'] for r in overlaps):
             continue
-        state = 'review' if overlaps else 'new'
+        state = 'review' if overlaps or entry['review_reason'] else 'new'
+        if overlaps and not entry['review_reason']:
+            entry['review_reason'] = 'This extent overlaps existing functions.'
         proposals.append({**entry, 'state': state, 'overlaps': [r['name'] for r in overlaps]})
     by_region = defaultdict(list)
     for entry in proposals:
@@ -179,14 +224,17 @@ def _preview(net, slug, donor_slug, log):
             active = [p for p in active if p['offset'] + p['size'] > entry['offset']]
             if active:
                 entry['state'] = 'review'
+                entry['review_reason'] = entry['review_reason'] or 'This extent overlaps another donor candidate.'
                 for peer in active:
                     peer['state'] = 'review'
+                    peer['review_reason'] = peer['review_reason'] or 'This extent overlaps another donor candidate.'
             active.append(entry)
     counts = Counter((entry['state'], entry['region'] != 'raw') for entry in proposals)
     banks = [{'id': str(r.offset), 'name': r.name, 'size': len(r.data), 'compressed': r.compressed}
              for r in regions]
-    token = hashlib.sha256(json.dumps([sha, analysis_hash, donor_slug, prior, proposals, banks], sort_keys=True).encode()).hexdigest()
+    token = hashlib.sha256(json.dumps([sha, analysis_hash, donor_slug, prior, proposals, banks, coverage], sort_keys=True).encode()).hexdigest()
     report = {'donor': donor_slug, 'token': token, 'overlays': banks, 'functions': proposals,
+              'coverage': coverage,
               'counts': {'raw': counts['new', False], 'overlay': counts['new', True],
                          'review': counts['review', False] + counts['review', True]}}
     return proj, cfg, image, regions, report
@@ -253,12 +301,23 @@ def apply(net, slug, donor_slug, token, log=print, *, include_overlays=False):
             if name in syms.by_name:
                 raise NetworkError('A candidate name is already used. Preview the changes again.')
             fn = split.function_from_bytes(name, assembled[pos:pos + size], pos, vram, unit, bool(proj['big_endian']))
+            try:
+                region_key = item.get('native_region') if key == 'raw' else key
+                target_meta = console.prepare_donor_function(fn, bank_data.get(region_key),
+                    item.get('native_offset', item['offset']), native=key == 'raw' and region_key is not None)
+            except ValueError as error:
+                raise NetworkError(f'The donor module metadata changed: {str(error).rstrip(".")}. Preview it again.') from error
             syms.alias(Symbol(name, vram, size, 'func'))
             target = net._make_target(proj, fn, syms)
+            relocs = json.dumps(target.to_json())
+            meta = {'donor_boundary': {'project': donor_slug, 'symbol': item['name'], 'region': key}, **target_meta}
+            from .sdk_assembly import classify_recovered
+            status, meta = classify_recovered(console, {'config': json.dumps(config)},
+                {'name': name, 'vram': vram, 'rom_offset': pos, 'size': size,
+                 'target': target.code, 'relocs': relocs}, 'open', meta)
             db.execute("INSERT INTO functions(project_id,name,size,n_insns,target,relocs,asm,unit,vram,rom_offset,status,meta) "
-                       "VALUES(?,?,?,?,?,?,?,?,?,?,'open',?)", (proj['id'], name, size, len(fn.lines), target.code,
-                        json.dumps(target.to_json()), console.function_asm(fn), unit, vram, pos,
-                        json.dumps({'donor_boundary': {'project': donor_slug, 'symbol': item['name'], 'region': key}})))
+                       "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (proj['id'], name, size, len(fn.lines), target.code,
+                        relocs, console.function_asm(fn), unit, vram, pos, status, json.dumps(meta)))
             db.execute('INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)',
                        (proj['id'], name, vram, size, 'func'))
         if file is not None:
@@ -270,7 +329,7 @@ def apply(net, slug, donor_slug, token, log=print, *, include_overlays=False):
             finally:
                 Path(temp).unlink(missing_ok=True)
         db.execute('UPDATE projects SET config=? WHERE id=?', (json.dumps(config), proj['id']))
-        net._event(db, proj['id'], None, 'boundary', f'Added {len(selected)} verified donor extents as open functions')
+        net._event(db, proj['id'], None, 'boundary', f'Added {len(selected)} verified donor extents')
         for cache in (net._roms, net._syms, net._xrefs, net._ops, net._warmed):
             cache.pop(proj['id'], None)
         net.bump_generation(proj['id'])

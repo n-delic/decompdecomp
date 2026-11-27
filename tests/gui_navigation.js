@@ -15,7 +15,7 @@ function setup() {
     document: {querySelectorAll: () => []}, navigator: {clipboard: {}}, location: {},
     api: (url, options={}) => new Promise((resolve,reject) => calls.push({url,resolve,reject,...options})),
     show: () => {}, startLive: () => {}, stopPolling: () => {}, markNav: () => {}, showDrawer: id => {el(id).hidden=false;},
-    discoverFunctionAttempt: () => {}, renderDeepSearch: () => {}, reconnectDeepSearch: () => {}, giveBack: () => {}, drawMap: () => {}, toast: e => errors.push(e), esc: String, hex8: String,
+    discoverFunctionAttempt: () => {}, discoverCoverageAudit: () => {}, discoverMissedFunctions: () => {}, renderDeepSearch: () => {}, reconnectDeepSearch: () => {}, giveBack: () => {}, drawMap: () => {}, toast: e => errors.push(e), esc: String, hex8: String,
     renderFunctionFocusedAgents: () => {}, prepareProjectPeers: () => {}, renderKnownCompilerProfiles: () => {}, renderFnChart: () => {}, showFnTab: () => {},
     setEditorSourceMapping:data=>{S.sourceMap=data;},
     setEditor: source => {el('fnEdit').value=source;}, highlightAsm: String,

@@ -299,7 +299,7 @@ def _repair(net, pid: int, folder: Path, disk: dict[str, str], report) -> dict[s
         if added:
             manifest["layout"].sort(key=lambda entry: (entry.get("vram") if isinstance(entry.get("vram"), int)
                                                        else -1, str(entry.get("name"))))
-            disk[saves.MANIFEST] = (saves.manifest_text(manifest) if manifest.get("format") == saves.FORMAT
+            disk[saves.MANIFEST] = (saves.manifest_text(manifest) if manifest.get("format") in saves.SPLIT_FORMATS
                                     else json.dumps(manifest, indent=1) + "\n")
             for name, text in saves.split_manifest(disk[saves.MANIFEST]).items():
                 (folder / name).write_text(text, encoding="utf-8")
@@ -386,6 +386,8 @@ def _manifest(files: dict[str, str], cfg: dict, known_names=()) -> dict:
                     or not isinstance(entry["size"], int) or entry["size"] <= 0
                     or entry.get("status", "open") not in ("open", "asm")):
                 raise ValueError(f"layout entry {name!r} needs a name, an integer vram and a size above 0")
+        from .recovered_saves import validate as validate_recovered
+        validate_recovered(manifest)
         compiler = manifest.get("compiler")
         if compiler is not None and not isinstance(compiler, dict):
             raise ValueError("compiler is not an object")
@@ -465,7 +467,7 @@ def _merge_manifest(old, new, current, key: str = ""):
             else:
                 merged[field] = new[field]
         return merged
-    if key in ("layout", "symbols", "set_aside", "notes", "knowledge", "global_types") \
+    if key in ("layout", "symbols", "set_aside", "notes", "knowledge", "global_types", "recovered") \
             and all(isinstance(value, list) for value in (old, new, current)):
         def identity(item):
             if key == "knowledge":
@@ -558,6 +560,9 @@ def _reconcile_renames(store, pid, saved, rendered, disk, before, pending, remov
             pending.pop(source, None)
             removed[source] = None
     merged["layout"] = list(layout.values())
+    for entry in merged.get('recovered') or []:
+        if isinstance(entry, dict) and entry.get('name') in renames:
+            entry['name'] = renames[entry['name']]
     current_symbols = {(sym["name"], sym["address"]) for sym in local.get("symbols", [])}
     merged["symbols"] = [sym for sym in merged.get("symbols", [])
                          if (renames.get(sym["name"]), sym["address"]) not in current_symbols]
@@ -2549,6 +2554,16 @@ class Progress:
             def report(line):
                 self._activity(slug, message=line)
                 destination(line)
+            # Check recovered identities before _repair can move a saved source or synchronization can
+            # remove a missing row. Explicit restore can run discovery first; routine sync must not start it.
+            try:
+                incoming = json.loads(disk[saves.MANIFEST])
+                if isinstance(incoming, dict) and incoming.get('recovered'):
+                    from . import recovered_saves
+                    recovered_saves.validate(incoming)
+                    recovered_saves.ensure(net, slug, incoming, report, scan=False)
+            except (ValueError, TypeError, KeyError) as error:
+                raise NetworkError(f'Fix progress/decompdecomp.json: {error}.') from None
             disk = _repair(net, pid, folder, disk, report)
             known_names = {row["name"] for row in metadata_rows(store, ("name",),
                 "SELECT name FROM functions WHERE project_id=?", pid)}

@@ -311,11 +311,24 @@ class Console:
         Returns the image splat reads."""
         return image
 
+    def runtime_audit_candidates(self, root, cfg, image, segments, functions, log, candidates=(), checkpoint=None):
+        """Optional game-run evidence for audit leads; other consoles need a runtime adapter."""
+        return []
+
     def donor_text_regions(self, image: bytes) -> list:
         """Original code regions with separate module-relative addresses."""
         return []
 
-    def missed_functions(self, config: Path, image: bytes, log=print, known=()) -> list[tuple[int, int, int]] | None:
+    def donor_candidate_review(self, code: bytes, vram: int, *, region=None, offset=None) -> str | None:
+        """Why a donor body needs manual CPU-code review, or None when independently corroborated."""
+        return 'This console has no CPU-code evidence reader for donor bodies.'
+
+    def prepare_donor_function(self, fn, region, offset, *, native=False) -> dict:
+        """Attach validated loader metadata to a recovered function, and return it for storage."""
+        return {}
+
+    def missed_functions(self, config: Path, image: bytes, log=print, known=(), *, prepare_split=None,
+                         checkpoint=None, expected_config=None) -> list[tuple[int, int, int]] | None:
         """ROM mode: in a project that exists, the functions its split left as data that an import would now find,
         written into splat's `config` as code segments and returned as (rom_start, rom_end, vram), one function each
         (N64: consoles/n64/code.py). None when the console has no such search yet (ROADMAP.md)."""

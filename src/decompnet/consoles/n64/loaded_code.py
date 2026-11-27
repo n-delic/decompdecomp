@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import struct
 import tempfile
+from collections import Counter, defaultdict
 from pathlib import Path
 
 from ...arch.mips import JR_RA, is_frame, jal_targets
@@ -28,6 +29,103 @@ VIS = 1200  # 20 seconds of the game (PAL 24): about two seconds to run
 DUMPS = (60, 300, 600, 900, 1200)
 CHUNK = 128  # the RAM a function starts with, found once in the ROM, ties RAM to ROM
 RAM = (0x80000400, 0x80800000)
+_TRAP_JUMP = b'\x00\x00\x00\x08'  # jr $zero: a game's exception-dispatched call table
+_TRAP_MIN_ENTRIES = 8
+
+
+def _trap_id(data, at):
+    if at < 0 or at + 8 > len(data) or data[at:at + 4] != _TRAP_JUMP:
+        return None
+    delay = int.from_bytes(data[at + 4:at + 8], 'big')
+    if delay == 0x00004025:  # move $t0, $zero, for the first entry
+        return 0
+    return delay & 0xffff if delay >> 16 == 0x2408 else None  # addiu $t0, $zero, id
+
+
+def _next_trap_id(previous, current):
+    return current > previous and (current == previous + 1 or current & 0xff == 0)
+
+
+def _trap_prefix(data):
+    if len(data) < _TRAP_MIN_ENTRIES * 8:
+        return False
+    ids = [_trap_id(data, i * 8) for i in range(_TRAP_MIN_ENTRIES)]
+    return all(value is not None for value in ids) and all(
+        _next_trap_id(a, b) for a, b in zip(ids, ids[1:]))
+
+
+def _called_trap_table(rom, lo, hi, calls):
+    """A directly called run of ordered trap stubs in an already byte-verified RAM range."""
+    calls = set(calls)
+    at = lo
+    while at + _TRAP_MIN_ENTRIES * 8 <= hi:
+        start = rom.find(_TRAP_JUMP, at, hi)
+        if start < 0:
+            break
+        if start % 4 or (previous := _trap_id(rom, start)) is None:
+            at = start + 1
+            continue
+        end = start + 8
+        while end + 8 <= hi and (current := _trap_id(rom, end)) is not None and _next_trap_id(previous, current):
+            previous = current
+            end += 8
+        if end - start >= _TRAP_MIN_ENTRIES * 8 and any(start <= call < end and (call - start) % 8 == 0 for call in calls):
+            return start, end
+        at = end
+    return None
+
+
+def trap_symbols(rom, ranges):
+    """Name every entry of a whole verified table so the splitter retains uncalled entries too."""
+    symbols = []
+    for start, end, vram in ranges:
+        if end > len(rom) or end - start < _TRAP_MIN_ENTRIES * 8 or (end - start) % 8:
+            continue
+        ids = [_trap_id(rom, at) for at in range(start, end, 8)]
+        if any(value is None for value in ids) or not all(_next_trap_id(a, b) for a, b in zip(ids, ids[1:])):
+            continue
+        symbols.extend(f'func_{address:08X} = 0x{address:X}; // type:func size:0x8'
+                       for address in range(vram, vram + end - start, 8))
+    return symbols
+
+
+def moved_banks(rom, banks, candidates, known, dumps, check=lambda: None):
+    """Defer a bank when several independent bodies repeatedly appear at another coherent mapping.
+
+    The bytes may be copies rather than executed code. This is evidence for review, never permission to
+    change an existing address. Even if another body appears at the configured address, the same bank can be
+    loaded in more than one place, so the unconfirmed entries still need review.
+    """
+    if len(dumps) < 2:
+        return []
+    evidence = defaultdict(Counter)
+    candidate_banks = {bank for bank in banks for lo, hi, vram in candidates
+                       if bank[0] <= lo < hi <= bank[1] and bank[2] + lo - bank[0] == vram}
+    for lo, hi, vram in set(candidates) | set(known):
+        check()
+        owners = [(a, b, v) for a, b, v in banks if a <= lo < hi <= b and v + lo - a == vram]
+        if len(owners) != 1 or lo < 0 or hi > len(rom) or hi - lo < 32:
+            continue
+        bank = owners[0]
+        if bank not in candidate_banks:
+            continue
+        body = rom[lo:hi]
+        expected = vram & 0x1fffffff
+        if any(expected + len(body) <= len(ram) and ram[expected:expected + len(body)] == body for ram in dumps):
+            continue
+        locations = Counter()
+        for ram in dumps:
+            prefix = body[:64]
+            offset = ram.find(prefix)
+            if offset < 0 or ram.find(prefix, offset + 1) >= 0 or offset + len(body) > len(ram):
+                continue
+            if ram[offset:offset + len(body)] == body:
+                locations[0x80000000 + offset] += 1
+        for address, count in locations.items():
+            if count >= 2 and address != vram:
+                evidence[bank][address - lo] += 1
+    return [(bank, shift, count) for bank, shifts in evidence.items()
+            for shift, count in shifts.items() if count >= 2]
 
 
 def inputs(vis: int = VIS) -> str:
@@ -51,7 +149,8 @@ def _region(rom: bytes, dump: bytes, target: int) -> tuple[int, int, int] | None
     """(rom_start, rom_end, vram) of the code around `target` in RAM that the ROM holds as it is, or None."""
     o = target & 0x1FFFFFFF
     head = dump[o:o + CHUNK]
-    if len(head) < CHUNK or not any(is_frame(w) or w == JR_RA for w in struct.unpack(f">{CHUNK // 4}I", head)):
+    if len(head) < CHUNK or not (any(is_frame(w) or w == JR_RA for w in struct.unpack(f">{CHUNK // 4}I", head))
+                                  or _trap_prefix(head)):
         return None
     at = rom.find(head)
     if at < 0x1000 or rom.find(head, at + 1) >= 0:  # not in the ROM, or not once
@@ -68,6 +167,8 @@ def _region(rom: bytes, dump: bytes, target: int) -> tuple[int, int, int] | None
 def _code(rom: bytes, lo: int, hi: int, calls=()) -> tuple[int, int] | None:
     """The code in ROM [lo, hi): from its first stack frame, or a call into it before that (a leaf function has no
     frame: a racing game's 0x8021F5F0 just before 0x8021F6A0's), to its last return (its delay slot too), or None."""
+    if table := _called_trap_table(rom, lo, hi, calls):
+        return table
     words = struct.unpack(f">{(hi - lo) // 4}I", rom[lo:hi - (hi - lo) % 4])
     frames = [i for i, w in enumerate(words) if is_frame(w)]
     returns = [i for i, w in enumerate(words) if w == JR_RA]
@@ -77,7 +178,8 @@ def _code(rom: bytes, lo: int, hi: int, calls=()) -> tuple[int, int] | None:
     return start, lo + 4 * returns[-1] + 8
 
 
-def find(rom_path: Path, rom: bytes, taken, found=(), *, log=print, stop=lambda: False) -> dict:
+def find(rom_path: Path, rom: bytes, taken, found=(), *, log=print, stop=lambda: False, inspect_dumps=None,
+         expansion_pak=False, vis=VIS, dumps_at=DUMPS) -> dict:
     """{"segments": [(rom_start, rom_end, vram)], "decoded": n, "moved": [...]} found by running the ROM: segments
     clear of `taken` and `found` (the split's and the static search's), each the ROM's own bytes at their address."""
     from . import emulator
@@ -88,9 +190,15 @@ def find(rom_path: Path, rom: bytes, taken, found=(), *, log=print, stop=lambda:
     late_dumps = []
     with tempfile.TemporaryDirectory(prefix="decomp-loaded-code-") as tmp:
         try:
-            run, expansion = emulator.run_for_observation(
-                Path(rom_path), VIS, inputs=inputs(), dumps={v: Path(tmp) / f"{v}.bin" for v in DUMPS},
-                timeout=300, stop=stop, log=log)
+            if expansion_pak:
+                run = emulator.run(Path(rom_path), vis, inputs=inputs(vis),
+                                   dumps={v: Path(tmp) / f"{v}.bin" for v in dumps_at},
+                                   timeout=300, stop=stop, expansion_pak=True)
+                expansion = True
+            else:
+                run, expansion = emulator.run_for_observation(
+                    Path(rom_path), vis, inputs=inputs(vis), dumps={v: Path(tmp) / f"{v}.bin" for v in dumps_at},
+                    timeout=300, stop=stop, log=log)
         except emulator.EmulatorError as error:
             return {"segments": [], "decoded": 0, "moved": [], "skipped": str(error)}
         dumps = [p.read_bytes() for _, p in sorted(run.dumps.items()) if p.is_file()]
@@ -105,6 +213,8 @@ def find(rom_path: Path, rom: bytes, taken, found=(), *, log=print, stop=lambda:
                 late_dumps = [p.read_bytes() for _, p in sorted(late.dumps.items()) if p.is_file()]
             except emulator.EmulatorError as error:
                 log(f'Later code-bank observation was unavailable: {error}')
+    if inspect_dumps is not None:
+        inspect_dumps(dumps)
     added: list[tuple[int, int, int]] = []
     moved, moved_ranges, decoded, seen = [], set(), set(), set()
     todo = _targets(rom, known)
@@ -119,7 +229,8 @@ def find(rom_path: Path, rom: bytes, taken, found=(), *, log=print, stop=lambda:
         region, code = None, False
         for dump in dumps:
             o = target & 0x1FFFFFFF
-            if o + 32 <= len(dump) and any(is_frame(w) or w == JR_RA for w in struct.unpack(">8I", dump[o:o + 32])):
+            if o + 32 <= len(dump) and (any(is_frame(w) or w == JR_RA for w in struct.unpack(">8I", dump[o:o + 32]))
+                                        or _trap_prefix(dump[o:o + CHUNK])):
                 code = True
                 region = _region(rom, dump, target)
                 if region:
@@ -165,11 +276,13 @@ def find(rom_path: Path, rom: bytes, taken, found=(), *, log=print, stop=lambda:
     if moved:
         log(f"{len(moved)} places the split puts at another address than the game runs them: " + ", ".join(
             f"ROM {m['rom']:#x} at {m['split']:#x}, run at {m['runs_at']:#x}" for m in moved[:4]))
-    from . import runtime_zlib
+    from . import runtime_mio_chunks, runtime_zlib
     programs = runtime_zlib.find(rom, dumps, decoded, known+added, check=check)
     from . import runtime_refpack
     occupied_programs = [(0, len(runtime_zlib._payload(rom, row)), row['vram']) for row in programs]
     programs += runtime_refpack.find(rom, dumps, decoded, known+added+occupied_programs, check=check)
+    occupied_programs = [(0, len(runtime_zlib._payload(rom, row)), row['vram']) for row in programs]
+    programs += runtime_mio_chunks.find(rom, dumps, decoded, known+added+occupied_programs, check=check)
     overlaps = runtime_overlays.regions(rom, late_dumps, known+added, check=getattr(log, 'check_cancel', lambda: None))
     if overlaps:
         log(f'Found {len(overlaps)} independently corroborated overlapping code bank(s) in later runtime snapshots.')

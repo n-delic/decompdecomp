@@ -307,6 +307,14 @@ class Core(Network):
                 candidates = [owner]
             else:
                 candidates = [s for s in segs if s.contains(addr, n)]
+                if owner is not None and owner.exclusive_ram_id:
+                    # A split overlay can have several disjoint ROM segments in the same loaded image.
+                    # Its scope and ROM-to-RAM delta identify those siblings even when another overlay
+                    # occupies their address; without both facts the read remains ambiguous.
+                    siblings = [s for s in candidates if s.exclusive_ram_id == owner.exclusive_ram_id
+                                and s.vram - s.rom_start == owner.vram - owner.rom_start]
+                    if siblings:
+                        candidates = siblings
             offsets = {s.rom_start + addr - s.vram for s in candidates}
             # None means unbacked memory to the linker and skips verification. Ambiguity must fail instead.
             if function is not None and len(offsets) > 1:

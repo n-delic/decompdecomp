@@ -59,6 +59,15 @@ def test_ambiguous_data_outside_caller_overlay_is_rejected():
         net.reader({"id": 1}, caller())(0x3000, 4)
 
 
+def test_caller_scope_and_mapping_select_a_disjoint_overlay_sibling():
+    net = engine([Segment('head',0,4,0x1000,'slot'),Segment('tail',4,8,0x1004,'slot'),
+                  Segment('other',8,12,0x1004,'slot')])
+    assert net.reader({'id':1},caller(0))(0x1004,4) == b'BBBB'
+    net._roms[1][1][1].exclusive_ram_id = 'different'
+    with pytest.raises(NetworkError,match='multiple ROM overlays'):
+        net.reader({'id':1},caller(0))(0x1004,4)
+
+
 def test_duplicate_mapping_is_not_ambiguous():
     net = engine([Segment("one", 0, 8, 0x1000), Segment("alias", 0, 8, 0x1000)])
     assert net.reader({"id": 1}, caller(4))(0x1000, 4) == b"AAAA"

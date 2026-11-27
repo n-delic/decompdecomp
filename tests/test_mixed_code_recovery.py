@@ -259,10 +259,14 @@ def test_a_quiet_body_that_calls_a_known_function_is_recovered_but_a_leaf_like_t
     assert not mixed_code.refine(path,other,'rom.bin',console,log=lambda _:None)
 
 
-def test_find_missed_functions_scans_inside_code_segments_given_the_known_functions(tmp_path):
+def test_find_missed_functions_scans_inside_code_segments_given_the_known_functions(tmp_path, monkeypatch):
     """The button found nothing inside a code segment (only gaps between segments): a quiet body in the raw bytes
     between the project's own functions now gets its own subsegment, so its project gains it without a reimport."""
+    from decompnet.consoles.n64 import runtime_staging
     from decompnet.consoles.n64.code import missed_functions
+    # This fixture exercises candidate discovery and cutting; its minimal config is
+    # not a splat project. Staging's real split checks have their own integration tests.
+    monkeypatch.setattr(runtime_staging, 'verify', lambda *args, **kwargs: True)
     quiet=[0x27BDFFE8,0xAFBF0014,0x0C000000|(BASE>>2)&0x3FFFFFF,0,0x8FBF0014,0x03E00008,0x27BD0018]
     path,_=project(tmp_path,body=quiet,call=False)
     rom=(tmp_path/'rom.bin').read_bytes()

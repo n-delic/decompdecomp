@@ -7,11 +7,13 @@
 - code.py: code splat's own look misses: segments the game loads later, and code kept compressed in the ROM.
 - uso.py / uso_match.py: bounded USO text and relocations, matching and cartridge reconstruction.
 - loader_code.py: full-bank closed-body recovery with CPU call, callback and adjacency evidence.
+- runtime_scoped.py: called code corroborated in RAM despite an overlapping overlay address.
 - loader_mapping.py: bank mappings corroborated by constant arguments to independent loader helpers.
 - indexed_overlays.py: shared RAM slots and DMA bounds recovered from loader arrays and cache calls.
 - indexed_runtime_code.py: executable archive members mapped at their declared runtime addresses.
 - runtime_zlib.py, runtime_refpack.py: compressed programs corroborated by runtime call targets and loaded bytes.
 - runtime_overlays.py: overlapping code banks corroborated by runtime caller and target bytes.
+- runtime_mio_chunks.py: source-backed chunked MIO0 programs corroborated against RAM.
 - runtime_textures.py: bounded emulator snapshots for texture loads whose pixels match the cartridge.
 - level_overlay_table.py: shared-slot level banks and adjacent helpers verified from loader instructions.
 - inferred_overlays.py: overlapping code-bank mappings supported by independently called local entries.
@@ -427,6 +429,11 @@ class Nintendo64(Console):
         apply(config, (workdir / expanded).read_bytes(), log)
         return expanded
 
+    def runtime_audit_candidates(self, root, cfg, image, segments, functions, log, candidates=(), checkpoint=None):
+        from .runtime_scoped import observe
+
+        return observe(root, cfg, image, segments, functions, log, candidates=candidates, checkpoint=checkpoint)
+
     donor_layout = True
 
     def donor_text_regions(self, image: bytes) -> list:
@@ -434,10 +441,62 @@ class Nintendo64(Console):
 
         return read(image)
 
-    def missed_functions(self, config: Path, image: bytes, log=print, known=()) -> list[tuple[int, int, int]] | None:
+    def donor_candidate_review(self, code: bytes, vram: int, *, region=None, offset=None) -> str | None:
+        from ...arch.mips_code_recovery import MAX_BYTES, called_extent, leaf_extent
+
+        # Donor object symbols can mark RSP microcode, data or a function's
+        # epilogue as STT_FUNC. Identical bytes alone do not establish a CPU entry.
+        if len(code) > MAX_BYTES:
+            return 'The body exceeds the supported bounded control-flow review size.'
+        if region is not None and region.relocations is None:
+            return 'The module has no validated relocation records.'
+        if (region is not None and type(offset) is int
+                and any(offset < entry < offset + len(code) for entry in region.entries)):
+            return 'The module records another entry inside this extent.'
+        if reason := self.asm_reason(code):
+            return 'Assembly or a partial entry needs review: ' + reason
+        size = (called_extent(code, 0, len(code), vram, cpu=self.cpu_variant)
+                or leaf_extent(code, 0, len(code), vram, cpu=self.cpu_variant))
+        if not size and region is not None and offset in region.entries and region.data[offset:offset + len(code)] == code:
+            # A module's own symbol and relocation tables independently identify
+            # both this entry and every guarded switch destination.
+            from . import uso
+            relocs = uso.function_relocations(region, offset, len(code))
+            tables = uso.function_jump_tables(region, offset, len(code), relocs)
+            edges = {at + 4: targets for at, _, targets in tables}
+            if edges:
+                size = (called_extent(code, 0, len(code), vram, cpu=self.cpu_variant, resolved_indirect=edges)
+                        or leaf_extent(code, 0, len(code), vram, cpu=self.cpu_variant, resolved_indirect=edges))
+        if not size or any(code[size:]):
+            return 'The entry, stack frame or control flow needs review.'
+        return None
+
+    def prepare_donor_function(self, fn, region, offset, *, native=False) -> dict:
+        if region is None:
+            return {}
+        from . import uso
+
+        code = region.data[offset:offset + fn.size]
+        if len(code) != fn.size or b''.join(line.word.to_bytes(4, 'big') for line in fn.lines) != code:
+            raise ValueError('The donor function no longer matches its module text.')
+        relocs = uso.function_relocations(region, offset, fn.size)
+        if relocs is None:
+            raise ValueError('The module has no validated relocation records.')
+        if native and not relocs:
+            return {}  # The ordinary linked-byte judge already handles this native body.
+        info = {'section': region.offset, 'start': offset, 'size': fn.size, 'relocs': relocs}
+        if native:
+            info['native'] = True
+        info.update(uso._binding_metadata(region, offset, fn.size, relocs))
+        fn.uso = info
+        return {'uso': info}
+
+    def missed_functions(self, config: Path, image: bytes, log=print, known=(), *, prepare_split=None,
+                         checkpoint=None, expected_config=None) -> list[tuple[int, int, int]] | None:
         from .code import missed_functions
 
-        return missed_functions(config, image, log, known)
+        return missed_functions(config, image, log, known, prepare_split=prepare_split, checkpoint=checkpoint,
+                                expected_config=expected_config)
 
     def import_pointer_is_data(self, image, offset):
         from .packed_pointers import is_data

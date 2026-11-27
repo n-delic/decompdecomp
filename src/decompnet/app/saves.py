@@ -49,10 +49,12 @@ PRIVATE_HEADERS = ("exact_match_", "local_source_")
 # Format 2 keeps a manifest's agents' notes and its verification records in files of their own (SIDE_FILES): on a
 # 2,000-function game they were 25 MB of a 27 MB decompdecomp.json, rewritten whole for every new best score. The app
 # works with one joined manifest text (manifest_text); only the folder and git hold it split (split_manifest,
-# join_manifest). A format 1 save keeps them inside and is read as it is; its next write is format 2, which an older
-# app refuses ("not format 1") rather than read as a save without notes.
+# join_manifest). A format 1 save keeps them inside and is read as it is; its next write uses split files. A save
+# containing post-import discoveries uses format 3 so an older app cannot discard their restore information.
 FORMAT = 2
-FORMATS = (1, 2)  # what a save may be: an older one is read, the next write converts it
+RECOVERY_FORMAT = 3  # older apps must not rewrite a save whose recovered entries they cannot restore
+SPLIT_FORMATS = (2, RECOVERY_FORMAT)
+FORMATS = (1, *SPLIT_FORMATS)
 MANIFEST = "decompdecomp.json"
 NOTES_FILE = "notes.json"
 VERIFICATION_FILE = "verification.json"
@@ -368,10 +370,10 @@ def _publish(folder: Path, files: dict[str, str], previous: dict[str, str] | Non
 
 
 def manifest_text(manifest: dict) -> str:
-    """The joined manifest text the app renders, compares and merges: format 2, with every side key present and
+    """The joined manifest text the app renders, compares and merges, with every side key present and
     last, so that splitting it and joining the files again gives back these exact bytes (a sync compares hashes)."""
     body = {key: value for key, value in manifest.items() if key not in SIDE_FILES}
-    body["format"] = FORMAT
+    body["format"] = RECOVERY_FORMAT if body.get('recovered') else FORMAT
     for key in SIDE_FILES:
         value = manifest.get(key)
         body[key] = SIDE_DEFAULTS[key]() if value is None else value
@@ -379,10 +381,10 @@ def manifest_text(manifest: dict) -> str:
 
 
 def split_manifest(text: str) -> dict[str, str]:
-    """A joined manifest as the files a format 2 save holds: decompdecomp.json without the side keys, and one file
+    """A joined manifest as the files a format 2 or 3 save holds: decompdecomp.json without the side keys, and one file
     for each. An older (format 1) text is written as it is."""
     manifest = json.loads(text)
-    if not isinstance(manifest, dict) or manifest.get("format") != FORMAT:
+    if not isinstance(manifest, dict) or manifest.get("format") not in SPLIT_FORMATS:
         return {MANIFEST: text}
     files = {MANIFEST: json.dumps({k: v for k, v in manifest.items() if k not in SIDE_FILES}, indent=1) + "\n"}
     for key, name in SIDE_FILES.items():
@@ -399,7 +401,7 @@ _joined_lock = threading.Lock()
 def join_manifest(manifest: str, side: dict[str, str | None]) -> str:
     """The joined text of a save's decompdecomp.json and its side files (file name -> text, None when absent).
 
-    A format 1 manifest is its own text. A format 2 one with a side file missing is refused: read as "no notes", a
+    A format 1 manifest is its own text. A split-format one with a side file missing is refused: read as "no notes", a
     partial copy or an old .gitignore would make a sync delete the project's notes."""
     cache_key = (manifest, *(side.get(name) for name in SIDE_FILES.values()))
     with _joined_lock:
@@ -409,7 +411,7 @@ def join_manifest(manifest: str, side: dict[str, str | None]) -> str:
         parsed = json.loads(manifest)
     except ValueError:
         return manifest  # (the caller says what's wrong with it, as for any unreadable manifest)
-    if not isinstance(parsed, dict) or parsed.get("format") != FORMAT:
+    if not isinstance(parsed, dict) or parsed.get("format") not in SPLIT_FORMATS:
         return manifest
     # A side key written into the manifest itself (an edit by hand, another tool) is the save's: it wins, and the
     # next write moves it to its file. Only a key that is in neither is a missing file.
@@ -835,6 +837,9 @@ def _manifest_from_rows(net, proj, cfg: dict, rows, folder: Path) -> tuple[dict,
     from ..match_bundle import portable
     if bundle := portable(net, pid):
         manifest['verification'] = bundle
+    from .recovered_saves import records as recovered_records
+    if recovered := recovered_records(net, pid, rows):
+        manifest['recovered'] = recovered
     return manifest, functions, units
 
 
@@ -1196,6 +1201,14 @@ def _restore(net, source: str, game: Path | None, log) -> dict:
             try:
                 if progress is None:
                     raise RuntimeError("restoring a saved project requires progress synchronization")
+                # Recreate later discoveries before the save is bound or synchronized. Otherwise a restore can
+                # silently lose their layout and subsequently treat saved source as a removed function.
+                from .recovered_saves import ensure as ensure_recovered
+                progress.local.busy = True
+                try:
+                    ensure_recovered(net, slug, manifest, log)
+                finally:
+                    progress.local.busy = False
                 # Import may create a new project; from here on, sync and rebind take the same lock.
                 with progress._project_lock(slug):
                     progress.results.pop(slug, None)

@@ -51,6 +51,16 @@ async function openProject(slug, tab = "overview") {
   $("projectLoadDiagnostic").textContent = "";
   $("projectLoading").querySelector(".workbar").hidden = false;
   S.slug = slug; S.lastEvent = 0; S.lastAttempt = 0; S.seq = {}; S.scores = new Map(); S.flash = new Map(); S.sessions = []; S.claims = []; S.covered = false; S.roomSig = null;
+  $("coverageAuditStop").hidden=true;
+  $("missedFunctionsStop").hidden=true;
+  $("missedFunctionsStatus").hidden=true;
+  const missedLog=$("missedFunctionsLog");
+  missedLog._workBar?.remove();missedLog._workBar=null;
+  missedLog._workStatus?.remove();missedLog._workStatus=null;
+  if (missedLog._errorBox) missedLog._errorBox.hidden=true;
+  missedLog.textContent='';missedLog.hidden=true;$("missedFunctionsBtn").disabled=false;
+  void discoverCoverageAudit(slug);
+  void discoverMissedFunctions(slug);
   S.apFeed = null; S.stats = null; S.map = []; S.byName = new Map(); S.mapSig = null; resetMap();
   S.mapPending = false; S.liveVersions = {}; S.primed = false; S.openedAt = Date.now() / 1000;
   $("activity").innerHTML = ""; $("thoughts").innerHTML = ""; $("now").innerHTML = ""; S.logFor = null; renderLog();
@@ -1860,7 +1870,8 @@ window.addEventListener('decomp-reconnected', () => {
 // Completion runs the bounded CPU audit once per layout revision in this page.
 // Failures remain visible and require an explicit retry, never a polling loop.
 const completionAuditAttempts=new Set();
-let coverageAuditRunning=false, coverageAuditSlug=null;
+const coverageAuditSessions=new Map();
+let coverageAuditSlug=null;
 function renderCodeCoverage(ov) {
   const c=ov.code_coverage, panel=$("codeCoveragePanel"), box=$("codeCoverageSummary");
   panel.hidden=!c;
@@ -1880,7 +1891,7 @@ function renderCodeCoverage(ov) {
   box.querySelectorAll("[data-coverage-function]").forEach(b=>b.onclick=()=>openFn(b.dataset.coverageFunction));
   box.querySelectorAll("[data-recover-function]").forEach(b=>b.onclick=()=>reviewCodeExtension(b.dataset.recoverFunction,Number(b.dataset.recoverStart),Number(b.dataset.recoverSize)));
   const button=$("coverageAuditBtn");button.hidden=!c.supported;
-  button.onclick=()=>runCoverageAudit();
+  button.onclick=()=>runCoverageAudit(true);
   const review=$("coverageReviewBtn"); review.hidden=!c.supported || !candidates;
   review.textContent=`Review ${candidates} candidate${candidates===1 ? "" : "s"}`;
   review.onclick=()=>{ $("codeAuditPanel").open=true; $("codeAuditPanel").scrollIntoView({behavior:"smooth",block:"start"}); };
@@ -1889,34 +1900,101 @@ function renderCodeCoverage(ov) {
   $("donorCodeBtn").hidden=!ov.donor_layout;
   $("donorCodeBtn").onclick=openDonorCode;
   const key=ov.slug+":"+c.audit_revision;
-  if (c.completion_audit_required && !coverageAuditRunning && !completionAuditAttempts.has(key)) {
+  if (c.completion_audit_required && !coverageAuditSessions.has(ov.slug) && !completionAuditAttempts.has(key)) {
     completionAuditAttempts.add(key);
     void runCoverageAudit();
   }
 }
-async function runCoverageAudit() {
-  if (coverageAuditRunning) return;
-  coverageAuditRunning=true;coverageAuditSlug=S.slug;
-  const slug=S.slug, button=$("coverageAuditBtn"), log=$("coverageAuditLog");
+async function discoverCoverageAudit(slug) {
+  try {
+    const data=await api('/api/code-audit?slug='+encodeURIComponent(slug));
+    if (S.slug!==slug) return;
+    if (data.job) {
+      const session=coverageAuditSessions.get(slug) || {job:data.job.id};
+      session.job=data.job.id;coverageAuditSessions.set(slug,session);
+      if (session.following) {
+        coverageAuditSlug=slug;$("coverageAuditBtn").disabled=true;
+        $("coverageAuditStatus").hidden=false;$("coverageAuditStatus").textContent="Coverage scan is running…";
+        showCoverageAuditStop(slug,session);
+      }
+      void followCoverageAudit(slug,session);
+    } else if (coverageAuditSessions.get(slug)?.job && !coverageAuditSessions.get(slug)?.following) {
+      // The job may have finished while this project was closed; follow it once to receive its result or error.
+      void followCoverageAudit(slug,coverageAuditSessions.get(slug));
+    }
+  } catch(error) {
+    if (S.slug===slug) {coverageAuditSlug=slug;const status=$("coverageAuditStatus");status.hidden=false;status.textContent="Could not check for a running coverage scan: "+error.message;}
+  }
+}
+function showCoverageAuditStop(slug,session) {
+  const stop=$("coverageAuditStop"), status=$("coverageAuditStatus"), log=$("coverageAuditLog");
+  stop.hidden=false;stop.disabled=!!session.stopping;
+  stop.onclick=async()=>{
+    if (session.stopping) return;
+    session.stopping=true;stop.disabled=true;status.textContent="Stopping coverage scan…";
+    try {await api('/api/job/cancel',{method:'POST',body:{id:session.job}});}
+    catch(error) {
+      session.stopping=false;
+      if (S.slug===slug && coverageAuditSessions.get(slug)===session) {
+        stop.disabled=false;showJobError(log,error.message);status.textContent="Could not stop the scan: "+error.message;
+      }
+    }
+  };
+}
+async function runCoverageAudit(fullScan=false) {
+  const slug=S.slug;
+  if (coverageAuditSessions.has(slug)) {
+    const current=coverageAuditSessions.get(slug);
+    if (!current.following) await followCoverageAudit(slug,current);
+    return;
+  }
+  const session={job:null,following:false};coverageAuditSessions.set(slug,session);
+  await followCoverageAudit(slug,session,fullScan);
+}
+async function followCoverageAudit(slug,session,fullScan=false) {
+  if (session.following || S.slug!==slug) return;
+  session.following=true;coverageAuditSlug=slug;
+  const button=$("coverageAuditBtn"), stop=$("coverageAuditStop"), log=$("coverageAuditLog");
   const status=$("coverageAuditStatus");status.hidden=false;
   status.innerHTML='<span class="spin-dot" aria-hidden="true"></span> Scanning original bytes for possible missing code…';
   const finish=beginWork(log,"Auditing code coverage",[button,$("codeAuditBtn")],"Coverage scan complete.");
   try {
-    const {job}=await api("/api/code-audit",{method:"POST",body:{slug}});
-    const result=await followJob(job,log);
+    if (!session.job) {
+      const {job}=await api("/api/code-audit",{method:"POST",body:{slug,full_scan:fullScan}});
+      session.job=job;
+    }
     if (S.slug!==slug) return;
+    showCoverageAuditStop(slug,session);
+    const result=await followJob(session.job,log,null,()=>S.slug===slug);
+    if (S.slug!==slug || !result) return;
+    coverageAuditSessions.delete(slug);
     renderCodeAudit(result);
-    status.textContent=result.candidates?.length ? `Scan complete. ${result.candidates.length} candidate${result.candidates.length===1 ? "" : "s"} found. Open Raw-region candidates to review the evidence.` : "Scan complete. No raw-region candidates found in this bounded scan.";
+    const limited=result.pointer_probe_limit || result.candidate_limit || result.mapping_limit || result.callback_scan_limit || result.hint_scan_limit;
+    status.textContent=limited ? `Scan incomplete: a search limit was reached. ${result.candidates?.length || 0} candidates are available to review.` :
+      result.candidates?.length ? `Scan complete. ${result.candidates.length} candidate${result.candidates.length===1 ? "" : "s"} found. Open Raw-region candidates to review the evidence.` : "Scan complete. No raw-region candidates found in this bounded scan.";
     const ov=await api("/api/project?slug="+encodeURIComponent(slug));
     if (S.slug!==slug) return;
     S.ov=ov;renderStats(ov);renderNext(ov);
-  } catch(error) {if(S.slug===slug) {status.textContent="Scan failed: "+error.message+". You can try again.";showJobError(log,error.message);}} finally {coverageAuditRunning=false;finish();}
+  } catch(error) {
+    const terminal=!!error.job || !session.job;
+    if (terminal) coverageAuditSessions.delete(slug);
+    if(S.slug===slug) {
+      status.textContent=error.job?.state==='cancelled' ? "Coverage scan stopped." : terminal ?
+        "Scan failed: "+error.message+". You can try again." :
+        "Lost contact with the scan: "+error.message+". Select Scan for missing code to reconnect.";
+      showJobError(log,error.message);
+    }
+  } finally {
+    session.following=false;
+    if(S.slug===slug) stop.hidden=!coverageAuditSessions.has(slug) || !session.job;
+    finish();
+  }
 }
 
 async function openDonorCode() {
   const slug=S.slug;
   const body=dialog("Review code from imported decomp", `<div data-donor-code>
-    <p class="small muted">Compare function bytes from a decomp that uses your exact ROM. Review the results before adding open functions.</p>
+    <p class="small muted">Compare function bytes from a decomp that uses your exact ROM. Review the results before adding functions.</p>
     <label class="field">Imported decomp <select data-donor disabled></select></label>
     <div class="row"><button class="primary" data-preview disabled>Preview</button>
     <button class="primary" data-apply hidden>Add verified functions</button>
@@ -1933,15 +2011,18 @@ async function openDonorCode() {
   function show(data) {
     report=data;
     const banks=new Map(data.overlays.map(row=>[row.id,row]));
+    const coverage=data.coverage || {};
     const group=(title, rows)=>rows.length ? `<details><summary>${esc(title)} (${rows.length})</summary>
       <ul>${rows.map(row=>`<li><code>${esc(row.name)}</code> · ${esc(banks.get(row.region)?.name || "Raw ROM")}
-      · ${hex8(row.vram)} · ${row.size} bytes${row.overlaps.length ? " · overlaps " + esc(row.overlaps.join(", ")) : ""}</li>`).join("")}</ul></details>` : "";
-    results.innerHTML=`<p>${data.counts.raw} new raw functions · ${data.counts.overlay} new overlay functions · ${data.counts.review} boundary conflicts</p>
+      · ${hex8(row.vram)} · ${row.size} bytes${row.overlaps.length ? " · overlaps " + esc(row.overlaps.join(", ")) : ""}${row.review_reason ? " · " + esc(row.review_reason) : ""}</li>`).join("")}</ul></details>` : "";
+    results.innerHTML=`<p>${data.counts.raw} new raw functions · ${data.counts.overlay} new overlay functions · ${data.counts.review} need review</p>
+      ${coverage.unavailable_units || coverage.uncompared_functions || coverage.unlocated_functions ? `<p class="small">Comparison incomplete: ${plural(coverage.unavailable_units || 0,"unit")} unavailable, ${plural(coverage.uncompared_functions || 0,"indexed function")} could not be compared, and ${(coverage.unlocated_functions || 0).toLocaleString()} ${coverage.unlocated_functions === 1 ? "body" : "bodies"} could not be located uniquely.</p>` : ''}
+      ${coverage.units_without_indexed_functions ? `<p class="small muted">${plural(coverage.units_without_indexed_functions,"donor unit")} ${coverage.units_without_indexed_functions === 1 ? "has" : "have"} no indexed functions; they may contain data or unfinished analysis.</p>` : ''}
       ${data.counts.overlay ? '<p class="small muted"><label><input type="checkbox" data-include-overlays> Add overlay functions too</label><br>Overlay banks use module-relative addresses. Export keeps the cartridge’s original bytes for these banks.</p>' : ''}
       ${data.overlays.length ? `<details><summary>Verified overlay sections (${data.overlays.length})</summary><ul>${data.overlays.map(bank=>`<li>${esc(bank.name)} · ${bank.size} bytes${bank.compressed?' · Yay0':''}</li>`).join('')}</ul></details>` : ''}
       ${group("New raw functions",data.functions.filter(row=>row.state==="new" && row.region==="raw"))}
       ${group("New overlay functions",data.functions.filter(row=>row.state==="new" && row.region!=="raw"))}
-      ${group("Boundary conflicts for review",data.functions.filter(row=>row.state==="review"))}`;
+      ${group("Entries needing review",data.functions.filter(row=>row.state==="review"))}`;
     add.hidden=data.counts.raw+data.counts.overlay===0;
     add.disabled=!data.counts.raw;
     const options=results.querySelector("[data-include-overlays]");
@@ -1966,7 +2047,7 @@ async function openDonorCode() {
       if (request.kind==="donor-code-apply") {
         report=null;
         add.hidden=true;
-        results.textContent=`Added ${result.added} open functions.`;
+        results.textContent=`Added ${result.added} functions. Recognized SDK and assembly code is set aside.`;
         await refreshMap(true);
         if (active()) {
           const ov=await api("/api/project?slug="+encodeURIComponent(slug));
@@ -1998,23 +2079,93 @@ async function openDonorCode() {
   } catch(error){if(active())showJobError(log,error.message);} finally {finish();}
 }
 
-/* The import's search for functions the split left as data, run on the project as it is (no reimport). */
-async function addMissedFunctions() {
-  const slug=S.slug, button=$("missedFunctionsBtn"), log=$("coverageAuditLog"), status=$("coverageAuditStatus");
-  status.hidden=false;
-  status.innerHTML='<span class="spin-dot" aria-hidden="true"></span> Looking for functions the split left as data…';
-  const finish=beginWork(log,"Finding missed functions",[button,$("coverageAuditBtn")],"Search complete.");
+/* The import's search runs as a project job so its panel can reconnect after navigation. */
+const missedFunctionSessions=new Map();
+async function discoverMissedFunctions(slug) {
   try {
-    const {job}=await api("/api/missed-functions",{method:"POST",body:{slug}});
-    const result=await followJob(job,log);
+    const data=await api('/api/missed-functions?slug='+encodeURIComponent(slug));
     if (S.slug!==slug) return;
+    if (data.job) {
+      const session=missedFunctionSessions.get(slug) || {job:data.job.id};
+      session.job=data.job.id;missedFunctionSessions.set(slug,session);
+      if (session.following) {
+        const button=$('missedFunctionsBtn'),log=$('missedFunctionsLog');
+        if (!log._workBar) {
+          log.hidden=false;log._showJobProgress=true;
+          session.reattachFinish=beginWork(log,'Finding missed functions',[button], 'Search complete.');
+          session.reattachBar=log._workBar;
+        } else button.disabled=true;
+        $('missedFunctionsStatus').hidden=false;$('missedFunctionsStatus').textContent='Finding missed functions…';
+        showMissedFunctionsStop(slug,session);
+      }
+      void followMissedFunctions(slug,session);
+    } else if (missedFunctionSessions.get(slug)?.job && !missedFunctionSessions.get(slug)?.following) {
+      void followMissedFunctions(slug,missedFunctionSessions.get(slug));
+    }
+  } catch(error) {
+    if (S.slug===slug) {const status=$('missedFunctionsStatus');status.hidden=false;status.textContent='Could not check for a running search: '+error.message;}
+  }
+}
+function showMissedFunctionsStop(slug,session) {
+  const stop=$('missedFunctionsStop'),status=$('missedFunctionsStatus'),log=$('missedFunctionsLog');
+  stop.hidden=false;stop.disabled=!!session.stopping;
+  stop.onclick=async()=>{
+    if (session.stopping) return;
+    session.stopping=true;stop.disabled=true;status.textContent='Stopping the search…';
+    try {await api('/api/job/cancel',{method:'POST',body:{id:session.job}});}
+    catch(error) {
+      session.stopping=false;
+      if (S.slug===slug && missedFunctionSessions.get(slug)===session) {
+        stop.disabled=false;status.textContent='Could not stop the search: '+error.message;showJobError(log,error.message);
+      }
+    }
+  };
+}
+async function addMissedFunctions() {
+  const slug=S.slug;
+  if (missedFunctionSessions.has(slug)) return;
+  const session={job:null,following:false};missedFunctionSessions.set(slug,session);
+  await followMissedFunctions(slug,session);
+}
+async function followMissedFunctions(slug,session) {
+  if (session.following || S.slug!==slug) return;
+  session.following=true;
+  const button=$('missedFunctionsBtn'),stop=$('missedFunctionsStop'),log=$('missedFunctionsLog'),status=$('missedFunctionsStatus');
+  status.hidden=false;status.textContent='Looking for functions the split left as data…';
+  log.hidden=false;log._showJobProgress=true;showJobError(log,'');
+  const finish=beginWork(log,'Finding missed functions',[button], 'Search complete.');
+  const workBar=log._workBar;
+  try {
+    if (!session.job) {const {job}=await api('/api/missed-functions',{method:'POST',body:{slug}});session.job=job;}
+    if (S.slug!==slug) return;
+    showMissedFunctionsStop(slug,session);
+    const result=await followJob(session.job,log,null,()=>S.slug===slug);
+    if (S.slug!==slug || !result) return;
+    missedFunctionSessions.delete(slug);
     status.textContent=result.message;
     if (result.added?.length) {
       const ov=await api("/api/project?slug="+encodeURIComponent(slug));
       if (S.slug!==slug) return;
       S.ov=ov;renderStats(ov);renderNext(ov);
     }
-  } catch(error) {if(S.slug===slug) {status.textContent="Search failed: "+error.message+". You can try again.";showJobError(log,error.message);}} finally {finish();}
+  } catch(error) {
+    const terminal=!!error.job || !session.job;
+    if (terminal) missedFunctionSessions.delete(slug);
+    if(S.slug===slug) {
+      status.textContent=error.job?.state==='cancelled' ? 'Search stopped.' : terminal ?
+        'Search failed: '+error.message+'. You can try again.' :
+        'Lost contact with the search: '+error.message+'. Return to this project to reconnect.';
+      showJobError(log,error.message);
+    }
+  } finally {
+    session.following=false;
+    if(S.slug===slug) stop.hidden=!missedFunctionSessions.has(slug) || !session.job;
+    if (S.slug===slug && session.reattachFinish && log._workBar===session.reattachBar) {
+      session.reattachFinish();session.reattachFinish=null;
+    }
+    if (workBar && log._workBar!==workBar) workBar.remove();
+    else finish();
+  }
 }
 
 function reviewCodeExtension(name,start,size) {

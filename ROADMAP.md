@@ -141,6 +141,31 @@
   fall inside a listed function as split evidence (`automatic_boundaries`), the browser
   build's entries, and a body that tail-jumps into the next function in its gap.
 
+- A full N64 coverage scan can use the installed reversing emulator to corroborate called, closed candidates in
+  an exclusive overlay slot when their caller and bytes coexist in two RAM snapshots. It reports evidence for
+  review, not execution proof. It also reports an observed RAM address for a review candidate whose unique,
+  complete body is present there and closes at that mapping, including when its original guessed address was
+  different. It checks breakpoints in bounded pages and records execution only when the captured RAM at that
+  breakpoint still matches the complete body. Completed checks survive Stop and are reused only for the same
+  original image, analysis image and project layout. A captured return address that points to a direct call
+  to the entry is stronger review evidence, but need not be the last edge taken. Neither a RAM copy nor a sampled execution
+  authorizes an import or proves all game states were covered. **Add missed functions** follows these calls to a fixed point and can recover
+  uniquely mapped scoped bodies after a temporary export split preserves existing project entries and each new body;
+  their overlay scopes and existing symbols are retained. Conflicting groups are subdivided; a stopped search
+  retains its verified groups and rechecks them on resume. The cartridge split is checked separately from appended
+  relocatable analysis banks, whose records remain intact. Games with unverified mappings remain for review.
+  Planned: equivalent runtime adapters for the other consoles and project-mode targets.
+
+- N64 imports also recognize cartridge tables of headerless, chunked MIO0 executables whose back-references can
+  reach earlier chunks. A decoded program is included only when a called entry and a long prefix match the game's
+  observed RAM; its analysis image is reconstructed from the original cartridge again during export verification.
+  Existing projects need a saved-project restore or another supported migration to use the expanded image.
+
+- Saved projects retain fingerprints for post-import discoveries and re-run verified discovery before applying
+  their saved layout. A restore stops without changing the save if a discovery cannot be recreated. Planned:
+  replay reviewed donor and runtime-only mappings without requiring rediscovery, and carry the same verified
+  identities through rooms: a room layout alone cannot safely recreate an entry missing from a guest's image map.
+
 - Done: N64 imports scan all unowned intervals in corroborated loader banks,
   following newly recovered calls and materialized callback addresses to completion.
   Quiet balanced frames need adjacency or independently corroborated callees and
@@ -869,6 +894,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Reviewed existing raw-tail recovery (local ROM) | ✓ | ✓ | ✓ (scalar decoder) | — | — | ✓ | — | — | — | — | — | — |
 | Derived incomplete state / raw coverage / completion audit | ✓ | ✓ | ✓ (scalar decoder) | — | — | ✓ | — | — | — | — | — | — |
 | Read-only gap/pointer/interior audit / incomplete-target warnings | ✓ | ✓ | ✓ (scalar decoder) | — | — | ✓ | — | — | — | — | — | — |
+| Runtime corroboration of scoped coverage leads | ✓ N64 ROM, sampled | — runtime adapter | — runtime adapter | — runtime adapter | — | — runtime adapter | — runtime adapter | — runtime adapter | — runtime adapter | — runtime adapter | — runtime adapter | — runtime adapter |
 | Guarded jump-table / local callback-consumer audit (scalar MIPS ROM) | ✓ | ✓ | ✓ | — | — | ✓ | — | — | — | — | — | — |
 | Saved code-audit decisions and evidence (local) | ✓ | ✓ | ✓ | — | — | ✓ | — | — | — | — | — | — |
 | Called whole-gap recovery (conservative import rule) | ✓ | — | — | — | — | — | — | — | — | — | — | — |
@@ -3816,6 +3842,14 @@ adapter; these source families do not change that limitation or any match verdic
 - Planned: non-MIPS boundary readers and object-project segment adapters for gap audits;
   EE-specific instruction decoding, function-pointer-only entry evidence and code/data
   subsegment audits. Existing MIPS diagnostics remain advisory when a decoder cannot close flow.
+- Planned: object-project coverage must also check callable symbols inside reported functions. A target
+  generator can give a directly called entry a zero-size untyped symbol and include its instructions in the
+  preceding function's size; report-to-database agreement then hides the entry. In one isolated comparison,
+  correcting only the target symbol sizes exposed an eight-byte source-defined function and changed the
+  preceding function's match from 85.7% to 100%, with text and relocations unchanged. Review direct calls,
+  source and control flow before proposing a boundary: internal labels, shared tails and microcode are not
+  automatically separate functions. A durable correction belongs in the project's target generator and must
+  keep the project's own objdiff judge; do not patch its generated objects behind its back.
 - Planned: the agents' `split_function` refuses, on MIPS ROM projects, a cut that leaves the first part running on
   into the second or starts the second on a delay slot (`EditMixin._split_runs_on`, through the processor's
   `boundary_instruction`); GBA (ARM/Thumb) and PS3 (PPC64) ROM splits need those instruction facts before they get it.

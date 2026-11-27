@@ -83,22 +83,33 @@ _SPLAT_LABEL = re.compile(
     r'([A-Za-z_.$][\w.$]*)(?=[, \t\r\n]|$)[^\n]*(?:\n|$)', re.M)
 
 
-def remove_foreign_bank_labels(root: Path, functions) -> None:
-    """Keep each known function label only at its own ROM address, even when banks share RAM."""
+def remove_foreign_bank_labels(root: Path, functions, segments=()) -> None:
+    """Keep named entries and scoped local labels only in their original ROM bank."""
     locations = {row['name']: row['rom_offset'] for row in functions if row['rom_offset'] is not None}
+    scopes = {}
+    for segment in segments:
+        if (segment.get('type') == 'code' and isinstance(segment.get('name'), str)
+                and isinstance(segment.get('start'), int) and isinstance(segment.get('end'), int)
+                and isinstance(segment.get('vram'), int)):
+            scopes.setdefault(segment['name'], []).append(segment)
     for path in (root / 'asm' / 'nonmatchings').rglob('*.s'):
         text = path.read_text(encoding='utf-8')
         def keep(match, source=text, directory=path.parent.name):
             name = match[2]
-            # Splat can place another bank's local jump label on raw words at
-            # the same RAM address. It belongs only to its named code bank.
-            scoped = re.fullmatch(r'\.L[0-9A-Fa-f]{8}_(code_[0-9A-Fa-f]+)', name)
-            if scoped and not (directory == scoped[1] or directory.startswith(scoped[1] + '_')):
-                return ''
-            if name not in locations:
+            expected = locations.get(name)
+            if expected is None and (local := re.fullmatch(r'\.L([0-9A-Fa-f]{8})_(.+)', name)):
+                address = int(local[1], 16)
+                owners = [s for s in scopes.get(local[2], [])
+                          if s['vram'] <= address < s['vram'] + s['end'] - s['start']]
+                if len(owners) == 1:
+                    expected = owners[0]['start'] + address - owners[0]['vram']
+                elif not scopes and re.fullmatch(r'code_[0-9A-Fa-f]+', local[2]):
+                    if not (directory == local[2] or directory.startswith(local[2] + '_')):
+                        return ''
+            if expected is None:
                 return match[0]
             next_word = _ADDR_COMMENT.search(source, match.end())
-            if next_word and int(next_word[1], 16) != locations[name]:
+            if next_word and int(next_word[1], 16) != expected:
                 return ''
             return match[0]
         updated = _SPLAT_LABEL.sub(keep, text)
@@ -157,7 +168,9 @@ def _symbol_lines(net, proj, rows=None, excluded=(), segments=(), unsized=()) ->
         owner = next((s for s in segments if s.get("type") == "code" and s["start"] <= rom < s["end"]
                       and s["vram"] + rom - s["start"] == vram), None) if rom is not None else None
         if counts[vram] > 1 and (owner is None or not owner.get("exclusive_ram_id")):
-            raise ExportError("An overlapping function has no matching scoped ROM bank.")
+            where = f" at ROM offset 0x{rom:X}" if isinstance(rom, int) else ""
+            raise ExportError(f"Overlapping function {row['name']}{where} has no matching scoped ROM bank. "
+                              "Review its ROM-to-memory mapping.")
         if owner is not None and owner.get("exclusive_ram_id"):
             suffix = f" rom:0x{rom:X} segment:{owner['name']}"
         size = "" if row["name"] in unsized else f" size:0x{row['size']:X}"
@@ -165,8 +178,11 @@ def _symbol_lines(net, proj, rows=None, excluded=(), segments=(), unsized=()) ->
     # One name per address: splat refuses two ("Duplicate symbol detected", an N64 game whose agents gave one address
     # two names). The table's own name for the address labels it; the other names still link, from build.json.
     named = set(funcs)
+    function_names = {row['name'] for row in rows}
     for s in sorted(syms.by_name.values(), key=lambda s: (s.address, s.name != syms.name_at(s.address)[0], s.name)):
-        if s.name in excluded or s.address in named or AUTO_NAME.match(s.name):
+        # A moved function can leave a symbol with the same name at its former address. Splat
+        # cannot define one name twice; the function row is the current placement for that name.
+        if s.name in excluded or s.name in function_names or s.address in named or AUTO_NAME.match(s.name):
             continue
         named.add(s.address)
         lines.append(f"{s.name} = 0x{s.address:08X};")
@@ -206,6 +222,14 @@ def _segments(config: dict) -> list[dict]:
     return out
 
 
+def _analysis_only_names(cfg, rows):
+    """Appended relocatable banks are rebuilt separately from the cartridge's splat split."""
+    banks = cfg.get('donor_overlays') or {}
+    native_end = min(banks.values(), default=None)
+    return ({row['name'] for row in rows if row['rom_offset'] is not None and row['rom_offset'] >= native_end}
+            if native_end is not None else set())
+
+
 def _export_segments(config: dict, functions) -> dict:
     """Keep known function tails out of data when regenerating the export's split.
 
@@ -215,6 +239,8 @@ def _export_segments(config: dict, functions) -> dict:
     """
     from .reviewed import extend_config
     config = extend_config(config, functions)
+    # The export writes its own complete symbol table; project-specific paths are not copied there.
+    config.setdefault('options', {})['symbol_addrs_path'] = ['symbol_addrs.txt']
     # Splat uses the function sizes we supply to keep switch tails in text. Its BSS scan
     # also uses those sizes to insert padding, which can assert when a sized symbol
     # overlaps the end of a BSS subsection. Let the configured BSS boundaries size it.
@@ -390,10 +416,7 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
     cfg = net.cfg(proj)
     store = net.project_store(proj['id'])
     population = store.all('SELECT name,vram,size,rom_offset,meta,target FROM functions WHERE project_id=?', proj['id'])
-    banks = cfg.get('donor_overlays') or {}
-    native_end = min(banks.values(), default=None)
-    analysis_only = ({r['name'] for r in population if r['rom_offset'] is not None and r['rom_offset'] >= native_end}
-                     if native_end is not None else set())
+    analysis_only = _analysis_only_names(cfg, population)
     excluded = analysis_only | {r['name'] for r in population if r['meta'] and console.overlay_cartridge_placement(r, cfg)}
     # Raw overlay entries still occupy space in the cartridge split; build their C
     # through the loader path while the assembly supplies the original placeholders.
@@ -422,7 +445,8 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
     log("writing the assembly with the project's names (splat)")
     split_config = yaml.safe_load(configs[0].read_text(encoding='utf-8'))
     known = population
-    (out / 'splat.yaml').write_text(yaml.safe_dump(_export_segments(split_config, known), sort_keys=False), encoding='utf-8')
+    exported_config = _export_segments(split_config, known)
+    (out / 'splat.yaml').write_text(yaml.safe_dump(exported_config, sort_keys=False), encoding='utf-8')
     shutil.copyfile(work / image_name, out / image_name)
     for extra in ("reloc_addrs.txt",):
         if (work / extra).exists():
@@ -435,7 +459,7 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
     res = run([console_python(), "-m", "splat", "split", "splat.yaml"], out, log)
     if res.returncode != 0:
         raise ExportError("splat failed:\n" + (res.stdout + res.stderr)[-1500:])
-    remove_foreign_bank_labels(out, population)
+    remove_foreign_bank_labels(out, population, _segments(exported_config))
     for generated in (out / "src").glob("*.c"):
         generated.unlink()  # splat's INCLUDE_ASM files: this tree builds one object per function instead
     for ld in out.glob("*.ld"):

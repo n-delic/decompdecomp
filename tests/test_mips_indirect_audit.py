@@ -16,6 +16,18 @@ def fixture(order='big'):
     return image,[dict(rom_start=0x1100,rom_end=0x1108,vram=0x80001100)]
 
 
+def test_callback_candidate_matching_checks_for_cancellation(monkeypatch):
+    from decompnet.arch import mips_indirect
+
+    monkeypatch.setattr(mips_indirect, 'calls', lambda *args: ([], False))
+
+    def stopped():
+        raise RuntimeError('Stopped')
+
+    with pytest.raises(RuntimeError, match='Stopped'):
+        consumers(bytes(64), [], [{'pointer_references': []}], 'big', [], [], check=stopped)
+
+
 def test_guarded_switch_follows_all_cases_only_with_explicit_mapping():
     for order in ('big','little'):
         image,ranges=fixture(order)
@@ -68,6 +80,17 @@ def test_guarded_switch_uses_a_separate_address_pair(order):
         changed[offset:offset+4] = word.to_bytes(4, order)
         found = jump_table(changed, 0x1000, 0x1040, 0x80001000, 0x1020, order, ranges)
         assert found is None or found['state'] != 'validated'
+
+
+def test_explicit_loader_edges_follow_every_case_and_reject_invalid_offsets():
+    image, _ = fixture()
+    assert not extent(image, 0x1000, 0x103c, 0x80001000, 'big')['flow_closed']
+    result = extent(image, 0x1000, 0x103c, 0x80001000, 'big', resolved_indirect={28: [36, 44]})
+    assert result['flow_closed'] and not result['direct_flow_closed']
+    assert result['return_sites'] == 3 and result['jump_tables'][0]['source'] == 'loader relocation'
+    for edges in ({28: [36, 0x100]}, {28: [37]}, {28: []}, {2: [36]}):
+        with pytest.raises(ValueError):
+            extent(image, 0x1000, 0x103c, 0x80001000, 'big', resolved_indirect=edges)
 
 
 @pytest.mark.parametrize('word,valid', [

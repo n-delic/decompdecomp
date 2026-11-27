@@ -3234,16 +3234,7 @@ $("sourcePairTry").onclick = async () => {
 };
 
 
-$("codeAuditBtn").onclick = async () => {
-  const button=$("codeAuditBtn"), log=$("codeAuditLog"), slug=S.slug;
-  const finish=beginWork(log,"Auditing unanalysed code",[button]);
-  try {
-    const {job}=await api("/api/code-audit",{method:"POST",body:{slug}});
-    const result=await followJob(job,log);
-    if (S.slug!==slug) return;
-    renderCodeAudit(result);
-  } catch(e) {showJobError(log,e.message);} finally {finish();button.disabled=false;}
-};
+$("codeAuditBtn").onclick = () => runCoverageAudit(true);
 
 
 async function sourceQueueProgress() {

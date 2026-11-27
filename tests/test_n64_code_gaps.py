@@ -1,6 +1,8 @@
 """The importer's last look at the gaps between an N64 game's code (consoles/n64/code.py, complete_gaps): homemade
 code, no game data. A racing game's split left 16 functions (31 KB) as data: object handlers reached only through
 pointers its code builds, leaves with no frame, switches, several functions to a gap."""
+import pytest
+
 from decompnet.consoles.n64.code import aligned_gaps, complete_gaps, mapped_data, mapped_gaps, runtime_entries
 
 LEAF = [0x24020001, 0x24420001, 0x03e00008, 0]
@@ -66,3 +68,11 @@ def test_an_overlay_tail_placed_past_its_alignment_boundary_becomes_code():
     recovered = complete_gaps(image, [], found, log=lambda *a: None)
     assert (0x1020, 0x1038, 0x80001030) in recovered and (0x1038, 0x1050, 0x80001048) in recovered
     assert aligned_gaps(image, [(0x1000, 0x1010, 0x80001000), (0x1050, 0x1058, 0x80001050)]) == []  # one mapping
+
+
+def test_aligned_gap_search_checks_cancellation_before_scanning_code():
+    def stop():
+        raise RuntimeError('stopped')
+
+    with pytest.raises(RuntimeError, match='stopped'):
+        aligned_gaps(bytes(0x200), [(0, 4, 0x80000000), (0x100, 0x104, 0x80200000)], check=stop)

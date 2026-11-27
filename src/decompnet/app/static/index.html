@@ -838,17 +838,21 @@
     <details class="panel settings-disclosure" id="codeCoveragePanel" hidden>
       <summary class="panel-head"><h2>Code coverage review</h2><span class="disclosure-context small muted" id="coverageReviewContext">Find missing code</span></summary>
       <div class="pad coverage-review">
-        <p class="small muted coverage-intro">Look for code missing from the function list, then review the evidence before recovering it.</p>
+        <p class="small muted coverage-intro">Look for code missing from the function list, then review the evidence before recovering it. A full scan may run the game briefly to check overlays.</p>
         <div id="codeCoverageSummary" aria-live="polite"></div>
         <div class="coverage-actions">
           <button class="primary small-btn" type="button" id="coverageAuditBtn">Scan for missing code</button>
+          <button class="ghost small-btn" type="button" id="coverageAuditStop" hidden>Stop scan</button>
           <button class="ghost small-btn" type="button" id="boundaryReviewBtn">Review &amp; repair boundaries</button>
           <button class="ghost small-btn" type="button" id="coverageReviewBtn" hidden>Review candidates</button>
           <button class="ghost small-btn" type="button" id="missedFunctionsBtn" hidden title="Adds the functions a fresh import would now find in bytes the split left as data, including addresses Play saw the game run. Matches, attempts and notes stay as they are.">Add missed functions</button>
+          <button class="ghost small-btn" type="button" id="missedFunctionsStop" hidden>Stop adding functions</button>
           <button class="ghost small-btn" type="button" id="donorCodeBtn" hidden>Review code from imported decomp</button>
           <span class="small muted">CPU only · no AI tokens · does not change code</span>
         </div>
         <p class="small coverage-audit-status" id="coverageAuditStatus" role="status" hidden></p>
+        <p class="small coverage-audit-status" id="missedFunctionsStatus" role="status" hidden></p>
+        <pre class="joblog" id="missedFunctionsLog" hidden></pre>
         <details id="codeAuditPanel" class="coverage-findings" hidden>
           <summary>Raw-region candidates <span class="muted small">— inspect evidence and save your review</span></summary>
           <p class="small muted">These regions may contain code, data or microcode. Save a review and notes for each lead; confirming code does not import it.</p>
