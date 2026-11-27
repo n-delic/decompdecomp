@@ -164,6 +164,27 @@ def test_a_refused_source_is_never_judged(session):
     assert session.sent == [] and Gateway.calls == []
 
 
+def test_a_function_the_app_renamed_after_matching_is_still_seen_as_matched(session, monkeypatch, capsys):
+    class Renamed(App):
+        def function(self, slug, name):
+            if name == "0x80010000":
+                return {"id": 5, "name": "fixedSqrt", "status": App.status, "best": 0}
+            return {"HTTP": 400} if App.status == "matched" else {"status": App.status, "best": App.best}
+
+    def submit(holder, source, function="", again=""):
+        App.status = "matched"
+        return "judged"
+
+    monkeypatch.setattr(haiku.judge, "App", Renamed)
+    monkeypatch.setattr(haiku.setup, "submit", submit)
+    info = json.loads((session.root / "connection.json").read_text())
+    (session.root / "connection.json").write_text(json.dumps(dict(info, address="0x80010000", function_id=5)))
+    assert haiku.main(["try", "small", session.write("// own=0 other=70")]) == 0
+    assert "MATCHED: the app records" in capsys.readouterr().out
+    assert haiku.main(["done", "small"]) == 0
+    assert "add_note" not in tools() and "RESULT f1: MATCHED" in capsys.readouterr().out
+
+
 def start_from(session, source):
     state = haiku.read_state(session.root)
     haiku.write_state(session.root, dict(state, inherited=haiku.inherited([source])))
