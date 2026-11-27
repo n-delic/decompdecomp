@@ -1,6 +1,7 @@
 """The N64's library signatures ship with the app, so a user without the SDK still has libultra found."""
 import importlib.util
 import json
+import multiprocessing
 import os
 import re
 import subprocess
@@ -14,6 +15,7 @@ from decompnet.app import sdk_builtin
 from decompnet.app import sdk_library as sdk
 from decompnet.app.engine import RomNetwork
 from decompnet.app.sdk_identity import identify
+from decompnet.store import Store
 
 TABLE = Path(consoles.get("n64").sdk_table)
 TOOL = Path(__file__).resolve().parent.parent / "tools" / "ultralib_signatures.py"
@@ -70,6 +72,55 @@ def test_the_table_loads_once_as_its_own_corpus_and_reloads_when_it_changes(tmp_
     sdk.scan(net, [])
     libraries = sdk.state(net)["libraries"]
     assert [(r["corpus"], r["builtin"]) for r in libraries] == [("built in / decompals/ultralib fedcba987654", True)]
+
+
+def _load_in_process(db, table, barrier, counts):
+    sdk_builtin.tables = lambda: [(consoles.get("n64"), table, "n64")]
+    store = Store(db)
+    reads = store.one
+
+    def first_read(sql, *args):
+        row = reads(sql, *args)
+        if args == (sdk_builtin.KEY + "n64",) and not first_read.done:
+            first_read.done = True
+            barrier.wait(timeout=15)  # Both processes see the cold index before either can write.
+        return row
+
+    first_read.done = False
+    store.one = first_read
+    begins = []
+    store.conn.set_trace_callback(lambda sql: begins.append(sql) if sql == "BEGIN IMMEDIATE" else None)
+    sdk_builtin.ensure(SimpleNamespace(store=store))
+    counts.put(len(begins))
+    store.close_readers()
+    store.conn.close()
+
+
+def test_cold_processes_install_a_builtin_table_in_one_transaction(tmp_path):
+    table = tmp_path / "table.tsv"
+    table.write_text("# test 0123456789abcdef, test\n" f"{'a' * 40}\t64\tosOne\tbuild\n", encoding="utf-8")
+    db = tmp_path / "app.db"
+    store = Store(db)
+    context = multiprocessing.get_context("spawn")
+    barrier, counts = context.Barrier(2), context.Queue()
+    children = [context.Process(target=_load_in_process, args=(db, table, barrier, counts)) for _ in range(2)]
+    try:
+        for child in children:
+            child.start()
+        for child in children:
+            child.join(timeout=20)
+            assert child.exitcode == 0
+        assert sorted(counts.get(timeout=2) for _ in children) == [0, 1]
+        assert [tuple(row) for row in store.all("SELECT corpus,name FROM sdk_signatures")] == [
+            ("built in / test 0123456789ab", "osOne")]
+    finally:
+        for child in children:
+            if child.is_alive():
+                child.terminate()
+                child.join()
+        counts.close()
+        store.close_readers()
+        store.conn.close()
 
 
 def test_a_game_finds_libultra_with_no_sdk_of_the_users(tmp_path, monkeypatch):
