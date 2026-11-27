@@ -113,3 +113,53 @@ def test_a_global_referenced_often_nearby_does_not_take_the_pool(tmp_path):
     target += [(lo[1] + 12 + 8 * k, match.R_MIPS_LO16, other + offsets[k % 2]) for k in range(6)]
     result = match.link(obj, 'f', match.RomTarget('f', 0x80001000, bytes(size), target), SymbolTable(), read)
     assert sorted(next(iter(result.placements.values())).values()) == [POOL + offsets[0], POOL + offsets[1]]
+
+
+SWITCH = '''extern int g[];
+void call(int);
+void f(int x) {
+    switch (x) {
+    case 0: call(g[0]); break;
+    case 1: call(g[1]); break;
+    case 2: call(g[2]); break;
+    case 3: call(g[3]); break;
+    case 4: call(g[4]); break;
+    case 5: call(g[5]); break;
+    }
+}
+'''
+
+
+@pytest.mark.skipif(toolchains.installed('gcc-2.7.2-kmc') is None, reason='needs the pinned KMC compiler')
+def test_a_record_referenced_often_nearby_does_not_take_the_jump_table(tmp_path):
+    cfg = compiler_config(tmp_path, {'compiler': {'toolchain': 'gcc-2.7.2-kmc', 'flags': [
+        '-G0', '-mips3', '-mgp32', '-mfp32', '-O2']}})
+    out = compile_source(cfg, '', SWITCH)
+    assert out.ok, out.log
+    elf = ELFFile(BytesIO(out.obj))
+    start = next(s for s in elf.get_section_by_name('.symtab').iter_symbols() if s.name == 'f')
+    jumps = []  # the offsets in f of the two halves that load a table entry
+    for sec in elf.iter_sections():
+        if not isinstance(sec, RelocationSection) or sec['sh_info'] != start['st_shndx']:
+            continue
+        symtab = elf.get_section(sec['sh_link'])
+        jumps += [(r['r_offset'] - start['st_value'], r['r_info_type']) for r in sec.iter_relocations()
+                  if r['r_info_type'] in (match.R_MIPS_HI16, match.R_MIPS_LO16)
+                  and isinstance(symtab.get_symbol(r['r_info_sym'])['st_shndx'], int)
+                  and symtab.get_symbol(r['r_info_sym'])['st_shndx'] != start['st_shndx']]
+    assert len(jumps) == 2, jumps
+    vram, table, record = 0x80001000, 0x80002000, 0x80300000
+    size = start['st_size']
+    rom = struct.pack('>6I', *(vram + 0x40 + 8 * k for k in range(6)))
+
+    def jump_rom(addr, n):
+        return rom[addr - table:addr - table + n] if table <= addr and addr + n <= table + len(rom) else None
+
+    # The target loads its table from the same instructions, and also names a record array more often nearby.
+    target = [(off, kind, table) for off, kind in jumps]
+    target += [(jumps[-1][0] + 8 + 4 * k, jumps[k % 2][1], record) for k in range(8)]
+    linker = match._Linker(out.obj, 'f', match.RomTarget('f', vram, bytes(size), target), SymbolTable(), jump_rom,
+                           prefer_base=True)
+    result = linker.run()
+    assert list(linker.bases.values()) == [table], linker.bases
+    assert not any('has no address' in p for p in result.problems), result.problems
