@@ -21,6 +21,7 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
     from .split import _LOCAL_REF, _SYMBOL_LINE, AsmLine, DataSymbol
     explicit={int(m[2],16) for text in symbols for m in _SYMBOL_LINE.finditer(text)}
     starts={f.vram for f in functions}
+    original_entries={(f.rom, f.vram):f for f in functions}
     order='big' if console.big_endian else 'little'
     fmt='>I' if console.big_endian else '<I'
     # Generated C units can change at a false cut inside one mapped code segment.
@@ -379,9 +380,37 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
 
     recovered_data=[]
     predecessors={(fn.rom+fn.size,fn.vram+fn.size):fn for fn in result if fn.size>=8}
-    kept=[];dropped=markers=recovered_shared=recovered_fallthrough=recovered_continuations=0;ordered=sorted(result,key=lambda f:(owner(f),f.rom))
+    kept=[];dropped=markers=recovered_shared=recovered_fallthrough=recovered_continuations=shared_delay_entries=0;ordered=sorted(result,key=lambda f:(owner(f),f.rom))
     for i,fn in enumerate(ordered):
         previous=kept[-1] if kept else None;following=ordered[i+1] if i+1<len(ordered) else None
+        successor = following if fn.size == 4 else original_entries.get((fn.rom+4, fn.vram+4))
+        merged = fn.size > 4
+        if (previous is not None and successor is not None and owner(fn)[0] >= 0
+                and owner(previous) == owner(fn) == owner(successor)
+                and previous.rom+previous.size == fn.rom and previous.vram+previous.size == fn.vram
+                and previous.lines[-1].word == JR_RA and not fn.lines[0].word
+                and (not merged or successor.size == fn.size-4
+                     and [line.word for line in successor.lines] == [line.word for line in fn.lines[1:]])
+                and image[fn.rom:fn.rom+4] == bytes(4) and fn.vram in direct_calls
+                and any(segments[owner(fn)[0]].rom_start <= source < segments[owner(fn)[0]].rom_end
+                        and int.from_bytes(image[source:source+4], order) >> 26 == 3
+                        for source, _ in references.get(fn.vram, ()))
+                and successor.rom == fn.rom+4 and successor.vram == fn.vram+4
+                and is_frame(successor.lines[0].word)
+                and not any(d.rom is not None and d.rom < fn.rom+4 and fn.rom < d.rom+d.size for d in data)
+                and called_extent(image, successor.rom, successor.rom+successor.size, successor.vram,
+                                  big_endian=console.big_endian, cpu=console.cpu_variant,
+                                  asm_check=console.asm_reason, table_ranges=tables) == successor.size):
+            # A call may enter on the previous return's NOP delay slot and then
+            # fall into the next closed function. Keep both addresses: the
+            # word completes the return, while the entry remains a symbol.
+            kept[-1] = replace(previous, lines=previous.lines+[fn.lines[0]])
+            data.append(DataSymbol(fn.name, fn.vram, fn.rom, 0, 'func'))
+            if merged:
+                kept.append(replace(successor, lines=fn.lines[1:],
+                                    labels=successor.labels | {a for a in fn.labels if a >= successor.vram}))
+            shared_delay_entries += 1
+            continue
         if (previous is not None and owner(fn)[0] >= 0 and owner(previous) == owner(fn)
                 and previous.rom+previous.size == fn.rom and previous.vram+previous.size == fn.vram
                 and previous.lines[0].word & 0xffff0000 == 0x27bd0000
@@ -537,7 +566,9 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
         log(f'Recovered {recovered_fallthrough} straight initializers with preserved framed entries.')
     if recovered_continuations:
         log(f'Joined {recovered_continuations} unentered framed continuations.')
-    return kept if dropped or markers or recovered_data or recovered_shared or recovered_fallthrough or recovered_continuations else result if changed else functions
+    if shared_delay_entries:
+        log(f'Preserved {shared_delay_entries} called NOP entries shared with a return delay slot.')
+    return kept if dropped or markers or recovered_data or recovered_shared or recovered_fallthrough or recovered_continuations or shared_delay_entries else result if changed else functions
 
 
 

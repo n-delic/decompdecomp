@@ -939,6 +939,30 @@ def test_duplicate_return_delay_word_before_called_entry_is_padding(protect):
     assert image[16:20] == words[4].to_bytes(4, 'big')
 
 
+@pytest.mark.parametrize('case', ['called', 'merged', 'not_called', 'non_nop', 'incomplete', 'foreign'])
+def test_called_return_delay_nop_keeps_its_entry_symbol(case):
+    first = [0x27bdffe8, 0xafbf0014, 0x8fbf0014, 0x27bd0018, 0x03e00008]
+    next_body = [0x27bdffe8, 0xafbf0014, 0x24020001, 0x8fbf0014, 0x03e00008,
+                 0 if case == 'incomplete' else 0x27bd0018]
+    destination = BASE+20 if case != 'not_called' else BASE
+    call = 0x0c000000 | ((destination >> 2) & 0x3ffffff)
+    call_next = 0x0c000000 | (((BASE if case == 'merged' else BASE+24) >> 2) & 0x3ffffff)
+    words = first + [0x24020001 if case == 'non_nop' else 0] + next_body + [call, 0, call_next, 0, 0x03e00008, 0]
+    image, functions, segments = fixture(words, cuts=(0, 20, 24, 48, 72))
+    if case == 'foreign':
+        segments = [Segment('code', 0, 48, BASE), Segment('caller', 48, 72, BASE+48)]
+    data = []
+    result = repair(functions, data, image, consoles.get('n64'), segments)
+    if case in ('called', 'merged'):
+        head = next(fn for fn in result if fn.rom == 0)
+        assert head.size == 24 and head.lines[-1].word == 0
+        assert not any(fn.rom == 20 for fn in result)
+        assert any(fn.rom == 24 for fn in result)
+        assert any(s.rom == 20 and s.vram == BASE+20 and s.kind == 'func' for s in data)
+    else:
+        assert not any(s.rom == 20 and s.kind == 'func' for s in data)
+
+
 @pytest.mark.parametrize('protect', [None, 'symbol', 'frame_mismatch', 'transfer'])
 def test_unentered_framed_continuation_can_join(protect):
     words = [0x27bdffe0, 0xafbf001c, 0x08000410 if protect == 'transfer' else 0x24840001,
