@@ -18,7 +18,15 @@ def test_a_type_only_the_callee_declares_is_not_passed_by_value():
     assert callee_prototypes.prototype('void f(Vec v) {\n}\n', 'f', HEADER) is None
     assert callee_prototypes.prototype('static void f(s32 v) {\n}\n', 'f', HEADER) is None
     assert callee_prototypes.prototype('void f() {\n}\n', 'f', HEADER) is None
-    assert callee_prototypes.prototype('void f(void) {\n}\n', 'f', HEADER) == ('void f(void);', set())
+    assert callee_prototypes.prototype('void f(void) {\n    D = 1;\n}\n', 'f', HEADER) == ('void f(void);', set())
+
+
+def test_an_empty_function_does_not_say_it_takes_nothing():
+    # a debug print compiled out: its callers still load arguments, which a (void) prototype would drop from drafts
+    for body in ('{\n}', '{\n    /* compiled out */\n}', '{\n    return;\n}'):
+        assert callee_prototypes.prototype(f'void f(void) {body}\n', 'f', HEADER) is None
+    # parameters its source does name are still evidence
+    assert callee_prototypes.prototype('void f(s32 a) {\n}\n', 'f', HEADER) == ('void f(s32);', {'s32'})
 
 
 def test_only_matched_callees_the_header_does_not_declare():
