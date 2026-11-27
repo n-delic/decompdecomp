@@ -1297,7 +1297,8 @@ class ForkEngine:
                 if sym in aside:  # code the project says isn't the game's own (library code, middleware)
                     meta["asm_code"] = aside[sym]
                     meta["set_aside"] = True  # and progress takes it off, as no C code is (network.SET_ASIDE)
-                status = "matched" if fuzzy is not None and fuzzy >= 100 else "open" if u and u.source else "nosource"
+                writable = u and u.source and Path(u.source).suffix.lower() not in ('.s', '.asm')
+                status = "matched" if fuzzy is not None and fuzzy >= 100 else "open" if writable else "nosource"
                 proof = sdk_evidence.get(uname, {}).get(sym)
                 if (status != 'matched' and counts[sym] == 1 and proof and proof['bytes'] == size
                         and not meta.get('reopened') and not (old is not None and
@@ -2664,10 +2665,11 @@ class ForkEngine:
         rows = self.net.project_store(proj['id']).all("SELECT id, name, status, n_insns, best_score, best_source, meta FROM functions "
                                   "WHERE project_id=? AND unit=?", proj["id"], unit)
         held = self._held(proj, unit, text)
+        stubs = objdiff.stub_symbols(text, scores) if text else set()
         with self.net.project_store(proj['id']).tx() as db:
             for r in rows:
                 sym = self._meta(r).get("symbol")
-                if r["id"] == skip or sym not in scores or r["status"] == "nosource":
+                if r["id"] == skip or sym not in scores or sym in stubs or r["status"] in ("nosource", "asm"):
                     continue
                 pct = scores[sym]
                 if pct is not None and pct >= 100 and sym not in held:
