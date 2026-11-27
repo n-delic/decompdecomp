@@ -443,15 +443,16 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
                                 and previous.rom+previous.size == fn.rom
                                 and previous.vram+previous.size == fn.vram and is_frame(fn.lines[0].word))
         both_called = same_owner and previous.vram in direct_calls and fn.vram in direct_calls
+        possible_shuffle = same_owner and fn.vram in direct_calls and previous.size in (8, 12)
         external_entries = (explicit | pointers | {address for address, sources in references.items()
             if any(not previous.rom <= src < fn.rom+fn.size for src, _ in sources)}
-            if possible_fallthrough or both_called else set())
+            if possible_fallthrough or both_called or possible_shuffle else set())
         fallthrough = (possible_fallthrough
                        and shared_fallthrough_frame(previous,fn,image,console,order,segments,external_entries,data))
         if (same_owner
                 and (fn.vram in (explicit | pointers)
                      and shared_entry_leaf(previous,fn,image,console,order,segments,entered)
-                     or both_called
+                     or (both_called or possible_shuffle)
                      and shared_called_leaf(previous,fn,image,console,order,segments,external_entries,data)
                      or fallthrough)):
             kept[-1] = replace(previous,lines=previous.lines+fn.lines,
@@ -574,9 +575,16 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
 
 def shared_called_leaf(head, tail, image, console, order, segments, entered, data):
     """Keep both called entries when a short prefix falls through into a closed leaf."""
-    if (head.size != 4 or tail.size < 8 or head.rom+head.size != tail.rom
+    if (head.size not in (4, 8, 12) or tail.size < 8 or head.rom+head.size != tail.rom
             or head.vram+head.size != tail.vram or head.entry_aliases or tail.entry_aliases
-            or any(tail.vram < address < tail.vram+tail.size for address in entered)):
+            or any(head.vram < address < head.vram+head.size or tail.vram < address < tail.vram+tail.size
+                   for address in entered)):
+        return False
+    # Longer wrappers must only rearrange the argument registers before
+    # falling into the separately callable implementation.
+    if head.size > 4 and any(line.word >> 26 != 0 or line.word & 0x7ff != 0x25
+                             or not 4 <= (line.word >> 11) & 31 <= 7
+                             or (line.word >> 16) & 31 != 0 for line in head.lines):
         return False
     if sum(s.contains(head.vram,head.size+tail.size) for s in segments) != 1:
         return False
@@ -586,8 +594,14 @@ def shared_called_leaf(head, tail, image, console, order, segments, entered, dat
     if image[head.rom:end] != b''.join(line.word.to_bytes(4,order) for fn in (head,tail) for line in fn.lines):
         return False
     options = dict(big_endian=console.big_endian, cpu=console.cpu_variant, asm_check=console.asm_reason)
-    return (leaf_extent(image,head.rom,end,head.vram,**options) == head.size+tail.size
-            and leaf_extent(image,tail.rom,end,tail.vram,**options) == tail.size)
+    if leaf_extent(image,head.rom,end,head.vram,**options) != head.size+tail.size:
+        return False
+    # A valid independently entered assembly leaf can start with an FPU
+    # instruction that is not itself a compiler-like function prologue.
+    from ..arch.mips_gaps import extent
+    flow = extent(image,tail.rom,end,tail.vram,order,cpu=console.cpu_variant)
+    return (flow['direct_flow_closed'] and not flow['step_limit'] and flow['extent_bytes'] == tail.size
+            and flow['decoded_instructions']*4 == tail.size)
 
 
 def shared_fallthrough_frame(head, tail, image, console, order, segments, entered, data):
