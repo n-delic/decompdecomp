@@ -239,3 +239,39 @@ def test_a_rank_signal_demotes_a_child_from_the_combinations_but_never_blocks_an
     prove_chain.prove("s", generate, scores.get, None, steps=1, combine=1, rank_signal=signal, lookahead=0,
                       log=lines.append)
     assert any("dead_end demoted" in line for line in lines)
+
+
+def test_the_run_stops_at_the_cap_on_judged_variants_and_says_how_many_were_left():
+    def many(text):
+        return [("noop", f"{text}{i}") for i in range(1000)]
+    judged, lines = [], []
+    prove_chain.prove("xyz", many, lambda t: judged.append(t) or 3, None, children=80, log=lines.append)
+    assert len(judged) == 1 + prove_chain.DEFAULT_MAX_JUDGED  # the start, then the cap
+    assert any("cap of 400 judged variants: 600 of 1000 children left unjudged" in line for line in lines)
+    assert not any("(scored " in line for line in lines) and lines[-1] == "final score 3"
+    for cap, expected in ((0, 1000), (None, 1000), (2000, 1000), (30, 30)):
+        judged.clear()
+        prove_chain.prove("xyz", many, lambda t: judged.append(t) or 3, None, max_judged=cap, log=lines.append)
+        assert len(judged) == 1 + expected
+
+
+def test_the_cap_covers_all_steps_and_keeps_the_improvement_it_already_found():
+    lines = []
+    # each step: the improving fix first, then noop and breaks. Batch size 1, so one variant judged per step.
+    final, best, chain = prove_chain.prove("xyz", generate, score, None, children=1, max_judged=2, log=lines.append)
+    assert (final, best) == ("abz", 1) and len(chain) == 2
+    assert any(line.startswith("step 3") and "cap of 2" in line and "2 of 2 children" in line for line in lines)
+    lines.clear()
+    final, best, _ = prove_chain.prove("xyz", generate, score, None, max_judged=1, steps=1, log=lines.append)
+    assert best == 2 and any("3 of 4 children left unjudged" in line for line in lines)
+
+
+def test_merges_and_lookahead_children_count_against_the_cap():
+    def generate_pairs(text):
+        return [("a", text + " a"), ("b", text + " b"), ("c", text + " c")] if len(text) < 6 else []
+    for cap in (3, 4, 8):
+        judged, lines = [], []
+        prove_chain.prove("s", generate_pairs, lambda t, seen=judged: seen.append(t) or 10, None, steps=1, combine=4,
+                          max_judged=cap, log=lines.append)
+        assert len(judged) <= 1 + cap
+        assert any(f"cap of {cap} judged variants" in line and "lookahead" in line for line in lines), lines

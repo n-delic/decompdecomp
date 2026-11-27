@@ -50,6 +50,7 @@ RELEASE_WAIT_SECONDS = 600
 VERIFY_SECONDS = 90
 CHAIN_NEAR = 300  # `done` walks a near-miss of another profile this close through the repair library
 CHAIN_STEPS, CHAIN_CHILDREN, CHAIN_SECONDS = 4, 600, 600
+CHAIN_JUDGED = CHAIN_STEPS * CHAIN_CHILDREN  # this unattended run's cap: every child of each step, not the default few hundred
 
 
 # --- the sources a matcher may not send -------------------------------------------------------------------------------
@@ -518,7 +519,7 @@ def library_chain(root, info, name, profile, path):
     command = [str(venv / "bin" / "python"), str(Path(__file__).with_name("prove_chain.py")), str(path),
                "--slug", info["slug"], "--function", name, "--toolchain", profile["toolchain"],
                f"--flags={' '.join(profile['flags'])}", "--steps", str(CHAIN_STEPS),
-               "--children", str(CHAIN_CHILDREN), "--out", str(out)]
+               "--children", str(CHAIN_CHILDREN), "--max-judged", str(CHAIN_JUDGED), "--out", str(out)]
     if info.get("home"):
         command += ["--home", info["home"]]
     try:

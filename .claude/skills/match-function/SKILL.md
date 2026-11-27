@@ -35,7 +35,8 @@ Most matches in a 1,000-function session came from this order, not from clever s
 1. **Read the function's notes and the app's diff** (`get_function` sections `work` and notes; step 1). Earlier dead ends
    are evidence.
 2. **`prove_chain.py --slug S --function F --families all --children 40`**, then **`prove_chain.py ... --fp-flip`**. Cheap, and it
-   closes many near-misses by itself.
+   closes many near-misses by itself. Each run judges at most 400 variants and says when it stopped there and how
+   many it left; raise that with `--max-judged N` only on purpose (`--children` is just the batch size).
 3. **Float constants.** Float pool words in the target (`lui; lwc1` of data) are float literals in C: read the ROM value
    with `read_data` and write `1.5f`. Then try the app's `compiler_experiments` trial with
    `-G0 -mips3 -O2 -mgas -meb -mcpu=VR4300 -mhard-float -mfp32` when the target never uses odd float registers
@@ -736,7 +737,7 @@ says the fix and the library families it names; try those families with `prove_c
   4035 -> 3555); and a local update (`x += K;`) goes below a statement with a call that does not name it
   (`statement_slide` past a call). A hill-climb that swaps adjacent statements must check that they commute: one
   accepted a read before its set (60 points "better"). Run the library's children over **all** of them (`prove_chain`
-  stops at `--children 80` of ~2700): a chain of the best child, scored in full, found 5 more steps (-1900).
+  stops at 400 judged variants, of ~2700 children here, unless `--max-judged 0`): a chain of the best child, scored in full, found 5 more steps (-1900).
   Continued 2930 -> 70 (docs/learnings/function/effect-spawner-loop-index-forms-2930-to-70.md): m2c's cursors back to the
   index loop (`markers[i]`, `base + 0x438 + i * 16`, the call's arguments inline); a loop's computed table index named
   in a local so the symbol is not hoisted (`loop_table_index_local`, 1875 -> 810); a stray argument on a callee the
@@ -901,7 +902,7 @@ priorities and preferences, `-dS -dR` scheduling), and run the recent repair fam
    and land the fix in step 5. When results plateau, read the diff and choose a new hypothesis.
 
 `prove_chain.py --slug S --function F [SOURCE.c] --families a,b|all` applies the best-scoring child of those families
-(including the diff-gated ones the Deep Permuter calls with the judge's rows) step by step (bounded: one judge, capped children and steps; `--list` shows which families produce children) and prints
+(including the diff-gated ones the Deep Permuter calls with the judge's rows) step by step (bounded: one judge, capped steps, and at most 400 judged variants in the whole run, `--max-judged N` to raise it and 0 to remove it; `--children` is only the batch size; a run the cap stopped says how many were left; `--list` shows which families produce children) and prints
 each step's family and score: the cheap answer to "would the library have reached this from here". When edits are each
 worse alone, `--combine 10` merges a stalled step's 10 best children in pairs and triples (off by default: it found
 none on three three-edit functions, whose edits ranked far below the 10 best; narrow `--families` first).
