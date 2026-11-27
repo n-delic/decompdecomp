@@ -78,6 +78,7 @@ class Judge:
             vram, target_hex = info["vram"], info["target"]
             toolchain = toolchain or info["compiler"]["toolchain"]
             flags = flags if flags is not None else info["compiler"]["flags"]
+            flags = flags.split() if isinstance(flags, str) else flags
             self.header, self.arch, self.asm = info.get("header") or "", info.get("arch") or "mips", info.get("asm") or ""
             self.big_endian = bool(info.get("big_endian", True))
             self.tables = [(low, list(targets)) for low, targets in info.get("tables") or []]
@@ -85,6 +86,8 @@ class Judge:
             self.words = {str(k): int(v) for k, v in (info.get("words") or {}).items()}  # float constants' words
         # the flags added to the function's own (--flags, else $DD_EXTRA_FLAGS): the diagnostics (passes.py,
         # explain_regs.py, dumps.py, alloc_roles.py) send them too, so a probe's dumps are of the compile it scored
+        # a string is a flag line, not a list of its characters
+        flags, extra_flags = (f.split() if isinstance(f, str) else f for f in (flags, extra_flags))
         self.extra_flags = list(extra_flags if extra_flags is not None else os.environ.get("DD_EXTRA_FLAGS", "").split())
         self.compiler = {"toolchain": toolchain, "flags": list(flags if flags is not None else
                                                               ("-G0", "-mips3", "-mgp32", "-mfp32", "-O2"))

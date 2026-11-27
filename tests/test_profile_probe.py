@@ -182,6 +182,21 @@ def test_a_target_that_keeps_a_frame_pointer_is_named_unoptimised_in_the_brief()
     assert profile_probe.unoptimised_hint('mips', own, struct.pack('>3I', ADDIU_SP, JR, NOP)) == ''
 
 
+def test_a_prologue_that_saves_everything_before_copying_parameters_names_o1_in_the_brief():
+    store = lambda reg, offset: 0xAFA00000 | reg << 16 | offset  # sw reg, offset($sp)
+    move = lambda to, source: source << 21 | to << 11 | 0x21  # addu to, source, $zero
+    unscheduled = [ADDIU_SP, store(31, 24), store(17, 20), store(16, 16), move(16, 4), move(17, 5), JR, NOP]
+    scheduled = [ADDIU_SP, store(31, 24), store(17, 20), move(17, 5), store(16, 16), move(16, 4), JR, NOP]
+    own = {'toolchain': 'gcc-2.7.2-kmc', 'flags': ['-G0', '-mips3', '-O2']}
+    hint = lambda profile, words: profile_probe.unscheduled_hint('mips', profile, struct.pack(f'>{len(words)}I', *words))
+    assert '-G0 -mips3 -O1' in hint(own, unscheduled)
+    assert hint(own, scheduled) == ''
+    assert hint({**own, 'flags': ['-O1']}, unscheduled) == ''
+    assert hint({**own, 'flags': ['-O2', '-fno-schedule-insns2']}, unscheduled) == ''
+    assert hint({**own, 'toolchain': 'ido-7.1'}, unscheduled) == ''
+    assert hint(own, [ADDIU_SP, store(31, 24), store(16, 16), move(16, 4), JR, NOP]) == ''  # too few to say
+
+
 def test_another_console_without_hints_still_gets_the_flag_rules_and_no_more():
     ps2 = consoles.get('ps2')
     own = {'toolchain': 'ee-gcc-2.95.3', 'flags': ['-O2', '-G0']}
