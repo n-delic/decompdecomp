@@ -16,10 +16,11 @@ _PREFIXES = ("mips-linux-gnu-", "mips64-linux-gnu-", "mips64-elf-")
 # macOS's iconv writes a backslash after a multi-byte character as JIS X 0208's full-width one (0xA1C0), so a "\\n" in
 # an EUC-JP source (the strings of a racing game's Japanese text) turns into three bytes where glibc's iconv, the one a
 # project's ROM was matched with, writes 0x5C 0x6E. The shim converts what a build asks for in EUC-JP with Python's
-# codec, which passes ASCII through, and leaves every other conversion to the system's iconv.
+# codec, which passes ASCII through. Its Shift-JIS converter also rejects ASCII backslash and tilde, so use
+# Python's Shift-JIS codec for that encoding too; leave every other conversion to the system's iconv.
 _ICONV_SHIM = '''#!{python}
-import os, sys
-args, files, frm, to, i = sys.argv[1:], [], "UTF-8", None, 0
+import os, subprocess, sys
+args, files, frm, to, output, i = sys.argv[1:], [], "UTF-8", None, None, 0
 while i < len(args):
     a = args[i]
     if a in ("-f", "-t"):
@@ -41,17 +42,29 @@ while i < len(args):
             frm = value
         else:
             to = value
+    elif a in ("-o", "--output"):
+        output = args[i + 1]; i += 1
+    elif a.startswith("--output="):
+        output = a.split("=", 1)[1]
     elif a in ("-c", "-s"):
         pass
     else:
         files.append(a)
     i += 1
-if (to or "").upper().replace("-", "").replace("_", "") in ("EUCJP", "UJIS") and (frm or "").upper().replace("-", "") == "UTF8":
+encoding = (to or "").upper().replace("-", "").replace("_", "")
+codecs = {{"EUCJP": "euc_jp", "UJIS": "euc_jp", "SHIFTJIS": "shift_jis", "SJIS": "shift_jis"}}
+if encoding in codecs and (frm or "").upper().replace("-", "") == "UTF8":
     data = b"".join(open(f, "rb").read() for f in files) if files else sys.stdin.buffer.read()
     try:
-        sys.stdout.buffer.write(data.decode("utf-8").encode("euc_jp"))
+        result = data.decode("utf-8").encode(codecs[encoding])
+        if output:
+            with open(output, "wb") as f:
+                f.write(result)
+        else:
+            sys.stdout.buffer.write(result)
     except (UnicodeError, LookupError):
-        os.execv("{iconv}", ["iconv", *sys.argv[1:]])
+        # stdin was already read; pass it on rather than silently converting an empty stream.
+        sys.exit(subprocess.run(["{iconv}", *args], input=None if files else data).returncode)
     sys.exit(0)
 os.execv("{iconv}", ["iconv", *sys.argv[1:]])
 '''

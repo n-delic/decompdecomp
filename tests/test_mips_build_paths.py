@@ -514,6 +514,12 @@ def test_a_mac_iconv_shim_writes_a_backslash_after_japanese_text_as_one_byte(tmp
     long_form = subprocess.run([str(folder / "iconv"), "--from-code=UTF-8", "--to-code=EUC-JP", str(source)],
                                capture_output=True)  # (the spelling a decomp's Makefile uses)
     assert long_form.stdout == b"\xa5\xc8\\n\n"
+    shifted = tmp_path / "shifted.c"
+    source_text = 'if (x != (~y & 1)) { char *s = "ト\\n"; }\n'
+    result = subprocess.run([str(folder / "iconv"), "--from-code=UTF-8", "--to-code=Shift-JIS", "-o", str(shifted)],
+                            input=source_text.encode(), capture_output=True)
+    assert result.returncode == 0 and result.stdout == b""
+    assert shifted.read_bytes() == source_text.encode("shift_jis")
 
 
 def test_n64_gets_wibo_and_an_o32_assembler(tmp_path, monkeypatch):
