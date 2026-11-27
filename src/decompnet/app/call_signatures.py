@@ -172,8 +172,9 @@ def _jumps(mnemonic):
 
 
 def call_sites(asm, aliases=None):
-    """[{'callee', 'arg_regs' (highest $aN set before the jal, +1), 'result' (True read, False overwritten unread,
-    None unknown)}] for each `jal` of a MIPS target. `aliases` maps the assembly's labels to function names."""
+    """[{'callee', 'arg_regs' (highest $aN set before the jal, +1), 'set_args' (the positions of the $aN set there),
+    'result' (True read, False overwritten unread, None unknown)}] for each `jal` of a MIPS target. `aliases` maps the
+    assembly's labels to function names."""
     aliases = aliases or {}
     insns = _insns(asm)
     out = []
@@ -211,7 +212,8 @@ def call_sites(asm, aliases=None):
                 break  # `return f();` or a void tail: the caller's own return type decides, not this site
             if m.startswith('b') or m == 'j':
                 break
-        out.append({'callee': aliases.get(ops[0], ops[0]), 'arg_regs': arg_regs, 'result': result})
+        out.append({'callee': aliases.get(ops[0], ops[0]), 'arg_regs': arg_regs, 'result': result,
+                    'set_args': sorted(ARG_REGS.index(r) for r in written if r in ARG_REGS)})
     return out
 
 
@@ -267,6 +269,15 @@ def check(name, source, header='', callee_sources=None, caller_sources=None, asm
     def add(kind, callee, line, text):
         found.append({'kind': kind, 'callee': callee, 'line': line, 'text': text})
     c_calls = calls(own, known)
+    sites = call_sites(asm, aliases) if mips and asm else []
+    loaded = {}  # id(call) -> the argument positions the target sets for it
+    for callee in {c['callee'] for c in c_calls}:
+        mine = [c for c in c_calls if c['callee'] == callee]
+        theirs = [s for s in sites if s['callee'] == callee]
+        for index, call in enumerate(mine):
+            # without a one-to-one pairing, any of the callee's sites setting the register is reason to look
+            paired = [theirs[index]] if len(mine) == len(theirs) else theirs
+            loaded[id(call)] = {position for site in paired for position in site['set_args']}
     for call in c_calls:
         callee, n = call['callee'], len(call['args'])
         where = f"line {call['line']}: {callee}({_arg_list(call['args'])})"
@@ -274,10 +285,21 @@ def check(name, source, header='', callee_sources=None, caller_sources=None, asm
         if definition and definition['params'] is not None and not definition['varargs'] and n != definition['params']:
             if n > definition['params']:
                 extra = call['args'][definition['params']:]
-                add('extra-argument', callee, call['line'],
-                    f"{where} passes {n} argument{'s' if n != 1 else ''}; {callee}'s matched C takes "
-                    f"{definition['params']}: drop {', '.join(f'`{a}`' for a in extra)} from the call and the "
-                    f"prototype (an m2c guess from a register that only still held a value).")
+                kept = [ARG_REGS[p] for p in range(definition['params'], min(n, len(ARG_REGS)))
+                        if p in loaded[id(call)]]
+                if kept:
+                    # The matched callee ignores the argument, but this caller's code loads it: dropping it loses
+                    # those instructions, so the exact source passes it.
+                    add('extra-argument-loaded', callee, call['line'],
+                        f"{where} passes {n} argument{'s' if n != 1 else ''}; {callee}'s matched C takes "
+                        f"{definition['params']}, but the target sets {', '.join(kept)} just before the call: keep the "
+                        f"argument unless that register is only a temporary there (declare {callee} with the extra "
+                        f"parameter, or with `()`, for this caller).")
+                else:
+                    add('extra-argument', callee, call['line'],
+                        f"{where} passes {n} argument{'s' if n != 1 else ''}; {callee}'s matched C takes "
+                        f"{definition['params']}: drop {', '.join(f'`{a}`' for a in extra)} from the call and the "
+                        f"prototype (an m2c guess from a register that only still held a value).")
             else:
                 add('missing-argument', callee, call['line'],
                     f"{where} passes {n}; {callee}'s matched C takes {definition['params']}: add the missing "
@@ -300,7 +322,6 @@ def check(name, source, header='', callee_sources=None, caller_sources=None, asm
                 f"returns `{definition['ret']}`: a width or signedness the callers' code depends on (an extend or "
                 f"mask after the call). Declare `{definition['ret']}`.")
     if mips and asm:
-        sites = call_sites(asm, aliases)
         for callee in {c['callee'] for c in c_calls}:
             mine = [c for c in c_calls if c['callee'] == callee]
             theirs = [s for s in sites if s['callee'] == callee]

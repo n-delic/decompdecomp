@@ -41,7 +41,8 @@ def kinds(findings):
 
 
 def test_a_stray_argument_the_callees_matched_c_never_takes_is_named_with_the_edit():
-    found = cs.check("f", SOURCE, "", CALLEES, {"c": "void c(void) { f(1, 2); }"}, ASM)
+    unset = ASM.replace("lui $a1, 0x8000", "nop")
+    found = cs.check("f", SOURCE, "", CALLEES, {"c": "void c(void) { f(1, 2); }"}, unset)
     assert ("extra-argument", "helper") in kinds(found)
     stray = next(f for f in found if f["kind"] == "extra-argument")
     assert "drop `sCursor` from the call and the prototype" in stray["text"] and stray["line"] == 2
@@ -49,6 +50,13 @@ def test_a_stray_argument_the_callees_matched_c_never_takes_is_named_with_the_ed
     assert ("void-result-used", "tick") in kinds(found)
     assert ("result-unused", "get") in kinds(found)  # the target stores $v0 after `jal get`
     assert ("own-prototype", "f") in kinds(found)  # its matched caller passes two
+
+
+def test_an_argument_the_target_loads_for_the_call_is_not_advised_away():
+    found = cs.check("f", SOURCE, "", CALLEES, {}, ASM)  # `lui $a1` sits in helper's delay slot
+    assert ("extra-argument", "helper") not in kinds(found)
+    kept = next(f for f in found if f["kind"] == "extra-argument-loaded")
+    assert "the target sets $a1 just before the call: keep the argument" in kept["text"] and "drop" not in kept["text"]
 
 
 def test_the_target_call_site_reads_argument_registers_and_the_result():
