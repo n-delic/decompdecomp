@@ -53,6 +53,42 @@ def _run(args: list[str], cwd: Path, timeout: float = 600) -> str:
     return res.stdout
 
 
+def _run_compatible(args: list[str], cwd: Path, timeout: float = 600) -> str:
+    """Retry objdiff's section-address error using temporary views of relocatable MIPS objects."""
+    try:
+        return _run(args, cwd=cwd, timeout=timeout)
+    except ObjdiffError as error:
+        if "Symbol address out of section bounds" not in str(error):
+            raise
+        original_error = error
+    from .objdiff_mips import view
+
+    with tempfile.TemporaryDirectory(prefix="decompwtf-objdiff-mips-") as tmp:
+        directory = Path(tmp)
+        cache: dict[Path, Path] = {}
+        retry = list(args)
+        if "-p" in retry:
+            index = retry.index("-p") + 1
+            project = (cwd / retry[index]).resolve()
+            config = json.loads((project / "objdiff.json").read_text(encoding="utf-8"))
+            for unit in config.get("units", []):
+                for key in ("target_path", "base_path"):
+                    if unit.get(key):
+                        path = (project / unit[key]).resolve()
+                        unit[key] = str(view(path, directory, cache))
+            (directory / "objdiff.json").write_text(json.dumps(config), encoding="utf-8")
+            retry[index] = str(directory)
+        for flag in ("-1", "-2"):
+            if flag in retry:
+                index = retry.index(flag) + 1
+                path = Path(retry[index])
+                path = (cwd / path).resolve()
+                retry[index] = str(view(path, directory, cache))
+        if not any(source != result for source, result in cache.items()):
+            raise original_error
+        return _run(retry, cwd=cwd, timeout=timeout)
+
+
 def _exclude_stubs(project: Path, cfg: dict, rep: dict) -> dict:
     """Assembly placeholders are undecompiled even when their bytes compare identically."""
     from . import csource
@@ -107,7 +143,7 @@ def report(project: Path, out: Path) -> dict:
     missing = [u for u in cfg.get("units", []) if u.get("base_path") and
                (not (project / u["base_path"]).is_file() or stale(project, u, guards))]
     if not missing:
-        _run(["report", "generate", "-p", str(project), "-o", str(out)], cwd=project, timeout=1800)
+        _run_compatible(["report", "generate", "-p", str(project), "-o", str(out)], cwd=project, timeout=1800)
         return _exclude_stubs(project, cfg, subtract_conflicts(project, json.loads(out.read_text(encoding="utf-8"))))
     for unit in cfg.get("units", []):
         for key in ("target_path", "base_path"):
@@ -117,7 +153,7 @@ def report(project: Path, out: Path) -> dict:
         del unit["base_path"]
     with tempfile.TemporaryDirectory(prefix="decompwtf-report-") as tmp:
         (Path(tmp) / "objdiff.json").write_text(json.dumps(cfg), encoding="utf-8")
-        _run(["report", "generate", "-p", tmp, "-o", str(out.resolve())], cwd=project, timeout=1800)
+        _run_compatible(["report", "generate", "-p", tmp, "-o", str(out.resolve())], cwd=project, timeout=1800)
     return _exclude_stubs(project, cfg, subtract_conflicts(project, json.loads(out.read_text(encoding="utf-8"))))
 
 
@@ -392,7 +428,7 @@ def diff(target: Path | None, base: Path | None, symbol: str | None, cwd: Path, 
             args += ["-1", str(target)]
         if base is not None and base.exists():
             args += ["-2", str(base)]
-    data = json.loads(_run([*args, *([symbol] if symbol else [])], cwd=cwd, timeout=120))
+    data = json.loads(_run_compatible([*args, *([symbol] if symbol else [])], cwd=cwd, timeout=120))
     left, right = _sym(data.get("left"), symbol), _sym(data.get("right"), symbol)
     if left is None and symbol is not None:
         raise ObjdiffError(f"{symbol} isn't in the target object")
