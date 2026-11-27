@@ -196,3 +196,29 @@ def test_autopilot_prepares_game_units_but_not_verified_sdk_units(tmp_path, monk
     units = json.loads((root/'objdiff.json').read_text())['units']
     assert 'source_path' not in (units[0].get('metadata') or {})
     assert units[1]['metadata']['source_path'].endswith('game.c')
+
+
+def test_reference_proof_cache_uses_object_content(tmp_path, monkeypatch):
+    import os
+
+    from decompnet.forks import sdk_evidence
+
+    obj = _object(tmp_path)
+    console = consoles.get('n64')
+    original = sdk_evidence.ELFFile
+    parsed = []
+    def counted(stream):
+        parsed.append(True)
+        return original(stream)
+    monkeypatch.setattr(sdk_evidence, 'ELFFile', counted)
+    first = identities(console, tmp_path, obj)
+    assert first['sample']['name'] == '__osGetSR'
+    assert identities(console, tmp_path, obj) == first and len(parsed) == 1
+    first['sample']['name'] = 'changed by caller'
+    assert identities(console, tmp_path, obj)['sample']['name'] == '__osGetSR' and len(parsed) == 1
+    # A same-size rewrite with its old mtime must not reuse the original identity.
+    stat = obj.stat()
+    _object(tmp_path, changed=True)
+    os.utime(obj, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    assert obj.stat().st_size == stat.st_size
+    assert identities(console, tmp_path, obj) == {} and len(parsed) == 2
