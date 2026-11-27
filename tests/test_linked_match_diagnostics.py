@@ -121,10 +121,12 @@ def test_proven_indexed_dispatch_checks_past_first_word():
     linker._pointee = lambda _,word:(word,None)
     linker.symbols = SimpleNamespace(label=lambda _:'jtbl')
     linker.problems, linker.data_mismatches = [], []
+    linker.required_data_reads, linker.missing_data_reads = [], []
     linker.verify_data(1,0,addr,instructions_exact=True)
     assert linker.problems and len(linker.data_mismatches[0].target) == 12
     # A table of pointers with no matching dispatch stays on the scalar comparison.
     linker.target.code = b'\0'*len(code)
     linker.problems, linker.data_mismatches = [], []
+    linker.required_data_reads, linker.missing_data_reads = [], []
     linker.verify_data(1,0,addr,instructions_exact=True)
     assert not linker.problems

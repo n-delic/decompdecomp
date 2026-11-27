@@ -503,12 +503,7 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
             donor_unit = is_unit(hdr, proj)
             single = _single_definition(compiled.obj, row["name"])
             reader = net.reader(proj, row)
-            reads = []
-            def record_read(addr, size, reader=reader, reads=reads):
-                data = reader(addr, size)
-                reads.append((addr, size, data))
-                return data
-            linked = match.link(compiled.obj, row["name"], net._rom_target(row), net.symbols(proj["id"]), record_read)
+            linked = match.link(compiled.obj, row["name"], net._rom_target(row), net.symbols(proj["id"]), reader)
             if not linked.exact:
                 as_fallback.append((f["name"], "no longer matches"))
                 f["kind"] = "asm"
@@ -517,7 +512,7 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
             if problem or not single or donor_unit:
                 # Recompile and judge this entry every build; the builder can retain
                 # scattered original pools and other function bodies without placing them in this entry's slot.
-                if not _entry_reads_available(reads, image, entry_segments, entry_mappings):
+                if not _entry_reads_available(linked.required_data_reads, image, entry_segments, entry_mappings):
                     as_fallback.append((f['name'], 'its constant data cannot be verified in the exported image'))
                     f['kind'] = 'asm'
                     continue

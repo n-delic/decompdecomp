@@ -53,20 +53,18 @@ def write(root, manifest, fn, path):
             for s in manifest['segments'] if s['kind']=='code']+manifest.get('data_mappings',[])
     for s in ranges:
         if not 0<=s['rom_start']<s['rom_end']<=len(image):raise ValueError('A reviewed data mapping exceeds the verified image.')
-    missed=[]
     def read(addr,n):
         hits=[s for s in ranges if s['vram']<=addr and addr+n<=s['vram']+s['rom_end']-s['rom_start']]
         offsets={s['rom_start']+addr-s['vram'] for s in hits}
         if len(offsets)>1:raise ValueError(f'Overlapping image mappings disagree about constant 0x{addr:08X} ({n} bytes).')
         if offsets:
             at=offsets.pop();return image[at:at+n]
-        missed.append((addr,n))
         return None
     name=fn.get('symbol') or fn['name']  # the C's name for it (export.py: splat's may be the automatic one)
     obj=path.read_bytes();linked=match.link(obj,name,target,table,read)
     if not linked.exact or linked.linked_code is None:
         raise ValueError('Entry extraction requires freshly verified exact code and data: '+'; '.join(linked.problems))
-    if missed:
-        details=', '.join(f'0x{addr:08X}–0x{addr+n:08X} ({n} bytes)' for addr,n in sorted(set(missed))[:16])
+    if linked.missing_data_reads:
+        details=', '.join(f'0x{addr:08X}–0x{addr+n:08X} ({n} bytes)' for addr,n in sorted(set(linked.missing_data_reads))[:16])
         raise ValueError(f'{name}: unverified constant reads: {details}. End addresses are exclusive. Supply reviewed data_mappings in build.json; do not guess a ROM address delta.')
     path.write_bytes(object_for(obj,name,linked.linked_code))

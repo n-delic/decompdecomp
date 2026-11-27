@@ -228,6 +228,8 @@ class _Linker:
         self.problems: list[str] = []
         self.library_names: dict[str, int] = {}  # compiler-emitted library call -> the address the game's call has
         self.data_mismatches: list[DataMismatch] = []
+        self.missing_data_reads: list[tuple[int, int]] = []
+        self.required_data_reads: list[tuple[int, int, bytes | None]] = []
         self.local_map: dict[tuple[int, int], int] = {}  # (section index, offset) -> ROM address
         self.target_at = {off: (rtype, addr) for off, rtype, addr in target.relocs}
         self.data: dict[tuple[int, int], int] = {}  # every datum of its own the candidate uses -> ROM address
@@ -487,7 +489,11 @@ class _Linker:
                 if rtype != R_MIPS_32 or not off <= at <= off + length - 4:
                     continue
                 _, own = self._pointee(s, int.from_bytes(data[at:at + 4], self.target.order))
-                if own is None or own in self.data or (rom := self.read(addr + at - off, 4)) is None:
+                if own is None or own in self.data:
+                    continue
+                pointer = addr + at - off
+                rom = self.required_read(pointer, 4)
+                if rom is None:
                     continue
                 self.local_map[own] = self.data[own] = int.from_bytes(rom, self.target.order)
                 self.widths[own] = None
@@ -509,11 +515,18 @@ class _Linker:
             instruction = int.from_bytes(code[at:at+4],order)
             if instruction & 0xfc1fffff != 8 or instruction >> 21 & 31 == 31:
                 continue
-            witness = jump_table(code,0,len(code),self.target.vram,at,order,reader=self.read)
+            witness = jump_table(code,0,len(code),self.target.vram,at,order,reader=self.required_read)
             if (witness and witness['state']=='validated' and witness['table_address']==address
                     and witness['entry_count']==len(offsets)):
                 return witness['entry_count']*4
         return None
+
+    def required_read(self, addr: int, size: int) -> bytes | None:
+        data = self.read(addr, size)
+        self.required_data_reads.append((addr, size, data))
+        if data is None:
+            self.missing_data_reads.append((addr, size))
+        return data
 
     def verify_data(self, shndx: int, off: int, addr: int, *, instructions_exact: bool = False) -> None:
         """Data the candidate defines must be identical to the ROM data it stands for."""
@@ -544,9 +557,11 @@ class _Linker:
             # stream. Prove the dispatch extent before checking the rest.
             if extent := self.switch_extent(addr, code_pointers):
                 n = extent
-        rom = self.read(addr, n)
+        rom = self.required_read(addr, n)
         if rom is None:
-            return  # the ROM has no bytes there (e.g. .bss in the ROM): nothing to compare
+            # Normal judging allows a datum in BSS. A standalone export with an
+            # incomplete image map must instead prove that omission is safe.
+            return
         if bytes(mine[:n]) != rom:
             # The switch diagnostic needs the actual relocated words, not an
             # interpretation of the abbreviated comparison message.
@@ -604,7 +619,8 @@ class _Linker:
         for (dshndx, off), addr in self.local_map.items():
             placements.setdefault(self.elf.get_section(dshndx).name, {})[off] = addr
         return LinkResult(FunctionObj(self.name, "mips", self.target.big_endian, code, relocs), exact, self.problems,
-                          placements, instructions_exact, linked, self.data_mismatches)
+                          placements, instructions_exact, linked, self.data_mismatches, self.missing_data_reads,
+                          self.required_data_reads)
 
 
 def link(obj: bytes, name: str, target: RomTarget, symbols: SymbolTable, read: ReadFn) -> LinkResult:
