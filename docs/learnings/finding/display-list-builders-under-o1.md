@@ -27,6 +27,14 @@ The source change, and the measured result before and after (scores, the judge u
   plain pointer array had its address hoisted (550 -> 65).
 - A flag cleared before a guarded block that sets it last, written as the guard's `else` arm (330 -> 0; library family
   `flag_default_else`).
+- Neighbouring globals the target addresses each with its own `lui` (a fade value and its direction, a screen's width
+  and height) declared as separate scalars, not one struct: a struct gives them a shared base register (3015 -> 0).
+- Floats the target copies to the stack with `lwc1` / `swc1` are separate `f32` arguments; a struct of floats passed by
+  value is copied with `lw` / `sw` (10410 -> 0 with the callee prototypes).
+- A counter field updated as `(f & 0xF8) | ((f & 7) + 1)` with the count computed first: `n = f & 7;` then
+  `(f & 0xF8) | (n + 1)` (35 -> 0).
+- `v % 16` of a `u16` for `v & 0xF` and a loop's trailing statement written in both arms are library families
+  (`unsigned_mask_modulo`, `tail_statement_into_arms`).
 
 Failed experiments that would otherwise be repeated: `gbi_macro_param_cursor` yields nothing on drafts that store the
 cursor after every command (library family `gbi_post_increment` covers those; alone it is not exact). For the far-edge
