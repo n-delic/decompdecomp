@@ -684,7 +684,7 @@ def check(name: str) -> bool:
         print(f"{name}: {error}")
         return False
     try:
-        verify_target(image, fn, target)
+        verify_target(image, B, fn, target)
     except ValueError as error:
         print(f"{name}: {error}")
         return False

@@ -57,13 +57,18 @@ def verified_image_reader(root, manifest):
     return image, read
 
 
-def verify_target(image, fn, target):
+def verify_target(image, manifest, fn, target):
     """Only the verified image, never a changed assembly file, supplies reference bytes."""
     offset=fn.get('rom')
+    address=fn.get('vram')
     code=target.code
     if (not code or not isinstance(offset, int) or offset<0 or offset+len(code)>len(image)
             or image[offset:offset+len(code)]!=code):
         raise ValueError('The target assembly does not match the verified image at its recorded offset.')
+    if (not isinstance(address, int) or target.vram!=address or not any(
+            s['kind']=='code' and s['start']<=offset and offset+len(code)<=(s['end'] or len(image))
+            and s['vram']+offset-s['start']==address for s in manifest['segments'])):
+        raise ValueError('The target address does not match the verified image mapping.')
 
 
 def write(root, manifest, fn, path):
@@ -75,7 +80,7 @@ def write(root, manifest, fn, path):
                       [Symbol(f['name'],f['vram'],0,'func') for f in manifest['functions']])
     target=match.target_from_split(split.parse_function(root/fn['asm'],fn['seg'],manifest['big_endian']),table.resolve,
                                    manifest['big_endian'],manifest.get('gp') or 0)
-    verify_target(image,fn,target)
+    verify_target(image,manifest,fn,target)
     name=fn.get('symbol') or fn['name']  # the C's name for it (export.py: splat's may be the automatic one)
     from decompnet.consoles import get
 

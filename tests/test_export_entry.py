@@ -32,10 +32,10 @@ def test_materialized_entry_has_only_compiler_code_and_retains_abi_flags():
 def test_entry_write_requires_fresh_judge_and_verified_image(tmp_path,monkeypatch):
     image=b'original data';(tmp_path/'rom').write_bytes(image)
     manifest={'image':'rom','sha1':hashlib.sha1(image).hexdigest(),'symbols':{},'functions':[],
-              'segments':[],'big_endian':True}
-    fn={'name':'entry','asm':'target.s','seg':'game','rom':0};path=tmp_path/'entry.o';path.write_bytes(object_file())
+              'segments':[{'kind':'code','start':0,'end':len(image),'vram':0x80001000}],'big_endian':True}
+    fn={'name':'entry','asm':'target.s','seg':'game','rom':0,'vram':0x80001000};path=tmp_path/'entry.o';path.write_bytes(object_file())
     monkeypatch.setattr(export_entry.split,'parse_function',lambda *args:None)
-    monkeypatch.setattr(export_entry.match,'target_from_split',lambda *args:SimpleNamespace(code=image))
+    monkeypatch.setattr(export_entry.match,'target_from_split',lambda *args:SimpleNamespace(code=image,vram=0x80001000))
     monkeypatch.setattr(export_entry.match,'link',lambda *args:LinkResult(None,False,['wrong bytes'],{},linked_code=b'compiler'))
     with pytest.raises(ValueError,match='freshly verified'):export_entry.write(tmp_path,manifest,fn,path)
     assert path.read_bytes()==object_file()
@@ -44,8 +44,17 @@ def test_entry_write_requires_fresh_judge_and_verified_image(tmp_path,monkeypatc
     export_entry.write(tmp_path,manifest,fn,path)
     assert ELFFile(BytesIO(path.read_bytes())).get_section_by_name('.text').data()==code
     path.write_bytes(object_file())
-    monkeypatch.setattr(export_entry.match,'target_from_split',lambda *args:SimpleNamespace(code=b'other bytes'))
+    monkeypatch.setattr(export_entry.match,'target_from_split',lambda *args:SimpleNamespace(code=b'other bytes',vram=0x80001000))
     with pytest.raises(ValueError,match='target assembly does not match'):
+        export_entry.write(tmp_path,manifest,fn,path)
+    assert path.read_bytes()==object_file()
+    monkeypatch.setattr(export_entry.match,'target_from_split',lambda *args:SimpleNamespace(code=image,vram=0x80001004))
+    with pytest.raises(ValueError,match='target address'):
+        export_entry.write(tmp_path,manifest,fn,path)
+    assert path.read_bytes()==object_file()
+    monkeypatch.setattr(export_entry.match,'target_from_split',lambda *args:SimpleNamespace(code=image,vram=0x80001000))
+    manifest['segments'][0]['vram']=0x80002000
+    with pytest.raises(ValueError,match='target address'):
         export_entry.write(tmp_path,manifest,fn,path)
     assert path.read_bytes()==object_file()
     (tmp_path/'rom').write_bytes(b'changed')
@@ -55,22 +64,22 @@ def test_entry_write_requires_fresh_judge_and_verified_image(tmp_path,monkeypatc
 def test_entry_extraction_refuses_unmapped_or_ambiguous_pool_reads(tmp_path,monkeypatch):
     image=bytes(64);(tmp_path/'rom').write_bytes(image)
     manifest={'image':'rom','sha1':hashlib.sha1(image).hexdigest(),'symbols':{},'functions':[],
-              'segments':[],'big_endian':True}
-    fn={'name':'entry','asm':'target.s','seg':'game','rom':0};path=tmp_path/'entry.o';path.write_bytes(object_file())
+              'segments':[{'kind':'code','start':0,'end':len(image),'vram':0x80001000}],'big_endian':True}
+    fn={'name':'entry','asm':'target.s','seg':'game','rom':0,'vram':0x80001000};path=tmp_path/'entry.o';path.write_bytes(object_file())
     monkeypatch.setattr(export_entry.split,'parse_function',lambda *args:None)
-    monkeypatch.setattr(export_entry.match,'target_from_split',lambda *args:SimpleNamespace(code=image))
+    monkeypatch.setattr(export_entry.match,'target_from_split',lambda *args:SimpleNamespace(code=image,vram=0x80001000))
     def linked(obj,name,target,symbols,read):
-        missing=[] if read(0x80001000,8) is not None else [(0x80001000,8)]
-        return LinkResult(None,True,[],{'.rodata':{0:0x80001000}},linked_code=bytes.fromhex('03e0000800000000'),
+        missing=[] if read(0x80002000,8) is not None else [(0x80002000,8)]
+        return LinkResult(None,True,[],{'.rodata':{0:0x80002000}},linked_code=bytes.fromhex('03e0000800000000'),
                           missing_data_reads=missing)
     monkeypatch.setattr(export_entry.match,'link',linked)
-    with pytest.raises(ValueError,match='0x80001000.*0x80001008.*8 bytes'):export_entry.write(tmp_path,manifest,fn,path)
+    with pytest.raises(ValueError,match='0x80002000.*0x80002008.*8 bytes'):export_entry.write(tmp_path,manifest,fn,path)
     # A one-byte mapping is insufficient to verify an eight-byte constant.
-    manifest['data_mappings']=[dict(rom_start=0,rom_end=1,vram=0x80001000)]
-    with pytest.raises(ValueError,match='0x80001000.*0x80001008.*8 bytes'):export_entry.write(tmp_path,manifest,fn,path)
-    manifest['data_mappings']=[dict(rom_start=0,rom_end=8,vram=0x80001000)]
+    manifest['data_mappings']=[dict(rom_start=0,rom_end=1,vram=0x80002000)]
+    with pytest.raises(ValueError,match='0x80002000.*0x80002008.*8 bytes'):export_entry.write(tmp_path,manifest,fn,path)
+    manifest['data_mappings']=[dict(rom_start=0,rom_end=8,vram=0x80002000)]
     export_entry.write(tmp_path,manifest,fn,path)
-    path.write_bytes(object_file());manifest['data_mappings'].append(dict(rom_start=8,rom_end=16,vram=0x80001000))
+    path.write_bytes(object_file());manifest['data_mappings'].append(dict(rom_start=8,rom_end=16,vram=0x80002000))
     with pytest.raises(ValueError,match='disagree'):export_entry.write(tmp_path,manifest,fn,path)
 
 

@@ -64,7 +64,7 @@ def test_check_accepts_the_c_symbol_and_old_splitter_name(tmp_path, monkeypatch)
     fn = {'name':'old_entry','symbol':'renamed_entry','vram':0x80001000,
           'c':'src/entry.c','asm':'target.s','seg':'game','rom':0}
     module = builder(tmp_path, [fn], monkeypatch)
-    module.B.update(symbols={}, labels={}, big_endian=True, segments=[], image='baserom',
+    module.B.update(symbols={}, labels={}, big_endian=True, segments=[{'kind':'code','start':0,'end':8,'vram':0x80001000}], image='baserom',
                     sha1=hashlib.sha1(b'original').hexdigest())
     (tmp_path/'baserom').write_bytes(b'original')
     (tmp_path/'src').mkdir()
@@ -73,7 +73,7 @@ def test_check_accepts_the_c_symbol_and_old_splitter_name(tmp_path, monkeypatch)
     obj = export_entry.object_for(object_file(), 'renamed_entry', bytes.fromhex('03e0000824020003'))
     monkeypatch.setattr(compiler, 'compile_source', lambda *args, **kwargs:SimpleNamespace(ok=True, obj=obj))
     monkeypatch.setattr(split, 'parse_function', lambda *args:None)
-    monkeypatch.setattr(match, 'target_from_split', lambda *args:SimpleNamespace(code=b'original'))
+    monkeypatch.setattr(match, 'target_from_split', lambda *args:SimpleNamespace(code=b'original',vram=0x80001000))
     def link(obj, symbol, target, table, read):
         assert symbol == 'renamed_entry'
         assert table.resolve('old_entry') == table.resolve('renamed_entry') == fn['vram']
@@ -93,7 +93,7 @@ def test_check_rejects_unverified_data_and_preserves_manifest(tmp_path, monkeypa
     fn = {'name':'entry','vram':0x80001000,'rom':0,'c':'src/entry.c','asm':'target.s','seg':'game'}
     module = builder(tmp_path, [fn], monkeypatch)
     image = b'original' + bytes.fromhex('12345678')
-    module.B.update(symbols={}, labels={}, big_endian=True, segments=[], image='baserom',
+    module.B.update(symbols={}, labels={}, big_endian=True, segments=[{'kind':'code','start':0,'end':8,'vram':0x80001000}], image='baserom',
                     sha1=hashlib.sha1(image).hexdigest())
     (tmp_path/'baserom').write_bytes(image)
     (tmp_path/'src').mkdir()
@@ -102,7 +102,7 @@ def test_check_rejects_unverified_data_and_preserves_manifest(tmp_path, monkeypa
     monkeypatch.setattr(module, 'setup', lambda:None)
     monkeypatch.setattr(compiler, 'compile_source', lambda *args, **kwargs:SimpleNamespace(ok=True, obj=object_file()))
     monkeypatch.setattr(split, 'parse_function', lambda *args:None)
-    monkeypatch.setattr(match, 'target_from_split', lambda *args:SimpleNamespace(code=b'original'))
+    monkeypatch.setattr(match, 'target_from_split', lambda *args:SimpleNamespace(code=b'original',vram=0x80001000))
     def link(obj, symbol, target, table, read):
         data = read(0x80002000, 4)
         return SimpleNamespace(exact=True, problems=[], placements={},
@@ -111,11 +111,11 @@ def test_check_rejects_unverified_data_and_preserves_manifest(tmp_path, monkeypa
     assert not module.check('entry')
     assert 'unverified constant' in capsys.readouterr().out
     assert (tmp_path/'build.json').read_bytes() == original_manifest
-    monkeypatch.setattr(match, 'target_from_split', lambda *args:SimpleNamespace(code=b'changed!'))
+    monkeypatch.setattr(match, 'target_from_split', lambda *args:SimpleNamespace(code=b'changed!',vram=0x80001000))
     assert not module.check('entry')
     assert 'target assembly does not match' in capsys.readouterr().out.lower()
     assert (tmp_path/'build.json').read_bytes() == original_manifest
-    monkeypatch.setattr(match, 'target_from_split', lambda *args:SimpleNamespace(code=b'original'))
+    monkeypatch.setattr(match, 'target_from_split', lambda *args:SimpleNamespace(code=b'original',vram=0x80001000))
     module.B['data_mappings'] = [{'rom_start':8,'rom_end':12,'vram':0x80002000}]
     assert module.check('entry')
     module.B['data_mappings'].append({'rom_start':0,'rom_end':4,'vram':0x80002000})
