@@ -1056,12 +1056,13 @@ def test_leading_string_references_are_kept_as_data_unless_called_indirectly(ind
     assert [(d.rom,d.size) for d in data] == ([] if indirect else [(16,4)])
 
 
-@pytest.mark.parametrize('case', ['valid', 'interior', 'stack', 'one_store', 'unclosed', 'data'])
+@pytest.mark.parametrize('case', ['valid', 'interior', 'stack', 'one_store', 'unknown_store', 'unclosed', 'data'])
 def test_global_initializer_falls_through_to_a_closed_frame(case):
     # The original bytes execute two global stores before entering a framed tail.
     prefix = [0x3c088000, 0x24090001, 0xad090000, 0xad090004]
     if case == 'stack':prefix[3] = 0xafa90004
     if case == 'one_store':prefix[3] = 0
+    if case == 'unknown_store':prefix[3] = 0xad490004  # the temporary base has no known address
     tail = list(BODY)
     if case == 'unclosed':tail[-1] = 0
     image, functions, segments = fixture(prefix+tail, cuts=(0, 16, 48))
