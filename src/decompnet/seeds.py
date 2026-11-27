@@ -361,6 +361,10 @@ def intrinsic_leaf(asm_text: str, name: str, toolchain_id: str | None) -> str | 
     return None
 
 
+# ends a context line that the draft itself must declare too (app/callee_prototypes.py)
+CALLEE_MARK = "/* matched callee */"
+
+
 def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, context_header: str = "",
                       data_asm: str | None = None, timeout: float = 20, valid: bool = False,
                       strict: bool = False, options: tuple[str, ...] = (), *, resolve=None) -> str | None:
@@ -371,6 +375,10 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
     if source and valid:
         from decomprepair import m2c_undeclared_drafts
         source = m2c_undeclared_drafts.rewrite(source, name, asm_text, context_header) or source
+        # m2c declares nothing the context declared, and a matched callee's prototype is nowhere else
+        callees = [line for line in context_header.splitlines() if line.endswith(CALLEE_MARK) and line not in source]
+        if callees:
+            source = "\n".join(callees) + "\n" + source
     return source
 
 

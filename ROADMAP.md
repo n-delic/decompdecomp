@@ -836,7 +836,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Compile-tested draft refresh and saved diagnostics | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ m2c | ✓ Ghidra | — | — draft generator planned | ✓ supported draft generators |
 | Initial callback, forwarded-argument and overlapping-frame recovery | ✓ bounded MIPS | ✓ bounded MIPS | ✓ bounded MIPS | — | — | ✓ bounded MIPS | — | — processor reader planned | — processor reader planned | — | — processor reader planned | ✓ MIPS C; other readers planned |
 | Autopilot: free matches from drafts | ✓ | ✓ | ✓ | twins only | — | ✓ | ✓ (demo: 34 matches) | ✓ | ✓ exact drafts of tiny shapes (32-bit); Ghidra's made compilable | ✓ as PC | twins only (no drafts yet) | — |
-| Drafts follow the header, made in the background; `redraft` | ✓ | ✓ | ✓ | — | — | ✓ | ✓ (m2c and `redraft`) | — | ✓ Ghidra's | ✓ Ghidra's | — | — |
+| Drafts follow the header (and, in ROM mode, matched callees' own prototypes), made in the background; `redraft` | ✓ | ✓ | ✓ | — | — | ✓ | ✓ (m2c and `redraft`) | — | ✓ Ghidra's | ✓ Ghidra's | — | — |
 | C++ methods drafted as `Class::method` | ✓ | ✓ | ✓ | — | — | ✓ | — | — | ✓ (RTTI, and classes from the vtables constructors store) | ✓ (RTTI, vtables) | — | — |
 | Twins: free matches from identical code | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ (ran; no pairs in demo) | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Resumable source/profile queue and explicit assembly reconsideration | ✓ ROM | ✓ ROM | ✓ ROM | — | — | ✓ ROM | — | — owned-build adapter planned | — owned-build adapter planned | — | — owned-build adapter planned | — owned-build adapter planned |
@@ -2384,6 +2384,12 @@ reuse the saved map. See [ROM Explorer](docs/ROM_EXPLORER.md) for support and li
   the time against 62% for the rest, because agents guessed the layouts.
 
 ## Next
+
+### Matched callees' prototypes in project-mode drafts
+
+ROM drafts take the prototype of each matched callee the shared header does not declare (`app/callee_prototypes.py`).
+Project-mode drafts (GameCube/Wii and DS started from scratch, forks, Ghidra's) see only their source file's headers:
+find the matched definition in the project's sources and give it to m2c or Ghidra the same way.
 
 ### Side-by-side viewer: more games, more consoles
 
