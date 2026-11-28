@@ -163,6 +163,27 @@ def recover(image, found, taken=(), check=lambda: None, *, changed=()):
     return result, {lo for lo,_,vram in result if vram >= first}
 
 
+def _runtime_continuation(image,start,end,address,old,previous,verified,ranges):
+    """A witnessed bank can continue into two closed entries called by its verified predecessor."""
+    from ...arch.mips_code_recovery import called_extent
+
+    for lo,hi,base in previous:
+        if hi!=start or lo not in verified or base-lo!=address-start:
+            continue
+        if not any(a<=lo and end<=b and v-a==address-start for a,b,v in ranges):
+            continue
+        words=struct.unpack_from(f'>{(hi-lo)//4}I',image,lo)
+        targets={0x80000000|((word&0x03ffffff)<<2) for word in words if word>>26==3}
+        # A call to the old placement is contradictory evidence; don't choose a bank.
+        if any(old<=target<old+end-start for target in targets):
+            continue
+        closed={target for target in targets if address<=target<address+end-start
+                and called_extent(image,start+target-address,end,target,cpu='vr4300')}
+        if len(closed)>=2:
+            return True
+    return False
+
+
 def runtime_mappings(image, found, ranges, taken=()):
     """Apply RAM-observed placements when internal calls also support them."""
     result, changed = [], set()
@@ -189,7 +210,8 @@ def runtime_mappings(image, found, ranges, taken=()):
             calls = {0x80000000 | ((word & 0x03ffffff) << 2) for word in words if word >> 26 == 3}
             actual = len(calls & {address+offset for offset in offsets})
             previous = len(calls & {old+offset for offset in offsets})
-            if address != old and actual >= 3 and actual > previous:
+            if address != old and (actual >= 3 and actual > previous or
+                                   _runtime_continuation(image,start,end,address,old,result,changed,ranges)):
                 parts.append((start,end,address))
                 corrected.add(start)
             else:
