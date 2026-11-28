@@ -1,5 +1,7 @@
 import struct
 
+import pytest
+
 from decompnet.consoles.n64.code_tails import complete
 
 
@@ -112,6 +114,54 @@ def test_detected_code_removes_old_bin_marker_inside_its_extent(tmp_path):
     segments=yaml.safe_load(path.read_text())['segments']
     starts=[s[0] if isinstance(s,list) else s['start'] for s in segments]
     assert starts == [0,32,96,128]
+
+
+@pytest.mark.parametrize('case', ['boundary', 'later_child', 'different_mapping', 'duplicate_child'])
+def test_recovered_code_can_start_at_a_guessed_data_tail(case, tmp_path):
+    import yaml
+
+    from decompnet.consoles.n64.code import insert_segments
+    from decompnet.rom import RomError
+
+    base = 0x80000400
+    children = [[0, 'c', 'main'], [32, 'data'], {'type': 'bss', 'vram': base+128}]
+    if case == 'later_child': children.append([96, 'c', 'later'])
+    if case == 'duplicate_child': children.append([32, 'c', 'other'])
+    cfg = {'segments': [{'name': 'main', 'type': 'code', 'start': 0, 'vram': base, 'bss_size': 64,
+                         'subsegments': children}, {'type': 'bin', 'start': 128}, [256]]}
+    path = tmp_path/'synthetic.yaml'
+    path.write_text(yaml.safe_dump(cfg))
+    body = (32, 80, base+32+(4 if case == 'different_mapping' else 0))
+    if case != 'boundary':
+        with pytest.raises(RomError, match='crosses an existing bank'):
+            insert_segments(path, cfg, [body], 256)
+        return
+    insert_segments(path, cfg, [body], 256)
+    segments = yaml.safe_load(path.read_text())['segments']
+    assert segments[0]['subsegments'][0] == [0, 'c', 'main']
+    assert segments[0]['subsegments'][1][:2] == [32, 'c']
+    assert segments[0]['subsegments'][2][:2] == [80, 'data']
+    assert segments[0]['subsegments'][3] == {'type': 'bss', 'vram': base+128}
+    assert segments[0]['bss_size'] == 64
+    assert segments[1]['start'] == 128
+
+
+def test_recovered_tail_ranges_keep_gaps_and_one_parent(tmp_path):
+    import yaml
+
+    from decompnet.consoles.n64.code import insert_segments
+
+    base = 0x80000400
+    cfg = {'segments': [{'name': 'main', 'type': 'code', 'start': 0, 'vram': base,
+                         'subsegments': [[0, 'c', 'main'], [32, 'data']]},
+                        {'type': 'bin', 'start': 160}, [256]]}
+    path = tmp_path/'synthetic.yaml'
+    path.write_text(yaml.safe_dump(cfg))
+    insert_segments(path, cfg, [(32, 64, base+32), (64, 96, base+64), (112, 128, base+112)], 256)
+    segments = yaml.safe_load(path.read_text())['segments']
+    assert [(s[0], s[1]) for s in segments[0]['subsegments']] == [
+        (0, 'c'), (32, 'c'), (64, 'c'), (96, 'data'), (112, 'c'), (128, 'data')]
+    assert segments[1]['start'] == 160
 
 
 def test_shared_epilogue_may_branch_to_stack_restore_but_not_skip_it():
