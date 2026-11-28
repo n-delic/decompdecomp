@@ -585,6 +585,16 @@ def test_connected_observed_banks_share_one_scope_and_conflicting_scopes_are_def
     assert not scopes and not existing
 
 
+def test_disjoint_observed_fragments_connected_by_an_existing_bank_share_its_scope():
+    from decompnet.consoles.n64.code import _observed_overlap_scopes
+
+    banks = [(0x2000, 0x2040, 0x80001000), (0x3000, 0x3040, 0x80001080)]
+    known = [split.Segment('old', 0x1000, 0x10c0, 0x80001000)]
+    cfg = {'segments': [{'name': 'old', 'start': 0x1000, 'type': 'code'}]}
+    scopes, existing = _observed_overlap_scopes(banks, banks, known, cfg)
+    assert scopes[banks[0]] == scopes[banks[1]] == existing[0x1000]
+
+
 def test_static_discovery_in_a_scoped_bank_keeps_its_scope(tmp_path, monkeypatch):
     from decompnet.consoles.n64 import code, emulator, runtime_staging
 
