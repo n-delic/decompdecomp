@@ -16,11 +16,11 @@ Today, the main server is a single Python 3.12 process. Because all threads in t
 - **MCP Gateway (`gateway/`):** Route MCP tool calls with strict deadlines (`decomp-mcp-gateway`).
 - **Read-only UI endpoints (`--window-reads`):** Serve high-frequency read-only routes (`/api/stats`, `/api/knowledge`, `/api/attempt-history`, `/api/projects?brief=1`) through the gateway rather than the main server's event loop.
 
-### Phase 2: Pure CPU-Bound Analysis Workers
+### Phase 2: Pure CPU-Bound Analysis Workers (Done)
 Move pure, stateless byte/instruction analysis out of the main Python process:
-- **Boundary & entry fixes (`entry_fixes` / `_pointed_at`) (Done):** Single-pass ROM word scanning and MIPS boundary/epilogue rules in Rust, eliminating multi-minute GIL stalls during ROM import and `Check again`.
-- **Disassembly, scoring & fingerprinting (`scoring.py`, `twins.py`):** Offload Capstone/Rabbitizer disassembly, instruction-level diffs, and twin fingerprinting (`twins-prints` done) to Rust.
-- **ROM splitting & asset recognition:** Gradually replace pure-Python post-`splat` analysis and `decompassets` recognizers with Rust workers.
+- **Boundary & entry fixes (`entry_fixes` / `_pointed_at`) (Done):** Single-pass ROM word scanning and MIPS boundary/epilogue rules in Rust (`decomp-mcp-gateway entry-fixes`), eliminating multi-minute GIL stalls during ROM import and `Check again`.
+- **Disassembly, scoring & fingerprinting (`scoring.py`, `twins.py`) (Done):** Offloaded twin fingerprinting (`decomp-mcp-gateway twins-prints`) and instruction-level diffing/scoring (`decomp-mcp-gateway scoring-diff`) to Rust with Python fallbacks and parity tests.
+- **Post-`splat` ROM boundary & reference analysis (`rom/automatic_boundaries.py`) (Done):** Offloaded full-ROM pointer scanning and instruction transfer/reference extraction (`decomp-mcp-gateway automatic-boundaries`) to Rust with Python fallback and parity tests.
 
 ### Phase 3: High-Frequency State, Claims & Judge
 - **SQLite state & lease management:** Move hot database paths (claim/lease expiration, `summary_batch`, `/api/live`, `/api/events`) into a Rust service owning SQLite connections directly (using `rusqlite` / `sqlx`), removing Python JSON serialization and `json_each` overhead.
