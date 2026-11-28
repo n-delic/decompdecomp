@@ -2,12 +2,31 @@ import struct
 
 import pytest
 
-from decompnet.consoles.n64.code_tails import complete
+from decompnet.consoles.n64.code_tails import bridge_called_frame, complete
 
 
 def image(body):
     words=[0x03e00008,0,0x27bdffe8]+body
     return struct.pack('>'+str(len(words))+'I',*words)
+
+
+@pytest.mark.parametrize('case', ['valid', 'uncalled', 'mapping', 'unbalanced', 'interior call',
+                                  'occupied gap', 'competing bank'])
+def test_called_frame_can_bridge_a_gap_to_its_epilogue(case):
+    base = 0x80001000
+    words = [0x03e00008, 0, 0x8f8506f0, 0x27bdffe8, 0xafbf0014] + [0]*24 + [
+        0x8fbf0014, 0x27bd0018 if case != 'unbalanced' else 0x27bd0020, 0x03e00008, 0]
+    rom = struct.pack('>'+str(len(words))+'I', *words)
+    right_start = (len(words)-4)*4
+    left = (0,12,base)
+    right = (right_start,len(rom),base+right_start+(4 if case == 'mapping' else 0))
+    taken = []
+    if case == 'occupied gap': taken = [(16,20,0x90000000)]
+    if case == 'competing bank': taken = [(len(rom)+16,len(rom)+32,base+16)]
+    called = set() if case == 'uncalled' else {base+8}
+    if case == 'interior call': called.add(base+20)
+    result = bridge_called_frame(rom,[left,right],taken,called=called)
+    assert result == ([(0,len(rom),base)] if case == 'valid' else [left,right])
 
 
 def test_alignment_prologue_extends_through_a_long_quiet_body():
