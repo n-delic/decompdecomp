@@ -291,6 +291,39 @@ def _covered_text(cfg, result, image, rows, log):
     return None
 
 
+def _matched_module_entries(result, image, rows):
+    """Retain non-overlapping saved module entries when their analysis bytes are unchanged."""
+    names = {fn.name for fn in result.functions}
+    ranges = [(fn.rom, fn.rom + fn.size) for fn in result.functions if fn.rom is not None]
+    added = 0
+    for raw in rows:
+        row = dict(raw)
+        if row.get('status') != 'matched' or row.get('gone_mark') or row.get('name') in names:
+            continue
+        try:
+            meta = json.loads(row.get('meta') or '{}')['uso']
+            section, start, size = meta['section'], meta['start'], meta['size']
+            bank_start = result.analysis_banks[str(section)]
+            unit = row['unit']
+            bank = next(s for s in result.segments if s.name == unit and s.rom_start == bank_start)
+        except (KeyError, TypeError, ValueError, StopIteration):
+            continue
+        lo, vram, target = row.get('rom_offset'), row.get('vram'), row.get('target')
+        if (type(section) is not int or unit not in (f'donor_uv_{section:X}', f'donor_uso_{section:X}')
+                or type(bank_start) is not int or type(start) is not int or type(size) is not int
+                or start < 0 or size <= 0 or size % 4 or vram != start or row.get('size') != size
+                or lo != bank_start + start or lo + size > bank.rom_end or not isinstance(target, bytes)
+                or target != image[lo:lo + size] or any(a < lo + size and lo < b for a, b in ranges)):
+            continue
+        fn = split.function_from_bytes(row['name'], target, lo, vram, unit)
+        fn.uso = meta
+        result.functions.append(fn)
+        names.add(row['name'])
+        ranges.append((lo, lo + size))
+        added += 1
+    return added
+
+
 def preserve(net, project, result, image, rows, log=print):
     """Stage non-overlapping old entries the new split missed, then keep their original identities."""
     from ...rom.export import _export_segments, _fallthrough_entries, _segments, _symbol_lines
@@ -298,9 +331,13 @@ def preserve(net, project, result, image, rows, log=print):
 
     check = getattr(log, 'check_cancel', lambda: None)
     cfg = yaml.safe_load(result.config_path.read_text(encoding='utf-8'))
-    restored = _joined_bodies(result, image, rows)
+    restored = _matched_module_entries(result, image, rows)
     if restored:
-        log(f'Kept {restored} previously proven joins with unchanged bytes and no outside entries.')
+        log(f'Kept {restored} matched module entries with unchanged bytes and no overlapping functions.')
+    joined = _joined_bodies(result, image, rows)
+    restored += joined
+    if joined:
+        log(f'Kept {joined} previously proven joins with unchanged bytes and no outside entries.')
     while proposal := _covered_text(cfg, result, image, rows, log):
         proposed, selected, suppressed = proposal
         remaining = [fn for fn in result.functions if all(fn is not gone for gone in suppressed)]
