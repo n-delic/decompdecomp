@@ -125,6 +125,59 @@ def json_notes(tmp_path):
     return json.loads((tmp_path/'analysis-coverage.json').read_text())
 
 
+def test_lost_overlay_entries_are_anchored_in_their_own_bank(tmp_path):
+    config = {'segments': [
+        {'name': 'first', 'type': 'code', 'start': 0x100, 'vram': BASE,
+         'exclusive_ram_id': 'slot', 'subsegments': [[0x100, 'c', 'first']]},
+        {'name': 'second', 'type': 'code', 'start': 0x200, 'vram': BASE,
+         'exclusive_ram_id': 'slot', 'subsegments': [[0x200, 'c', 'second'], [0x280, 'data', 'data']]},
+        [0x300]]}
+    path = tmp_path/'game.yaml'
+    path.write_text(yaml.safe_dump(config, sort_keys=False))
+    missing = {(0x220, BASE+0x20, 0x27bdffe8)}
+    assert mixed_code._anchor_lost_overlay_entries(path, missing, {next(iter(missing)): 0x18})
+    result = yaml.safe_load(path.read_text())['segments']
+    assert result[0] == config['segments'][0]
+    assert [(s[0], s[1]) for s in result[1]['subsegments']] == [
+        (0x200, 'c'), (0x220, 'c'), (0x238, 'c'), (0x280, 'data')]
+
+    # An entry crossing explicit data cannot be made safe by changing its bank.
+    before = path.read_bytes()
+    crossing = {(0x278, BASE+0x78, 0x27bdffe8)}
+    assert not mixed_code._anchor_lost_overlay_entries(path, crossing, {next(iter(crossing)): 0x10})
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize('retry_restores', [True, False])
+def test_overlay_retry_keeps_only_a_split_that_preserves_all_entries(tmp_path, monkeypatch, retry_restores):
+    from decompnet.rom import split
+
+    path = tmp_path/'game.yaml'
+    initial = {'segments': [{'name': 'bank', 'type': 'code', 'start': 0x100, 'vram': BASE,
+                            'exclusive_ram_id': 'slot', 'subsegments': [[0x100, 'c', 'bank']]}, [0x200]]}
+    path.write_text(yaml.safe_dump(initial, sort_keys=False))
+    (tmp_path/'asm').mkdir()
+    key = (0x120, BASE+0x20, 0x27bdffe8)
+    def refine(*args, **kwargs):
+        monkeypatch.setattr(mixed_code, 'refine', lambda *a, **k: False)
+        return True
+    monkeypatch.setattr(mixed_code, 'refine', refine)
+    monkeypatch.setattr(mixed_code, '_detected_functions', lambda *args: {key: 0x18})
+    passes = []
+    def splat(args, root, log, **kwargs):
+        passes.append(yaml.safe_load(path.read_text()))
+        (root/'asm').mkdir()
+        return ''
+    monkeypatch.setattr(split, '_splat', splat)
+    monkeypatch.setattr(mixed_code, 'detected_entries',
+                        lambda *args: {key} if retry_restores and len(passes) == 2 else set())
+    mixed_code.run(path, tmp_path, 'rom.bin', get('n64'), log=lambda *_: None)
+    assert len(passes) == (2 if retry_restores else 3)
+    assert any(s[0] == 0x120 for s in passes[1]['segments'][0]['subsegments'])
+    if not retry_restores:
+        assert yaml.safe_load(path.read_text()) == initial
+
+
 @pytest.mark.parametrize('case',['no_call','data','overlap','invalid','bad_caller'])
 def test_weak_or_ambiguous_evidence_cannot_reclassify_data(tmp_path,case):
     path,console=project(tmp_path,call=case!='no_call',explicit=case=='data',overlap=case=='overlap')
@@ -180,7 +233,7 @@ def test_the_real_split_pipeline_recovers_code_after_invalid_words(tmp_path,monk
     assert [line.word for line in fn.lines]==BODY
     known=next(f for f in result.functions if f.vram==BASE)
     assert [line.word for line in known.lines]==[0x03E00008,0x24020003]
-    assert any('Recovered 1 directly called' in note for note in result.coverage_notes)
+    assert any('Recovered 1 framed entries with call evidence' in note for note in result.coverage_notes)
     assert (tmp_path/'rom.z64').read_bytes()==image
 
 

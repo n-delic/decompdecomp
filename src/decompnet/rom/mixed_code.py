@@ -239,7 +239,7 @@ def refine(config, workdir, image, console, log=print, *, visited=None):
     return bool(changed)
 
 
-def detected_entries(workdir, image, console):
+def _detected_functions(workdir, image, console):
     """Keep every existing entry at its original ROM/RAM address and first instruction.
 
     New calls can split an initially merged body into several functions. Saved exact
@@ -247,13 +247,62 @@ def detected_entries(workdir, image, console):
     """
     from . import split
 
-    rom=(workdir/image).read_bytes();targets=set()
+    rom=(workdir/image).read_bytes();targets={}
     for path in (workdir/'asm/nonmatchings').glob('**/*.s'):
         fn=split.parse_function(path,path.parent.name,console.big_endian)
         if fn is None or fn.piece:continue
         split._complete_delay_slot(fn,rom,console.big_endian)
-        targets.add((fn.rom,fn.vram,fn.lines[0].word))
+        targets[(fn.rom,fn.vram,fn.lines[0].word)] = fn.size
     return targets
+
+
+def detected_entries(workdir, image, console):
+    return set(_detected_functions(workdir, image, console))
+
+
+def _anchor_lost_overlay_entries(config, missing, sizes):
+    """Retry scoped banks whose existing entries disappeared after a split elsewhere."""
+    from . import split
+
+    cfg = yaml.safe_load(config.read_text(encoding='utf-8'))
+    segments = split.segments_from_config_data(cfg)
+    changed = False
+    for key in sorted(missing):
+        rom, vram, _ = key
+        size = sizes[key]
+        owners = [s for s in segments if s.rom_start <= rom < rom + size <= s.rom_end
+                  and s.vram + rom - s.rom_start == vram]
+        if len(owners) != 1:
+            continue
+        owner = owners[0]
+        raw = next((s for s in cfg['segments'] if isinstance(s, dict) and s.get('name') == owner.name), None)
+        if not raw or not raw.get('exclusive_ram_id'):
+            continue
+        subs = raw.get('subsegments', [])
+        for index, sub in enumerate(subs):
+            if not isinstance(sub, list) or len(sub) < 3 or sub[1] != 'c':
+                continue
+            end = next((s[0] if isinstance(s, list) else s.get('start') for s in subs[index+1:]
+                        if (isinstance(s, list) and s) or (isinstance(s, dict) and s.get('start') is not None)),
+                       owner.rom_end)
+            if not sub[0] <= rom < rom + size <= end:
+                continue
+            for at in (rom, rom + size):
+                if at < owner.rom_end and not any(isinstance(s, list) and s and s[0] == at for s in subs):
+                    stem = f'{str(sub[2])[:170]}_anchor_{at:06X}'
+                    names = {s[2] for s in subs if isinstance(s, list) and len(s) > 2}
+                    name = stem
+                    suffix = 1
+                    while name in names:
+                        name = f'{stem}_{suffix}'
+                        suffix += 1
+                    subs.append([at, 'c', name])
+                    changed = True
+            break
+        subs.sort(key=lambda s: s[0] if isinstance(s, list) else s.get('start', owner.rom_end))
+    if changed:
+        config.write_text(yaml.safe_dump(cfg, sort_keys=False, default_flow_style=None), encoding='utf-8')
+    return changed
 
 
 def run(config, workdir, image, console, log=print):
@@ -264,13 +313,20 @@ def run(config, workdir, image, console, log=print):
     original_config=config.read_bytes()
     coverage_path=workdir/'analysis-coverage.json'
     original_notes=coverage_path.read_bytes() if coverage_path.is_file() else b'[]'
-    original_entries=None;visited=set();out=''
+    original_entries=None;original_sizes={};visited=set();out=''
     for turn in range(MAX_PASSES):
         if not refine(config,workdir,image,console,log,visited=visited):break
-        if original_entries is None:original_entries=detected_entries(workdir,image,console)
+        if original_entries is None:
+            original_sizes = _detected_functions(workdir, image, console)
+            original_entries = set(original_sizes)
         shutil.rmtree(workdir/'asm')  # generated output, before any saved project work is imported
         out+='\n'+split._splat(['split',config.name],workdir,log,timeout=REFINE_TIMEOUT)
-        if not original_entries<=detected_entries(workdir,image,console):
+        missing = original_entries - detected_entries(workdir,image,console)
+        if missing and _anchor_lost_overlay_entries(config, missing, original_sizes):
+            shutil.rmtree(workdir/'asm')
+            out+='\n'+split._splat(['split',config.name],workdir,log,timeout=REFINE_TIMEOUT)
+            missing = original_entries - detected_entries(workdir,image,console)
+        if missing:
             config.write_bytes(original_config)
             shutil.rmtree(workdir/'asm')
             out+='\n'+split._splat(['split',config.name],workdir,log,timeout=REFINE_TIMEOUT)
