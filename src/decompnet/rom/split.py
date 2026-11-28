@@ -352,12 +352,12 @@ def _check_splat_runtime():
                        'then reopen it and retry. For a packaged app, use an updated app build.')
 
 
-def _splat(args: list[str], cwd: Path, log=print, *, timeout: float | None = None) -> str:
+def _splat(args: list[str], cwd: Path, log=print, *, timeout: float | None = None, module: str = 'splat') -> str:
     _check_splat_runtime()
     check_cancel = getattr(log, "check_cancel", lambda: None)
     from ..limits import capped
     deadline=time.monotonic()+timeout if timeout is not None else None
-    proc = subprocess.Popen(capped([console_python(), "-m", "splat", *args]), cwd=cwd, stdout=subprocess.PIPE,
+    proc = subprocess.Popen(capped([console_python(), "-m", module, *args]), cwd=cwd, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
     try:
         while True:
