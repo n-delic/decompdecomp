@@ -877,10 +877,14 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
                 raise ExportError("compressed analysis differs from its original cartridge and decoded blocks")
         gzip_boot_ranges = []
         paged_boot_ranges = []
+        byte_cipher_ranges = []
         archive_analysis = False
         if not blocks and not runtime_verified:
             gzip_boot_ranges = [entry for entry in split.code_ranges(configs[0]) if entry[1] <= len(original)]
-            if not boot_gzip.verify_analysis(original, image, gzip_boot_ranges):
+            from ..consoles.n64 import runtime_byte_cipher
+            if runtime_byte_cipher.verify_analysis(original, image, gzip_boot_ranges):
+                byte_cipher_ranges, gzip_boot_ranges = gzip_boot_ranges, []
+            elif not boot_gzip.verify_analysis(original, image, gzip_boot_ranges):
                 from ..consoles.n64 import indexed_runtime_code
                 archive_analysis = indexed_runtime_code.verify_analysis(original, image)
                 if not archive_analysis:
@@ -901,6 +905,8 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
             build["cartridge"]["indexed_archive"] = True
         if paged_boot_ranges:
             build["cartridge"]["paged_boot_ranges"] = paged_boot_ranges
+        if byte_cipher_ranges:
+            build["cartridge"]["byte_cipher_ranges"] = byte_cipher_ranges
         if runtime_verified or runtime_programs and not blocks:
             build["cartridge"]["runtime_zlib"] = runtime_programs
     (out / "build.json").write_text(json.dumps(build, indent=1), encoding="utf-8")
@@ -926,11 +932,15 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
     if cartridge := build.get("cartridge"):
         readme = out / "README.md"
         text = readme.read_text(encoding="utf-8")
+        image_description = 'runtime-decoded analysis image' if cartridge.get('byte_cipher_ranges') else 'expanded analysis image'
         text = text.replace(f"1. Put your own copy of the game here as `{base}` (it is in `.gitignore`; never commit it).",
-                            f"1. Keep both generated private inputs: `{base}` (expanded analysis image) and "
+                            f"1. Keep both generated private inputs: `{base}` ({image_description}) and "
                             f"`{cartridge['image']}` (original normalized cartridge). Reimport and export your ROM "
-                            "to regenerate them; the original cartridge alone is not the expanded analysis input.")
-        if (cartridge.get('runtime_zlib') or cartridge.get('indexed_archive') or cartridge.get('gzip_boot_ranges')
+                            "to regenerate them; the original cartridge alone is not the analysis input.")
+        if cartridge.get('byte_cipher_ranges'):
+            text += ("\nThe build verifies the linked analysis image against the audited runtime decoder and "
+                     "then checks the original cartridge. Byte-changing edits require encoding the modified code.\n")
+        elif (cartridge.get('runtime_zlib') or cartridge.get('indexed_archive') or cartridge.get('gzip_boot_ranges')
                 or cartridge.get('paged_boot_ranges')):
             text += ("\nThe build checks the linked analysis image against the original compressed programs and "
                      "verifies the original cartridge. Byte-changing edits require recompression.\n")

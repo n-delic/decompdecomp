@@ -23,7 +23,7 @@
 - inferred_overlays.py: overlapping code-bank mappings supported by independently called local entries.
 - reloc_fragments.py: text and linked addresses from consecutive relocation-section fragments.
 - inline_data.py: verified constants and alignment bytes embedded among code.
-- boot_gzip.py, boot_compact_mio.py, boot_raw_deflate.py, boot_brs.py, boot_refpack.py, boot_rnc2.py, boot_rnx.py, boot_erz.py, boot_byte_lz.py, boot_huffman.py, boot_chunked_bits.py, boot_paired_rle.py, boot_xor.py: encoded programs placed by the boot loader; packed_mapping.py recovers linked addresses in other compressed code blocks.
+- boot_gzip.py, boot_compact_mio.py, boot_raw_deflate.py, boot_brs.py, boot_refpack.py, boot_rnc2.py, boot_rnx.py, boot_erz.py, boot_byte_lz.py, boot_huffman.py, boot_chunked_bits.py, boot_paired_rle.py, boot_xor.py: encoded programs placed by the boot loader; packed_mapping.py recovers linked addresses in other compressed code blocks. runtime_byte_cipher.py recovers an audited in-place runtime decoder.
 - boot_mapping.py: returning TLB boot stubs separated from code with a strongly supported later load mapping.
 - sdk_assembly.py: exact self-contained libultra body fingerprints, classified before C claims.
 - profile_probes.py: the per-function compiler profiles its open functions are judged under automatically (SN 2.7.2 builds, KMC for libultra).
@@ -449,6 +449,10 @@ class Nintendo64(Console):
         from .inline_data import apply
 
         expanded = add_segments(config, workdir, image, log)
+        if expanded == image:
+            from .runtime_byte_cipher import add as decode_runtime_code
+
+            expanded = decode_runtime_code(config, workdir, expanded, log)
         apply(config, (workdir / expanded).read_bytes(), log)
         return expanded
 
