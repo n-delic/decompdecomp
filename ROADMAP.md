@@ -112,6 +112,8 @@
   Byte-matched emulator RAM ranges refine smaller inferred banks when their local calls corroborate the mapping.
   A contiguous observed bank can carry that mapping into a neighbouring fragment when two closed entries
   there are called by the independently verified predecessor and no call supports its former placement.
+  Existing projects can also add verified functions in independently corroborated overlapping banks: the search stages the
+  affected scopes together and retains them only if the old functions and new bodies split exactly.
 - Done: the N64 missed-function search can recover a verified body inside a handwritten boot
   assembly unit while keeping the surrounding assembly. Planned: apply the same verified
   recovery automatically during the initial import.

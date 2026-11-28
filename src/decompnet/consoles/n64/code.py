@@ -1053,6 +1053,64 @@ def insert_segments(config: Path, cfg: dict, found, size: int, *, scopes=None) -
     config.write_text(yaml.safe_dump(cfg, sort_keys=False, default_flow_style=None), encoding="utf-8")
 
 
+def _observed_overlap_scopes(banks, overlaps, known, config):
+    """Group corroborated runtime banks with overlapping existing code for staged verification."""
+    banks = sorted(set(banks))
+    seeds = set(overlaps) & set(banks)
+    raw = {s.get('start'): s for s in config.get('segments', []) if isinstance(s, dict)}
+    assignments, existing = {}, {}
+
+    def intersects(a, b):
+        return a[2] < b[2] + b[1] - b[0] and b[2] < a[2] + a[1] - a[0]
+
+    while seeds:
+        group = {min(seeds)}
+        selected = set()
+        while True:
+            expanded = {bank for bank in banks if any(intersects(bank, other) for other in group)}
+            members = {i for i, seg in enumerate(known)
+                       if any(intersects((seg.rom_start, seg.rom_end, seg.vram), bank) for bank in expanded)}
+            if expanded == group and members == selected:
+                break
+            group, selected = expanded, members
+        seeds -= group
+        scopes = {known[i].exclusive_ram_id for i in selected if known[i].exclusive_ram_id}
+        if len(scopes) > 1:
+            continue
+        scope = next(iter(scopes), f'runtime_overlap_{min(bank[0] for bank in group):08X}')
+        if any(s.exclusive_ram_id == scope and i not in selected for i, s in enumerate(known)):
+            continue
+        # Moving a BSS-bearing global segment can change data layout even if
+        # every function still splits; leave that case for explicit review.
+        if any(not raw.get(known[i].rom_start, {}).get('name')
+               or raw.get(known[i].rom_start, {}).get('bss_size')
+               or not known[i].exclusive_ram_id and any(
+                   key in raw.get(known[i].rom_start, {})
+                   for key in ('symbol_name_format', 'symbol_name_format_no_rom'))
+               or any(isinstance(sub, dict) and sub.get('type') == 'bss'
+                      or isinstance(sub, list) and len(sub) > 1 and sub[1] == 'bss'
+                      for sub in raw.get(known[i].rom_start, {}).get('subsegments', ()))
+               for i in selected):
+            continue
+        for bank in group:
+            assignments[bank] = scope
+        for i in selected:
+            if not known[i].exclusive_ram_id:
+                existing[known[i].rom_start] = scope
+    return assignments, existing
+
+
+def _apply_overlap_scopes(config, existing, active):
+    for segment in config.get('segments', []):
+        if not isinstance(segment, dict) or (scope := existing.get(segment.get('start'))) not in active:
+            continue
+        name = segment.get('name')
+        if not name or segment.get('exclusive_ram_id'):
+            raise RomError('The existing overlay scope changed during the search. Retry the search.')
+        segment.update(exclusive_ram_id=scope, symbol_name_format=f'$VRAM_{name}',
+                       symbol_name_format_no_rom=f'$VRAM_{name}')
+
+
 def missed_functions(config: Path, rom: bytes, log=print, known_functions=(), *, prepare_split=None,
                      checkpoint=None, expected_config=None) -> list[tuple[int, int, int]]:
     """In a project that exists, the functions its split left as data that an import would now find (complete_gaps,
@@ -1079,6 +1137,7 @@ def missed_functions(config: Path, rom: bytes, log=print, known_functions=(), *,
     image = config.parent / (cfg.get('options', {}).get('target_path') or 'rom.z64')
     samples = []
     runtime_banks = []
+    overlap_banks = []
     if emulator.installed() and image.is_file() and image.read_bytes() == rom:
         log('Running the game to check for directly called code missing from its mappings.')
         cancel = getattr(log, 'cancel_event', None)
@@ -1112,7 +1171,10 @@ def missed_functions(config: Path, rom: bytes, log=print, known_functions=(), *,
         for start, end, vram in observed['segments']:
             if loaded_code.trap_symbols(rom, [(start, end, vram)]):
                 found.extend((at, at + 8, vram + at - start) for at in range(start, end, 8))
-        runtime_banks = [bank for bank in observed['segments'] if not loaded_code.trap_symbols(rom, [bank])]
+        overlap_banks = [bank for bank in observed.get('overlap_segments', ())
+                         if not any(a < bank[1] and bank[0] < b for a, b, _ in taken)]
+        runtime_banks = [bank for bank in observed['segments'] + overlap_banks
+                         if not loaded_code.trap_symbols(rom, [bank])]
         if runtime_banks and known_functions:
             from .loader_code import complete
 
@@ -1135,17 +1197,28 @@ def missed_functions(config: Path, rom: bytes, log=print, known_functions=(), *,
         log(f'Deferred {rejected} candidate bodies whose parent mapping or raw boundary needs review.')
     inside = sorted(set(inside + cuttable))
     new = [body for body in new if body not in children]
+    bank_scopes, existing_scopes = _observed_overlap_scopes(runtime_banks, overlap_banks, known, cfg)
+
+    def overlap_scope(body):
+        lo, hi, address = body
+        banks = {(a, b, v) for a, b, v in bank_scopes
+                 if a <= lo < hi <= b and address - lo == v - a}
+        if len(banks) != 1:
+            return ''
+        return bank_scopes.get(next(iter(banks)), '')
+
     ambiguous = [body for body in new if any(
                      s.exclusive_ram_id and s.vram - s.rom_start == body[2] - body[0] or
                      s.vram - s.rom_start != body[2] - body[0] and
                      s.vram < body[2] + body[1] - body[0] and body[2] < s.vram + s.rom_end - s.rom_start
-                     for s in known) and not runtime_scoped.inherited_scope(body, known)]
+                     for s in known) and not runtime_scoped.inherited_scope(body, known) and not overlap_scope(body)]
     if ambiguous:
         log(f'Deferred {len(ambiguous)} candidate bodies whose overlay scope is ambiguous.')
         new = [body for body in new if body not in ambiguous]
     inherited = [dict(rom_start=lo, rom_end=hi, vram=vram, scope=scope)
                  for lo, hi, vram in new if (scope := (
                      runtime_scoped.inherited_scope((lo, hi, vram), known) or
+                     overlap_scope((lo, hi, vram)) or
                      runtime_scoped.separate_runtime_scope((lo, hi, vram), known, runtime_banks, cfg)))]
     scoped = runtime_scoped.closure(rom, known, known_functions, samples, reserved=new + inside,
                                     check=getattr(log, 'check_cancel', lambda: None)) if samples else []
@@ -1181,6 +1254,8 @@ def missed_functions(config: Path, rom: bytes, log=print, known_functions=(), *,
                 chosen = {(e['rom_start'], e['rom_end'], e['vram']) for e in selected}
                 staged.write_text(original, encoding='utf-8')
                 proposed = yaml.safe_load(original)
+                _apply_overlap_scopes(proposed, existing_scopes,
+                                      {scopes.get(body[0], '') for body in chosen})
                 if inserts := sorted(new_bodies & chosen):
                     insert_segments(staged, proposed, inserts, len(rom), scopes=scopes)
                     proposed = yaml.safe_load(staged.read_text(encoding='utf-8'))
@@ -1303,6 +1378,7 @@ def missed_functions(config: Path, rom: bytes, log=print, known_functions=(), *,
         staged = Path(tmp) / 'game.yaml'
         staged.write_text(initial_text, encoding='utf-8')
         cfg = yaml.safe_load(initial_text)
+        _apply_overlap_scopes(cfg, existing_scopes, {scopes.get(body[0], '') for body in new})
         if new:
             insert_segments(staged, cfg, new, len(rom), scopes=scopes)
             cfg = yaml.safe_load(staged.read_text(encoding='utf-8'))

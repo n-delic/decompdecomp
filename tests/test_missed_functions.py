@@ -452,6 +452,74 @@ def test_runtime_scoped_candidates_require_a_verified_staged_split(tmp_path, mon
         assert actual['type'] == 'bin'
 
 
+@pytest.mark.parametrize('accepted', [True, False])
+def test_observed_overlapping_bank_is_staged_in_its_own_scope(tmp_path, monkeypatch, accepted):
+    from decompnet.consoles.n64 import code, emulator, loaded_code, loader_code, runtime_staging
+
+    config = tmp_path / 'game.yaml'
+    original = yaml.safe_dump(splat_config())
+    config.write_text(original)
+    rom = image()
+    (tmp_path / 'rom.z64').write_bytes(rom)
+    monkeypatch.setattr(code, 'complete_gaps', lambda *a, **kw: [])
+    monkeypatch.setattr(code, '_bodies_inside_code', lambda *a, **kw: [])
+    monkeypatch.setattr(emulator, 'installed', lambda: tmp_path)
+    monkeypatch.setattr(loaded_code, 'moved_banks', lambda *a, **kw: [])
+    bank = (0x1010, 0x1020, 0x80001000)
+    monkeypatch.setattr(loaded_code, 'find', lambda *a, **kw: {'segments': [], 'overlap_segments': [bank]})
+    monkeypatch.setattr(loader_code, 'complete', lambda rom, established, banks, *a, **kw: established + banks)
+    monkeypatch.setattr(runtime_staging, 'verify', lambda *a, **kw: accepted)
+    known = [(0x1000, 0x1010, 0x80001000), (0x1020, 0x1028, 0x80001020)]
+    result = missed_functions(config, rom, log=lambda *_: None, known_functions=known)
+    if accepted:
+        assert result == [bank]
+        segments = yaml.safe_load(config.read_text())['segments']
+        recovered = next(s for s in segments if isinstance(s, dict) and s.get('start') == bank[0])
+        assert recovered['exclusive_ram_id'] == 'runtime_overlap_00001010'
+        existing = next(s for s in segments if isinstance(s, dict) and s.get('start') == 0x1000)
+        assert existing['exclusive_ram_id'] == recovered['exclusive_ram_id']
+    else:
+        assert result == []
+        assert config.read_text() == original
+
+
+@pytest.mark.parametrize('setting', [{'bss_size': 0x20}, {'symbol_name_format': 'custom_$VRAM'}])
+def test_runtime_overlap_keeps_existing_layout_and_custom_names(tmp_path, monkeypatch, setting):
+    from decompnet.consoles.n64 import code, emulator, loaded_code, loader_code
+
+    cfg = splat_config()
+    cfg['segments'][1].update(setting)
+    config = tmp_path / 'game.yaml'
+    original = yaml.safe_dump(cfg)
+    config.write_text(original)
+    rom = image()
+    (tmp_path / 'rom.z64').write_bytes(rom)
+    monkeypatch.setattr(code, 'complete_gaps', lambda *a, **kw: [])
+    monkeypatch.setattr(code, '_bodies_inside_code', lambda *a, **kw: [])
+    monkeypatch.setattr(emulator, 'installed', lambda: tmp_path)
+    monkeypatch.setattr(loaded_code, 'moved_banks', lambda *a, **kw: [])
+    bank = (0x1010, 0x1020, 0x80001000)
+    monkeypatch.setattr(loaded_code, 'find', lambda *a, **kw: {'segments': [], 'overlap_segments': [bank]})
+    monkeypatch.setattr(loader_code, 'complete', lambda rom, established, banks, *a, **kw: established + banks)
+    known = [(0x1000, 0x1010, 0x80001000), (0x1020, 0x1028, 0x80001020)]
+    assert missed_functions(config, rom, log=lambda *_: None, known_functions=known) == []
+    assert config.read_text() == original
+
+
+def test_connected_observed_banks_share_one_scope_and_conflicting_scopes_are_deferred():
+    from decompnet.consoles.n64.code import _observed_overlap_scopes
+
+    banks = [(0x2000, 0x2040, 0x80001000), (0x3000, 0x3040, 0x80001030)]
+    known = [split.Segment('old', 0x1000, 0x1040, 0x80001060)]
+    cfg = {'segments': [{'name': 'old', 'start': 0x1000, 'type': 'code'}]}
+    scopes, existing = _observed_overlap_scopes(banks, [banks[0]], known, cfg)
+    assert scopes[banks[0]] == scopes[banks[1]] == existing[0x1000]
+    known.append(split.Segment('other', 0x4000, 0x4040, 0x80001020, 'other_scope'))
+    known[0].exclusive_ram_id = 'old_scope'
+    scopes, existing = _observed_overlap_scopes(banks, [banks[0]], known, cfg)
+    assert not scopes and not existing
+
+
 def test_static_discovery_in_a_scoped_bank_keeps_its_scope(tmp_path, monkeypatch):
     from decompnet.consoles.n64 import code, emulator, runtime_staging
 
