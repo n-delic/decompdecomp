@@ -380,6 +380,53 @@ def _probe_objects(net, project, fn, source, header, candidate, target, info):
     return None
 
 
+def _float_prototype_variants(fn, source, header, target):
+    """Try fixed float parameters for otherwise undeclared loader calls."""
+    span = csource.find(source, fn['name'])
+    if span is None:
+        return []
+    clean = csource._blank(source)
+    body = clean[span[0]:span[1]]
+    pattern = r'\buso_[0-9A-Fa-f]+_sym_[0-9]+(?=\s*\()'
+    calls = list(re.finditer(pattern, body))
+    counts = Counter(match.group() for match in calls)
+    targets = {r.symbol for r in target.relocs if r.type == 4}
+    declarations = csource._blank(header + '\n' + source)
+    variants = []
+    float_literal = r'[+-]?(?:(?:\d+\.\d*|\.\d+)(?:[eE][+-]?\d+)?|\d+[eE][+-]?\d+)[fF]'
+    for call in calls:
+        symbol = call.group()
+        if counts[symbol] != 1 or symbol not in targets:
+            continue
+        declared = r'(?m)^[ \t]*[A-Za-z_]\w*(?:[ \t*]+[A-Za-z_]\w*)*[ \t*]+' + re.escape(symbol) + r'\s*\('
+        if re.search(declared, declarations):
+            continue
+        opening = body.find('(', call.end())
+        depth, start, args = 0, opening + 1, []
+        for at in range(opening, len(body)):
+            char = body[at]
+            if char in '([{':
+                depth += 1
+            elif char in ')]}':
+                depth -= 1
+                if depth == 0:
+                    args.append(body[start:at].strip())
+                    break
+            elif char == ',' and depth == 1:
+                args.append(body[start:at].strip())
+                start = at + 1
+        else:
+            continue
+        if not args or len(args) > 12 or any(not arg for arg in args):
+            continue
+        types = ['float' if re.fullmatch(float_literal, arg) else 'int' for arg in args]
+        if 'float' not in types:
+            continue
+        prototype = f'extern int {symbol}({", ".join(types)});'
+        variants.append('#ifndef PORT\n' + prototype + '\n#endif\n' + source)
+    return variants
+
+
 def retry(net, project, fn, source):
     """Return a rewritten saved source only after its complete module-aware judge passes."""
     try:
@@ -419,6 +466,10 @@ def retry(net, project, fn, source):
             if combined:
                 variants.append(combined)
         for variant in variants:
+            built = net._compile(project, header, variant, fn)
+            if built.ok and net._evaluate(fn, project, built.obj)[1] is True:
+                return variant
+        for variant in _float_prototype_variants(fn, source, header, target):
             built = net._compile(project, header, variant, fn)
             if built.ok and net._evaluate(fn, project, built.obj)[1] is True:
                 return variant

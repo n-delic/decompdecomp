@@ -1,4 +1,5 @@
 from hashlib import sha1
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -621,3 +622,39 @@ def test_edl_meshes_merge_between_runtime_captures(tmp_path, monkeypatch):
     model = next(asset for asset in assets if asset['layout'] == 'runtime-edl-model')
     assert [mesh['source'] for mesh in model['meshes']] == [[1, 2, 3, 4], [5, 6, 7, 8]]
     assert (model['vertices'], model['triangles']) == (8, 2)
+
+
+def test_compressed_texture_observation_uses_submitted_tasks_and_keeps_palettes(tmp_path, monkeypatch):
+    from decompassets.n64 import runtime_lzw_textures, runtime_packed_graphics
+
+    rom = tmp_path / 'game.z64'
+    rom.write_bytes(bytes.fromhex('80371240') + b'original')
+    monkeypatch.setattr(runtime_textures.emulator, 'installed', lambda: tmp_path)
+    monkeypatch.setattr(runtime_lzw_textures, 'has_resources', lambda *_: True)
+    monkeypatch.setattr(runtime_packed_graphics, 'regions', lambda *args, **kwargs: [])
+    monkeypatch.setattr(detector, 'regions', lambda *_: [dict(offset=1, size=1, layout='texture')])
+    calls = []
+
+    def run(path, vis, *, dumps=None, frame_dumps=None, **kwargs):
+        for dump in (dumps or {}).values():
+            dump.write_bytes(b'ram')
+        for dump in (frame_dumps or {}).values():
+            dump.write_bytes(b'game' if kwargs.get('inputs') else b'title')
+            Path(str(dump)+'.task').write_bytes(b'task')
+        calls.append(bool(frame_dumps))
+        return runtime_textures.emulator.Run(vis=vis, frame_dumps=frame_dumps or {})
+
+    def regions(image, frames, **kwargs):
+        assert frames and all(task == b'task' for _, task in frames)
+        palette = 'game' if frames[0][0] == b'game' else 'title'
+        item = dict(preview_settings=dict(offset=3), palette=palette)
+        return [dict(offset=100, size=16, kind='image', layout='runtime-lzw-textures',
+                     textures=[item], texture_count=1)]
+
+    monkeypatch.setattr(runtime_textures.emulator, 'run', run)
+    monkeypatch.setattr(runtime_lzw_textures, 'regions', regions)
+    assets = runtime_textures.observe(b'image', rom, sha1(rom.read_bytes()).hexdigest())
+    bank, = [asset for asset in assets if asset.get('layout') == 'runtime-lzw-textures']
+    assert [item['palette'] for item in bank['textures']] == ['title', 'game']
+    assert bank['texture_count'] == 2
+    assert sum(calls) == 2
