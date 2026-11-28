@@ -94,7 +94,7 @@ def _rsp_trap(cfg, rom, at, vram, call, padding, callers):
     """A terminal boot trap immediately before a verified RSP graphics program."""
     from .rsp_prefix import graphics_spans
 
-    if (padding != 0x8c430760 or vram in callers or vram+4 in callers
+    if (padding >> 26 != 0x23 or not (padding >> 16) & 31 or vram in callers or vram+4 in callers
             or any(struct.pack('>I', address) in rom for address in (vram, vram+4))
             or not any(start == at+8 for start, _ in graphics_spans(rom))):
         return False
