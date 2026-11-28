@@ -15,8 +15,7 @@ value is dead and its next original use resets it, changed the read-only
 linked score to 390 at each of three sites and to 350 at all three. A comma
 expression keeps the original argument evaluation order and reads the reused
 local as the real index; that spelling is matching scaffolding. A separately
-staged source with the same linked 350 score was submitted to the app, whose
-result was pending. The function was still open.
+staged source with the same linked 350 score was submitted to the app, which the app subsequently confirmed at 350. The function was still open.
 
 Casts, an alternate table alias, and an inline helper tied at 410. Reusing a
 loop counter or a signed-byte local made the score worse. This is one observed
