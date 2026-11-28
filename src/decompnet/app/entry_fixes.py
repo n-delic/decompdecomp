@@ -390,7 +390,8 @@ def _shared_frame_prefix(before, after, pointed, shared, flow, stored, word, big
             or before.vram + 4 != after.vram or word(before.vram-4) != JR_RA
             or not any((word(source) or 0) >> 26 == 3
                        for name, source in pointed.get(before.vram, ()) if name != before.name)
-            or any(a in pointed or a in stored
+            or any(any(name not in (before.name, after.name) or (word(source) or 0) >> 26 != 2
+                       for name, source in pointed.get(a, ())) or a in stored
                    or any(source < before.vram or source >= after.vram + len(after.code)
                           for source in flow.get(a, ()))
                    for a in range(after.vram, after.vram + len(after.code), 4))
@@ -398,7 +399,17 @@ def _shared_frame_prefix(before, after, pointed, shared, flow, stored, word, big
         return None
     words = _words(before.code + after.code, big_endian)
     frame = _sp_step(words[0])
-    if (frame is None or frame >= 0 or len(words) < 4 or words[1] >> 16 != 0xafbf
+    # Some compilers save callee-saved registers before ra. The ra store must
+    # still precede every transfer, and a matching load must restore its slot.
+    prefix = []
+    for instruction in words[1:17]:
+        if _try(rabbitizer.Instruction(instruction).hasDelaySlot):
+            break
+        prefix.append(instruction)
+    saved = {w & 0xffff for w in prefix if w >> 16 == 0xafbf}
+    restored = {w & 0xffff for w in words if w >> 16 == 0x8fbf}
+    if (frame is None or frame >= 0 or len(words) < 4
+            or not any(offset % 4 == 0 and offset + 4 <= -frame for offset in saved & restored)
             or words[-2:] != [JR_RA, 0x27bd0000 | (-frame & 0xffff)]
             or _closed(words, before.vram, 0) != len(words) or not _frame_shape(words, 0)):
         return None
