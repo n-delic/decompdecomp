@@ -129,6 +129,21 @@ async function run(fail=false, limited=false) {
   ctx.S.slug='other';ctx.renderCodeAudit({available:true,gaps:1,candidates});assert.match(panel.innerHTML,/Page 1 of 3/);
 })();
 
+// Server-paged reports request the next page instead of slicing the first one.
+(async()=>{
+  const checkbox={checked:false},previous={},next={},requests=[];
+  const panel={dataset:{},querySelector:s=>s==='[data-audit-prev]'?previous:s==='[data-audit-next]'?next:checkbox,
+    querySelectorAll:()=>[],insertAdjacentHTML(){},replaceChildren(){}};
+  const candidate=i=>({vram:i,evidence:'entry_'+i,review_id:'id_'+i,decoded_instructions:1,incoming:[]});
+  const ctx={S:{slug:'game'},$:()=>panel,esc:s=>String(s??''),hex8:n=>'0x'+n.toString(16),openFn(){},toast(){},
+    api:async url=>{requests.push(url);return {available:true,paged:true,page:1,candidate_count:101,eligible_count:101,gaps:1,candidates:[candidate(50)]};}};
+  vm.createContext(ctx);vm.runInContext(fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/js/code-audit.js'),'utf8'),ctx);
+  ctx.renderCodeAudit({available:true,paged:true,page:0,candidate_count:101,eligible_count:101,gaps:1,candidates:[candidate(0)]});
+  assert.match(panel.innerHTML,/101 possible code regions/);next.onclick();
+  for(let i=0;i<5;i++)await Promise.resolve();
+  assert.match(requests[0],/page=1/);assert.match(panel.innerHTML,/Page 2 of 3/);assert.match(panel.innerHTML,/entry_50</);
+})().catch(e=>{console.error(e);process.exitCode=1;});
+
 // A byte-identical donor entry can still be a fragment or non-CPU code. Show
 // its reason and never offer it through the automatic add action.
 (async()=>{

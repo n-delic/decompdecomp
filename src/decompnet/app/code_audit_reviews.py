@@ -6,6 +6,8 @@ import time
 from ..network import NetworkError
 
 STATES=('unreviewed','needs_investigation','confirmed_code','dismissed')
+PAGE_SIZE=50
+PAGED_THRESHOLD=1000
 
 
 def key(pid):return f'code-audit:{pid}'
@@ -106,6 +108,52 @@ def decorated(state):
             {'state':'unreviewed','notes':''})} for r in report['candidates']]}
 
 
+def page(net,pid,number=0,show_reviewed=False):
+    """Read one ordered page; old single-value reports keep their original shape."""
+    state=load(net,pid)
+    if not state.get('paged') or not state['report']:
+        return decorated(state)
+    number=max(0,number)
+    store=net.project_store(pid)
+    where='' if show_reviewed else " AND (review_state IS NULL OR review_state NOT IN ('confirmed_code','dismissed'))"
+    total=store.one(f'SELECT COUNT(*) n FROM code_audit_candidates WHERE project_id=?{where}',pid)['n']
+    number=min(number,max(0,(total-1)//PAGE_SIZE))
+    rows=store.all(f'SELECT payload,review FROM code_audit_candidates WHERE project_id=?{where} ORDER BY ordinal LIMIT ? OFFSET ?',pid,PAGE_SIZE,number*PAGE_SIZE)
+    candidates=[{**json.loads(r['payload']),'review':json.loads(r['review']) if r['review'] else {'state':'unreviewed','notes':''}} for r in rows]
+    return {**state['report'],'available':True,'candidates':candidates,'paged':True,
+            'page':number,'eligible_count':total,'candidate_count':state['candidate_count']}
+
+
+def unresolved(net,pid,state):
+    if state.get('paged'):
+        return net.project_store(pid).one("SELECT COUNT(*) n FROM code_audit_candidates WHERE project_id=? AND (review_state IS NULL OR review_state!='dismissed')",pid)['n']
+    return sum(state.get('reviews',{}).get(r.get('review_id'),{}).get('state')!='dismissed' for r in state['report']['candidates'])
+
+
+def _record_paged(net,pid,result,check):
+    store=net.project_store(pid)
+    with store.tx() as db:
+        row=db.execute('SELECT value FROM settings WHERE key=?',(key(pid),)).fetchone()
+        old=json.loads(row['value']) if row else {}
+        db.execute('CREATE TABLE IF NOT EXISTS code_audit_candidates (project_id INTEGER NOT NULL, ordinal INTEGER NOT NULL, review_id TEXT NOT NULL, payload TEXT NOT NULL, review_state TEXT, review TEXT, PRIMARY KEY(project_id,review_id))')
+        db.execute('CREATE INDEX IF NOT EXISTS code_audit_candidates_order ON code_audit_candidates(project_id,ordinal)')
+        db.execute('CREATE INDEX IF NOT EXISTS code_audit_candidates_state ON code_audit_candidates(project_id,review_state)')
+        db.execute('CREATE TEMP TABLE IF NOT EXISTS audit_prior_reviews (review_id TEXT PRIMARY KEY, review TEXT)')
+        db.execute('DELETE FROM audit_prior_reviews')
+        db.execute('INSERT INTO audit_prior_reviews SELECT review_id,review FROM code_audit_candidates WHERE project_id=? AND review IS NOT NULL',(pid,))
+        db.executemany('INSERT OR REPLACE INTO audit_prior_reviews VALUES(?,?)',((rid,json.dumps(review)) for rid,review in old.get('reviews',{}).items()))
+        db.execute('DELETE FROM code_audit_candidates WHERE project_id=?',(pid,))
+        for i,candidate in enumerate(result['candidates']):
+            if not i%128:check()
+            db.execute('INSERT INTO code_audit_candidates SELECT ?,?,?,?,json_extract(review,\'$.state\'),review FROM (SELECT (SELECT review FROM audit_prior_reviews WHERE review_id=?) review)',
+                       (pid,i,candidate['review_id'],json.dumps(candidate),candidate['review_id']))
+        report={k:v for k,v in result.items() if k!='candidates'}
+        state={'report':{**report,'audited_at':time.time()},'reviews':{},'paged':True,'candidate_count':len(result['candidates'])}
+        db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',(key(pid),json.dumps(state)))
+        check()
+    return page(net,pid)
+
+
 def record(net,pid,result,image,*,check=lambda:None):
     # Include the whole image and the examined bounds: reviews cannot silently
     # follow an address into another ROM revision or changed candidate extent.
@@ -117,9 +165,17 @@ def record(net,pid,result,image,*,check=lambda:None):
         facts=[identity,r['rom_offset'],r['vram'],r['gap_start'],r['gap_end'],r['extent_bytes']]
         r['review_id']=hashlib.sha256(json.dumps(facts).encode()).hexdigest()
     check()
+    if len(result['candidates'])>PAGED_THRESHOLD:
+        return _record_paged(net,pid,result,check)
     with net.project_store(pid).tx() as db:
         row=db.execute('SELECT value FROM settings WHERE key=?',(key(pid),)).fetchone()
         state=json.loads(row['value']) if row else {'reviews':{}}
+        if state.get('paged'):
+            for r in result['candidates']:
+                prior=db.execute('SELECT review FROM code_audit_candidates WHERE project_id=? AND review_id=?',(pid,r['review_id'])).fetchone()
+                if prior and prior['review']:state['reviews'][r['review_id']]=json.loads(prior['review'])
+            db.execute('DELETE FROM code_audit_candidates WHERE project_id=?',(pid,))
+            state.pop('paged',None);state.pop('candidate_count',None)
         state['report']={**result,'audited_at':time.time()}
         # Retain old evidence only for currently reported candidates. A changed
         # image or extent becomes fresh work rather than an inherited dismissal.
@@ -137,10 +193,25 @@ def review(net,slug,review_id,status,notes,*,compact=False):
     with net.project_store(pid).tx() as db:
         row=db.execute('SELECT value FROM settings WHERE key=?',(key(pid),)).fetchone()
         state=json.loads(row['value']) if row else {'report':None,'reviews':{}}
-        if not state['report'] or state['report'].get('input_revision')!=revision(net,pid) or review_id not in {r['review_id'] for r in state['report']['candidates']}:
+        if state.get('paged'):
+            candidate=db.execute('SELECT payload FROM code_audit_candidates WHERE project_id=? AND review_id=?',(pid,review_id)).fetchone()
+            if not state['report'] or state['report'].get('input_revision')!=revision(net,pid) or not candidate:
+                raise NetworkError('This audit candidate changed or expired. Run the audit again before reviewing it.')
+            decision={'state':status,'notes':notes.strip(),'reviewed_at':time.time()}
+            db.execute('UPDATE code_audit_candidates SET review_state=?,review=? WHERE project_id=? AND review_id=?',
+                       (status,json.dumps(decision),pid,review_id))
+            state['updated_at']=time.time()
+            db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',(key(pid),json.dumps(state)))
+            saved={**json.loads(candidate['payload']),'review':decision}
+        else:
+            saved=None
+        if saved is None and (not state['report'] or state['report'].get('input_revision')!=revision(net,pid) or review_id not in {r['review_id'] for r in state['report']['candidates']}):
             raise NetworkError('This audit candidate changed or expired. Run the audit again before reviewing it.')
-        state['reviews'][review_id]={'state':status,'notes':notes.strip(),'reviewed_at':time.time()}
-        db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',(key(pid),json.dumps(state)))
+        if saved is None:
+            state['reviews'][review_id]={'state':status,'notes':notes.strip(),'reviewed_at':time.time()}
+            db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',(key(pid),json.dumps(state)))
+    if saved is not None:
+        return {'candidate':saved} if compact else page(net,pid)
     if compact:
         candidate=next(r for r in state['report']['candidates'] if r['review_id']==review_id)
         return {'candidate':{**candidate,'review':state['reviews'][review_id]}}

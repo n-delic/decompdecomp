@@ -75,7 +75,7 @@ def _snapshot(net,proj):
     report=state['report'];queue_empty=bool(counts['total'] and not counts['open'])
     unresolved=0
     if report:
-        unresolved=sum(state.get('reviews',{}).get(r.get('review_id'),{}).get('state')!='dismissed' for r in report['candidates'])
+        unresolved=code_audit_reviews.unresolved(net,proj['id'],state)
         # A confirmed-code review is still missing code until it is recovered into
         # the project. Acknowledging a warning cannot turn it into a match.
     limits=bool(report and any(report.get(k) for k in LIMITS))

@@ -1,5 +1,7 @@
 """Saved review decisions are evidence, never a new function status."""
 import copy
+import json
+import sqlite3
 
 import pytest
 
@@ -69,6 +71,59 @@ def test_cancelled_report_does_not_replace_saved_audit(tmp_path):
         reviews.record(net, pid, changed, bytes(64), check=check)
     saved = reviews.decorated(reviews.load(net, pid))
     assert saved['gaps'] == first['gaps']
+
+
+def test_large_reports_page_reviews_and_preserve_decisions_across_storage_formats(tmp_path,monkeypatch):
+    net,pid,report=fixture(tmp_path)
+    monkeypatch.setattr(reviews,'PAGED_THRESHOLD',2)
+    old=reviews.record(net,pid,copy.deepcopy(report),bytes(1024))
+    first=old['candidates'][0]['review_id']
+    reviews.review(net,'demo',first,'dismissed','Verified as a data table.')
+    report['candidates'] += [dict(rom_offset=32+i*4,vram=4100+i*4,gap_start=16,gap_end=256,extent_bytes=4) for i in range(110)]
+    result=reviews.record(net,pid,copy.deepcopy(report),bytes(1024))
+    assert result['paged'] and result['candidate_count']==111 and result['eligible_count']==110
+    assert len(result['candidates'])==50
+    assert reviews.page(net,pid,1)['page']==1
+    assert len(reviews.page(net,pid,2)['candidates'])==10
+    shown=reviews.page(net,pid,0,True)
+    assert shown['eligible_count']==111 and shown['candidates'][0]['review']['state']=='dismissed'
+    assert reviews.unresolved(net,pid,reviews.load(net,pid))==110
+    rid=shown['candidates'][1]['review_id']
+    assert reviews.review(net,'demo',rid,'confirmed_code','Verified caller.',compact=True)['candidate']['review']['state']=='confirmed_code'
+    assert reviews.page(net,pid)['eligible_count']==109
+    again=reviews.record(net,pid,copy.deepcopy(report),bytes(1024))
+    assert again['eligible_count']==109
+    small={'candidates':[report['candidates'][0]],'gaps':1}
+    assert reviews.record(net,pid,small,bytes(1024))['candidates'][0]['review']['state']=='dismissed'
+
+
+def test_cancelled_large_report_keeps_previous_report(tmp_path,monkeypatch):
+    net,pid,report=fixture(tmp_path)
+    first=reviews.record(net,pid,copy.deepcopy(report),bytes(64))
+    monkeypatch.setattr(reviews,'PAGED_THRESHOLD',0)
+    calls=0
+    def check():
+        nonlocal calls
+        calls+=1
+        if calls==4:raise RuntimeError('Stopped')
+    with pytest.raises(RuntimeError,match='Stopped'):
+        reviews.record(net,pid,copy.deepcopy(report),bytes(64),check=check)
+    assert reviews.page(net,pid)==first
+
+
+def test_large_report_does_not_depend_on_single_sqlite_value_limit(tmp_path):
+    net,pid,report=fixture(tmp_path)
+    report['candidates']=[dict(rom_offset=i*4,vram=4096+i*4,gap_start=0,gap_end=10000,extent_bytes=4)
+                          for i in range(1100)]
+    assert len(json.dumps(report))>50000
+    store=net.project_store(pid)
+    previous=store.conn.setlimit(sqlite3.SQLITE_LIMIT_LENGTH,50000)
+    try:
+        result=reviews.record(net,pid,report,bytes(5000))
+        assert result['candidate_count']==1100
+        assert len(reviews.page(net,pid,21)['candidates'])==50
+    finally:
+        store.conn.setlimit(sqlite3.SQLITE_LIMIT_LENGTH,previous)
 
 
 def test_runtime_checkpoints_are_scoped_to_image_and_layout(tmp_path):
