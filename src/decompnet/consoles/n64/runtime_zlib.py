@@ -94,8 +94,21 @@ def verify_analysis(rom, expanded, rows):
     """Prove the appended bytes are exactly the declared original compressed streams."""
     if not isinstance(rows, list) or not rows or expanded[:len(rom)] != rom:
         return False
-    cursor = len(rom)+(-len(rom)%16)+16
-    if any(expanded[len(rom):cursor]):
+    base_size = rows[0].get('base_size', len(rom)) if isinstance(rows[0], dict) else 0
+    if type(base_size) is not int or not len(rom) <= base_size <= len(expanded):
+        return False
+    if base_size != len(rom):
+        from .boot_gzip import verify_analysis as verify_boot
+        ranges = rows[0].get('boot_ranges')
+        if (not isinstance(ranges, list) or not ranges
+                or any(not isinstance(r, (list, tuple)) or len(r) != 3
+                       or any(type(n) is not int for n in r) for r in ranges)
+                or any(not 0 <= start < end <= len(rom) or not 0x80000000 <= vram < 0x80800000
+                       for start, end, vram in ranges)
+                or not verify_boot(rom, expanded[:base_size], ranges)):
+            return False
+    cursor = base_size+(-base_size%16)+16
+    if any(expanded[base_size:cursor]):
         return False
     for row in rows:
         if not isinstance(row, dict) or type(row.get('offset')) is not int or type(row.get('size')) is not int:
@@ -111,10 +124,18 @@ def verify_analysis(rom, expanded, rows):
     return end == len(expanded) and not any(expanded[cursor:end])
 
 
-def add(config, workdir, image, rom, taken, rows, log):
+def add(config, workdir, image, rom, taken, rows, log, *, base_image=None, boot_ranges=None):
     from .loader_code import complete
 
-    expanded = bytearray(rom)
+    base = rom if base_image is None else base_image
+    if base != rom:
+        from .boot_gzip import verify_analysis as verify_boot
+        if not boot_ranges or not verify_boot(rom, base, boot_ranges):
+            return None
+        rows = [dict(row) for row in rows]
+        rows[0]['base_size'] = len(base)
+        rows[0]['boot_ranges'] = boot_ranges
+    expanded = bytearray(base)
     expanded.extend(bytes(-len(expanded)%16+16))
     programs = []
     for row in rows:
@@ -139,7 +160,7 @@ def add(config, workdir, image, rom, taken, rows, log):
         programs.append((row,start,text_start,text_end,end))
     cfg = yaml.safe_load(config.read_text(encoding='utf-8'))
     segments = [segment for segment in cfg['segments'] if not isinstance(segment,list) or len(segment) != 1]
-    segments.append(dict(type='bin',start=len(rom)))
+    segments.append(dict(type='bin',start=len(base)))
     for index,(row,start,text_start,text_end,end) in enumerate(programs):
         name = f'runtime_program_{index:04d}'
         parts = ([[start,'bin',name+'_prefix']] if text_start > start else []) + [[text_start,'c',name]]
