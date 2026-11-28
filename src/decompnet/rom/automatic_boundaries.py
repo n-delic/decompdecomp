@@ -25,6 +25,12 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
     if console.arch!='mips':return functions
     from .split import _LOCAL_REF, _SYMBOL_LINE, AsmLine, DataSymbol
     explicit={int(m[2],16) for text in symbols for m in _SYMBOL_LINE.finditer(text)}
+    from .callback_prefix import recover as recover_callback_prefixes
+    before_callbacks = len(functions)
+    functions = recover_callback_prefixes(functions, data, image, console, segments, explicit,
+                                           check=getattr(log, 'check_cancel', lambda: None))
+    if len(functions) < before_callbacks:
+        log(f'Recovered {before_callbacks-len(functions)} callback entries with validated shared slots.')
     starts={f.vram for f in functions}
     original_entries={(f.rom, f.vram):f for f in functions}
     order='big' if console.big_endian else 'little'

@@ -26,6 +26,56 @@ def fixture(words=BODY,cuts=(0,12,32),order='big'):
     return image,functions,[Segment('code',0,len(image),BASE)]
 
 
+@pytest.mark.parametrize('case', ['valid', 'different slot', 'one sibling', 'head call', 'body call', 'computed head',
+                                  'head pointer', 'explicit', 'competing mapping', 'non-code data', 'bad sibling',
+                                  'limited trace'])
+def test_callback_slot_recovers_a_scheduled_frame_entry_without_claiming_padding(case, monkeypatch):
+    from decompnet.rom import callback_prefix
+
+    recover = callback_prefix.recover
+    if case == 'limited trace':
+        read = callback_prefix.read
+        monkeypatch.setattr(callback_prefix, 'read', lambda *args, **kwargs: read(*args, **kwargs) | {'limited': True})
+
+    body = [0x27bdffe8,0xafbf0014,0,0x8fbf0014,0x03e00008,0x27bd0018]
+    sibling = [0x8f8503d4, *body]
+    head = [0xf85c0537,0x2925fc9e,0x8f8503d0]
+    sibling_one = BASE+44
+    sibling_two = BASE+72
+    targets = [BASE+16,sibling_one,sibling_two]
+    slots = [0xd34,0xd30 if case == 'different slot' else 0xd34,0xd34]
+    if case == 'one sibling': targets[-1] = BASE+0x400
+    caller = []
+    for target,slot in zip(targets,slots):
+        caller += [0x3c028000,0x24420000 | (target & 0xffff),0xaf820000 | slot]
+    if case == 'computed head':
+        caller += [0x3c028000,0x24421008,0xaf820d40]
+    if case in ('head call','body call'):
+        target = BASE+(8 if case == 'head call' else 20)
+        caller += [0x0c000000 | ((target >> 2) & 0x3ffffff),0]
+    caller += [0x03e00008,0]
+    words = [0x03e00008,0,*head,*body,*sibling,*sibling,*caller]
+    if case == 'bad sibling': words[18] = 0x27bdffd8
+    end = len(words)*4
+    image,functions,segments = fixture(words,cuts=(0,8,20,44,72,100,end))
+    if case == 'head pointer': image += (BASE+8).to_bytes(4,'big')
+    if case == 'competing mapping': segments.append(Segment('other',0,len(image),BASE))
+    data = [DataSymbol('existing',BASE+8,8,4,'data')] if case == 'non-code data' else []
+    explicit = {BASE+8} if case == 'explicit' else set()
+    result = recover(functions,data,image,consoles.get('n64'),segments,explicit)
+    found = [fn for fn in result if fn.vram == BASE+16]
+    assert bool(found) == (case == 'valid')
+    if found:
+        assert found[0].size == 28
+        assert any(symbol.rom == 8 and symbol.size == 8 and symbol.boundary_proven for symbol in data)
+        integrated_data = []
+        integrated = repair(functions, integrated_data, image, consoles.get('n64'), segments)
+        assert any(fn.vram == BASE+16 and fn.size == 28 for fn in integrated)
+        assert any(symbol.rom == 8 and symbol.size == 8 for symbol in integrated_data)
+    else:
+        assert any(fn.vram == BASE+8 and fn.size == 12 for fn in result)
+
+
 @pytest.mark.parametrize('case', ['padding', 'pointer', 'interior_pointer', 'called_padding', 'not_called_next',
                                   'not_loop', 'data', 'different_delay'])
 def test_unentered_transfers_after_a_called_self_loop_are_alignment(case):
