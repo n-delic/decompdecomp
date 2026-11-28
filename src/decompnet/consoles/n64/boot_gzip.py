@@ -224,10 +224,11 @@ def find(rom, boot_ranges):
         boot_rnc2,
         boot_rnx,
         boot_two_bit,
+        boot_variable_lz,
         boot_xor,
     )
     return (boot_compact_mio.find(rom, boot_ranges) or boot_raw_deflate.find(rom, boot_ranges) or boot_brs.find(rom, boot_ranges)
-            or boot_byte_lz.find(rom, boot_ranges) or boot_chunked_bits.find(rom, boot_ranges)
+            or boot_byte_lz.find(rom, boot_ranges) or boot_variable_lz.find(rom, boot_ranges) or boot_chunked_bits.find(rom, boot_ranges)
             or boot_lzss.find(rom, boot_ranges) or boot_flag_lz.find(rom, boot_ranges) or boot_huffman.find(rom, boot_ranges) or boot_refpack.find(rom, boot_ranges)
             or boot_two_bit.find(rom, boot_ranges) or boot_rnc2.find(rom, boot_ranges) or boot_erz.find(rom, boot_ranges)
             or boot_rnx.find(rom, boot_ranges) or boot_paired_rle.find(rom, boot_ranges) or boot_xor.find(rom, boot_ranges))
@@ -271,7 +272,17 @@ def inline_tables(text):
 def add(config, workdir, image, rom, boot_ranges, log):
     if not (programs := find(rom, boot_ranges)):
         return None
-    from . import boot_brs, boot_byte_lz, boot_chunked_bits, boot_erz, boot_lzss, boot_rnc2, boot_rnx, boot_two_bit
+    from . import (
+        boot_brs,
+        boot_byte_lz,
+        boot_chunked_bits,
+        boot_erz,
+        boot_lzss,
+        boot_rnc2,
+        boot_rnx,
+        boot_two_bit,
+        boot_variable_lz,
+    )
     from .boot_mapping import extend_startup_descriptor, extend_startup_trap
 
     extend_startup_trap(config, rom, log)
@@ -288,6 +299,7 @@ def add(config, workdir, image, rom, boot_ranges, log):
     expanded = bytearray(rom)
     two_bit = boot_two_bit.find(rom, boot_ranges) or boot_rnc2.find(rom, boot_ranges) or boot_erz.find(rom, boot_ranges)
     byte_lz = boot_byte_lz.find(rom, boot_ranges)
+    variable_lz = boot_variable_lz.find(rom, boot_ranges)
     chunked_bits = boot_chunked_bits.find(rom, boot_ranges)
     rnx = boot_rnx.find(rom, boot_ranges)
     if chunked_bits:
@@ -318,8 +330,13 @@ def add(config, workdir, image, rom, boot_ranges, log):
             vram += 8
             text = text[8:]
         sections = boot_lzss.startup_sections(text, vram) if boot_lzss.find(rom, boot_ranges) else None
+        variable_sections = boot_variable_lz.startup_sections(text, vram) if variable_lz else None
         two_bit_start = boot_two_bit.code_start(text) if two_bit and any(vram == p[0] for p in two_bit) else None
-        if chunked_bits and any(vram == p[0] and len(text) == len(p[1]) for p in chunked_bits):
+        if variable_sections:
+            entry_end, code_start = variable_sections
+            parts = [[start, 'hasm'], [start + entry_end, 'data', f'{name}_startup_data'],
+                     [start + code_start, 'c', name]]
+        elif chunked_bits and any(vram == p[0] and len(text) == len(p[1]) for p in chunked_bits):
             sections = boot_chunked_bits.variant_sections(text)
             if sections:
                 code, data_start, code_resume = sections

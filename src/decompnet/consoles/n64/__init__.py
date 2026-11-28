@@ -24,7 +24,7 @@
 - reloc_fragments.py: text and linked addresses from consecutive relocation-section fragments.
 - inline_data.py: verified constants and alignment bytes embedded among code.
 - boot_flag_lz.py: an audited flag-byte boot decoder and its bounded program stream.
-- boot_gzip.py, boot_compact_mio.py, boot_raw_deflate.py, boot_brs.py, boot_refpack.py, boot_rnc2.py, boot_rnx.py, boot_erz.py, boot_byte_lz.py, boot_huffman.py, boot_chunked_bits.py, boot_paired_rle.py, boot_xor.py: encoded programs placed by the boot loader; packed_mapping.py recovers linked addresses in other compressed code blocks. runtime_byte_cipher.py recovers an audited in-place runtime decoder.
+- boot_gzip.py, boot_compact_mio.py, boot_raw_deflate.py, boot_brs.py, boot_refpack.py, boot_rnc2.py, boot_rnx.py, boot_erz.py, boot_byte_lz.py, boot_variable_lz.py, boot_huffman.py, boot_chunked_bits.py, boot_paired_rle.py, boot_xor.py: encoded programs placed by the boot loader; packed_mapping.py recovers linked addresses in other compressed code blocks. runtime_byte_cipher.py recovers an audited in-place runtime decoder.
 - boot_mapping.py: returning TLB boot stubs separated from code with a strongly supported later load mapping.
 - sdk_assembly.py: exact self-contained libultra body fingerprints, classified before C claims.
 - profile_probes.py: the per-function compiler profiles its open functions are judged under automatically (SN 2.7.2 builds, KMC for libultra).
