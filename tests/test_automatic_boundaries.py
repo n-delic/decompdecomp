@@ -1347,6 +1347,27 @@ def test_shared_assembly_return_wrapper_joins_all_three_parts():
     assert {d.vram for d in data} >= {BASE+12, BASE+28}
 
 
+@pytest.mark.parametrize('case', ['jump', 'no_jump', 'internal_jump', 'delay_jump', 'overlap'])
+def test_called_assembly_loop_ends_before_independently_jumped_entry(case):
+    loop = [0x912c0000, 0x256bffff, 0x1d60fffd, 0x25290001, 0x03e00008, 0]
+    continuation = [0x240b0003, 0x0c000000 | ((BASE+16) >> 2 & 0x3ffffff), 0,
+                    0x03e00008, 0]
+    source = [0x0c000000 | ((BASE+16) >> 2 & 0x3ffffff), 0,
+              0x08000000 | ((BASE+40) >> 2 & 0x3ffffff), 0]
+    if case == 'no_jump':
+        source[2] = 0
+    if case == 'internal_jump':
+        source[2] = 0
+        continuation[0] = 0x08000000 | ((BASE+40) >> 2 & 0x3ffffff)
+    if case == 'delay_jump':
+        source[1] = 0x10000001
+    image, functions, segments = fixture(source+loop+continuation, cuts=(0, 16, 60))
+    if case == 'overlap':
+        segments.append(Segment('ambiguous', 0, len(image), BASE))
+    result = repair(functions, [], image, consoles.get('n64'), segments)
+    assert any(fn.vram == BASE+40 for fn in result) == (case == 'jump')
+
+
 @pytest.mark.parametrize('case', ['valid', 'no_back_edge', 'bad_target', 'external', 'data'])
 def test_backward_loop_preserves_the_callable_entry(case):
     from decompnet.rom.automatic_boundaries import backward_loop_entry

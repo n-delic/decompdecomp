@@ -395,7 +395,22 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
                 if not size and at+mapping in direct_calls and at in cuts:
                     size=assembly_extent(image,at,hi,at+mapping,console,order)
                     if size and at+size not in cuts:
-                        size=None
+                        # A closed assembly leaf can swallow a separate entry
+                        # that outside code jumps to immediately after its return.
+                        # Require a direct jump from this same mapped segment;
+                        # a branch inside the body or an overlay is not proof.
+                        target = at+size+mapping
+                        jumped = any(
+                            (source < at or source >= hi) and segment.rom_start+4 <= source < segment.rom_end-4
+                            and int.from_bytes(image[source:source+4],order) >> 26 == 2
+                            and (((source+mapping+4)&0xf0000000)
+                                 | ((int.from_bytes(image[source:source+4],order)&0x3ffffff)<<2)) == target
+                            and not _has_delay_slot(int.from_bytes(image[source-4:source],order))
+                            and not _has_delay_slot(int.from_bytes(image[source+4:source+8],order))
+                            and not any(other.rom_start <= source < other.rom_end for other in siblings)
+                            for source, _ in references.get(target, ()))
+                        if not jumped:
+                            size=None
             if not size:continue
             end=at+size;address=at+mapping;finish=end+mapping
             preceding=at-4
