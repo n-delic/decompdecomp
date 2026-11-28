@@ -73,9 +73,13 @@ def _reimport_claim(net, slug, name, agent):
             if current is not None and current['status'] == 'open':
                 claimed = time.time()
                 net._open_claim(db, current, agent, claimed, net._project(slug))
+        previous = getattr(net._compile_ahead_local, 'reimport_claim', None)
+        if claimed is not None:
+            net._compile_ahead_local.reimport_claim = (fn['project_id'], fn['id'], agent.id, claimed)
         try:
             yield
         finally:
+            net._compile_ahead_local.reimport_claim = previous
             if claimed is not None:
                 with store.tx() as db:
                     deleted = db.execute('DELETE FROM claims WHERE function_id=? AND agent_id=? AND claimed_at=?',

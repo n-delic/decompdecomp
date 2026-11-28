@@ -418,7 +418,10 @@ class JudgeMixin:
             return False
         for poll in range(100):
             if check_cancel is not None:check_cancel()
-            held = self.project_store(fn['project_id']).one('SELECT agent_id FROM claims WHERE function_id=?', fid)
+            held = self.project_store(fn['project_id']).one('SELECT agent_id,claimed_at FROM claims WHERE function_id=?', fid)
+            own = getattr(self._compile_ahead_local, 'reimport_claim', None)
+            if held and own == (fn['project_id'], fid, held['agent_id'], held['claimed_at']):
+                return poll > 0  # This reimport opened the claim for its own saved-source check.
             identity = self.store.one('SELECT name FROM agents WHERE id=?', held['agent_id']) if held else None
             if not identity or identity['name'] != 'autopilot':
                 return poll > 0

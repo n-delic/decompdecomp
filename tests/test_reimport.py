@@ -92,6 +92,62 @@ def test_reimport_rejudge_releases_only_its_own_claims(tmp_path):
     assert 'removed' in note['text'] and 'int preserved;' in note['text']
 
 
+def test_reimport_does_not_wait_on_its_own_autopilot_claim(tmp_path, monkeypatch):
+    from decompnet.app.engine import importing, judging
+
+    net = RomNetwork(tmp_path/'app.db', tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute('INSERT INTO projects(slug,name,root,arch,config) VALUES(?,?,?,?,?)',
+                         ('game', 'Game', str(tmp_path), 'mips', '{}')).lastrowid
+        for index, name in enumerate(('own', 'other')):
+            db.execute('INSERT INTO functions(project_id,name,size,n_insns,target,relocs,status,vram) '
+                       'VALUES(?,?,?,?,?,?,?,?)', (pid, name, 4, 1, b'\0'*4, '[]', 'open', 0x80000000+4*index))
+    agent = net.attribution_agent('autopilot')
+    store = net.project_store(pid)
+    other = net._function('other', 'game')
+    with store.tx() as db:
+        db.execute('INSERT INTO claims VALUES(?,?,?,?)', (other['id'], agent.id, 1.0, 9999999999.0))
+    waited = []
+    def release(_):
+        waited.append(True)
+        with store.tx() as db:
+            db.execute('DELETE FROM claims WHERE function_id=?', (other['id'],))
+    monkeypatch.setattr(judging, 'time', SimpleNamespace(sleep=release))
+    with importing._reimport_claim(net, 'game', 'own', agent):
+        assert net._yield_autopilot('own', 'game') is False
+        assert waited == []
+        assert net._yield_autopilot('other', 'game') is True
+        assert waited == [True]
+    assert getattr(net._compile_ahead_local, 'reimport_claim', None) is None
+    assert store.one('SELECT COUNT(*) AS n FROM claims')['n'] == 0
+
+
+def test_reimport_still_waits_if_its_claim_is_replaced(tmp_path, monkeypatch):
+    from decompnet.app.engine import importing, judging
+
+    net = RomNetwork(tmp_path/'app.db', tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute('INSERT INTO projects(slug,name,root,arch,config) VALUES(?,?,?,?,?)',
+                         ('game', 'Game', str(tmp_path), 'mips', '{}')).lastrowid
+        db.execute('INSERT INTO functions(project_id,name,size,n_insns,target,relocs,status,vram) '
+                   'VALUES(?,?,?,?,?,?,?,?)', (pid, 'f', 4, 1, b'\0'*4, '[]', 'open', 0x80000000))
+    agent = net.attribution_agent('autopilot')
+    store = net.project_store(pid)
+    fn = net._function('f', 'game')
+    waited = []
+    def release(_):
+        waited.append(True)
+        with store.tx() as db:
+            db.execute('DELETE FROM claims WHERE function_id=?', (fn['id'],))
+    monkeypatch.setattr(judging, 'time', SimpleNamespace(sleep=release))
+    with importing._reimport_claim(net, 'game', 'f', agent):
+        with store.tx() as db:
+            db.execute('UPDATE claims SET claimed_at=? WHERE function_id=?', (1.0, fn['id']))
+        assert net._yield_autopilot('f', 'game') is True
+        assert waited == [True]
+    assert getattr(net._compile_ahead_local, 'reimport_claim', None) is None
+
+
 @pytest.mark.parametrize("legacy_reset",[False,True])
 def test_reimport_replaces_analysis_and_keeps_only_unchanged_matches(tmp_path, monkeypatch, legacy_reset):
     root = tmp_path / "game"
