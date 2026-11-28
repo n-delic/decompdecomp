@@ -91,11 +91,40 @@ def bridge_called_frame(rom, segments, taken=(), *, called=()):
 
 
 def complete(rom, segments, taken=(), *, called=(), allow_inferred_overlap=False):
+    import hashlib
+
     import rabbitizer
 
+    from .sdk_assembly import KNOWN
+
+    sdk_sizes = {value[1] for value in KNOWN.values()}
     result = []
     all_segments = list(segments)+list(taken)
     for start,end,vram in segments:
+        # A large SDK leaf can contain several returns before the scanner's
+        # cutoff. Its full, known digest and a direct call prove the entry;
+        # do not infer an end from any of those intermediate returns.
+        sdk_ends = []
+        for address in called:
+            entry = start + address-vram
+            if not start <= entry < end:
+                continue
+            for size in sdk_sizes:
+                stop = entry+size
+                if not end < stop <= len(rom):
+                    continue
+                if any(address < other < address+size for other in called):
+                    continue
+                if any(a < stop and end < b for a,b,v in all_segments if (a,b,v) != (start,end,vram)):
+                    continue
+                if any(v < vram+stop-start and vram+end-start < v+b-a
+                       for a,b,v in all_segments if (a,b,v) != (start,end,vram)):
+                    continue
+                digest = hashlib.sha256(rom[entry:stop]).hexdigest()
+                if digest in KNOWN and KNOWN[digest][1] == size:
+                    sdk_ends.append(stop)
+        if len(set(sdk_ends)) == 1:
+            end = sdk_ends[0]
         word = lambda at:int.from_bytes(rom[at:at+4],'big')
         # Alignment adds at most 12 bytes after a return and its delay slot.
         returns = [at for at in range(max(start,end-32),end-4,4) if word(at)==JR_RA]
