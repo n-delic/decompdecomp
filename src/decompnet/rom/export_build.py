@@ -518,7 +518,11 @@ def linker_script(provides: dict[str, str], placed: list[tuple[int, int, str]], 
                 if symbol["st_shndx"] != "SHN_UNDEF":
                     continue
                 name = symbol.name
-                address = AUTO_NAME.match(name) or re.fullmatch(r"\.L([0-9A-Fa-f]{8})(?:_[\w]+)?", name)
+                # A scoped overlay may define an automatic name locally in
+                # one object while another object refers to it. Its suffix
+                # identifies the bank; the first address is still the target.
+                base = re.sub(r'_code_[0-9A-Fa-f]{8}$', '', name)
+                address = AUTO_NAME.fullmatch(base) or re.fullmatch(r"\.L([0-9A-Fa-f]{8})(?:_[\w]+)?", name)
                 if address:
                     auto_addresses[name] = int(address.group(1), 16)
     lines += [f'PROVIDE("{name}" = 0x{address:08X});' for name, address in sorted(auto_addresses.items())]
