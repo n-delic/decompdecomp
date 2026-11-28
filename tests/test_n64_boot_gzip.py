@@ -2,7 +2,29 @@
 
 import gzip
 
+import yaml
+
 from decompnet.consoles.n64 import boot_gzip, code
+
+
+def test_boot_program_keeps_a_partial_data_word_as_raw_bytes(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import boot_mapping, loaded_code
+    from decompnet.rom import split
+
+    rom = bytes(0x100)
+    text, data = b'code' * 4, b'data\x12\x34'
+    programs = ((0x80001000, text, data),)
+    monkeypatch.setattr(boot_gzip, 'find', lambda *_: programs)
+    monkeypatch.setattr(boot_mapping, 'extend_startup_trap', lambda *_: None)
+    monkeypatch.setattr(boot_mapping, 'extend_startup_descriptor', lambda *_: None)
+    monkeypatch.setattr(split, 'code_ranges', lambda *_: [])
+    monkeypatch.setattr(loaded_code, 'find', lambda *_, **__: {})
+    config = tmp_path/'game.yaml'
+    config.write_text(yaml.safe_dump({'options': {'target_path': 'game.z64'}, 'segments': [[len(rom)]]}))
+    result = boot_gzip.add(config, tmp_path, 'game.z64', rom, [], lambda *_: None)
+    cfg = yaml.safe_load(config.read_text())
+    assert cfg['segments'][-2] == {'type': 'bin', 'start': len(rom) + len(text) + 4}
+    assert (tmp_path/result).read_bytes() == rom + text + data
 
 
 def test_boot_loader_places_both_gzip_programs(monkeypatch):
