@@ -14,7 +14,9 @@ What runs, for each open function, smallest first:
   m2c without its strict mode, what an agent's brief shows), and the saved best, each judged once (the same text is
   judged only once);
 - the profiles (`plan`): the ones the project's matched functions use now (compiler_profile_usage: per-function
-  profiles, ranges and the default), the most used first, never the function's own; and for a MIPS GCC function whose
+  profiles, ranges and the default), the most used first, never the function's own; then those of the matched
+  functions beside it that the most used ones leave out (`neighbour_profiles`: a file or library built its own way
+  is a few functions of a large project, so counting the whole project never reaches its profile); and for a MIPS GCC function whose
   target's float registers point to the other register file (fp_fingerprints.why), the other `-mfp` flag of its own
   profile and of each of those;
 - each pair through deep_profiles.probe, the call the profile probe and the Deep Permuter's sweep use: a verdict is
@@ -47,6 +49,7 @@ log = logging.getLogger("decompdecomp")
 
 SIGNATURE = "profile-drafts-v1:"
 MAX_USED = 4  # the project's most used profiles judged per function (their float-register variants come on top)
+NEIGHBOURS = 2  # the matched functions on each side of a function whose profiles are judged too
 HOLD_SECONDS = 600  # one function's hold: every pair below compiles in far less
 SEARCH_MINUTES = 10
 VERIFY = 3  # compiles an exact pair's recheck and apply take beyond the pairs themselves (deep_profiles.probe)
@@ -71,6 +74,25 @@ def used_profiles(net, proj) -> list[dict]:
             for p in sorted(used, key=lambda p: (-p["matched"], key(p)))]
 
 
+def neighbour_profiles(net, proj, cfg, fn, used) -> list[dict]:
+    """Those of `used` that the matched functions nearest to `fn` (NEIGHBOURS on each side) are built with, however
+    few functions of the project use them. By place in the ROM, which overlays don't share, else by address."""
+    from ..project import compiler_for
+    row = dict(fn)
+    column = "rom_offset" if row.get("rom_offset") is not None else "vram"
+    if row.get(column) is None:
+        return []
+    near = set()
+    for side, order in (("<", "DESC"), (">", "ASC")):
+        for other in net.project_store(proj["id"]).all(
+                "SELECT name,vram,rom_offset FROM functions WHERE project_id=? AND status='matched' "
+                f"AND {column}{side}? ORDER BY {column} {order} LIMIT ?", proj["id"], row[column], NEIGHBOURS):
+            theirs = compiler_for(cfg, other["vram"], other)
+            if theirs.get("toolchain") and not theirs.get("cmd"):
+                near.add(key(deep_profiles._profile(theirs)))
+    return [p for p in used if key(p) in near]
+
+
 def _fp_variant(arch, profile, code, big_endian) -> list[str] | None:
     """`profile`'s flags with the other `-mfp` flag, when the target's float registers say it was built so. MIPS GCC
     profiles that name the register file only (as profile_probe.mips_gcc): IDO has no such flag."""
@@ -81,9 +103,10 @@ def _fp_variant(arch, profile, code, big_endian) -> list[str] | None:
     return fp_fingerprints.flipped(flags) if fp_fingerprints.why(flags, code, (), big_endian) else None
 
 
-def plan(arch, own, used, code, big_endian=True) -> list[dict]:
-    """The profiles to judge one function's texts under, in order: the used ones (at most MAX_USED), then the other
-    float-register file of its own profile and of each of those. Never its own profile, never one twice."""
+def plan(arch, own, used, code, big_endian=True, near=()) -> list[dict]:
+    """The profiles to judge one function's texts under, in order: the used ones (at most MAX_USED), those of its
+    matched neighbours (`near`) not among them, then the other float-register file of its own profile and of each of
+    those. Never its own profile, never one twice."""
     seen, out = {key(own)}, []
 
     def add(profile, why):
@@ -93,6 +116,9 @@ def plan(arch, own, used, code, big_endian=True) -> list[dict]:
     chosen = used[:MAX_USED]
     for profile in chosen:
         add(profile, f"{profile['matched']} matched functions of this project use it")
+    for profile in near:
+        add(profile, "a matched function beside it uses it")
+    chosen = [*chosen, *(p for p in near if p not in chosen)]
     for base in [own, *chosen]:
         if (flags := _fp_variant(arch, base, code, big_endian)) is not None and _ready(base["toolchain"]):
             add({"toolchain": base["toolchain"], "flags": flags}, "the target's float registers point to the other register file")
@@ -174,7 +200,7 @@ def run_one(net, agent, proj, fn, used, cancelled=lambda: False) -> str:
     own = deep_profiles._profile(own)
     arch = proj["arch"] if "arch" in proj.keys() else "mips"
     big = bool(proj["big_endian"]) if "big_endian" in proj.keys() else True
-    profiles = plan(arch, own, used, bytes(fn["target"] or b""), big)
+    profiles = plan(arch, own, used, bytes(fn["target"] or b""), big, neighbour_profiles(net, proj, cfg, fn, used))
     if not profiles:
         return "skip"
     if finished(net, proj, fn, profiles):
