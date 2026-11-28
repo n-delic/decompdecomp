@@ -118,6 +118,8 @@
   affected scopes together and retains them only if the old functions and new bodies split exactly.
   The search also recovers an exact, complete SDK body immediately before a function when its neighbouring
   functions establish the same mapping, including routines whose first instruction precedes their stack frame.
+  It can recover a closed body in a data subsegment when an existing function on the same mapping calls it,
+  preserving the surrounding data and staging the new split alongside every existing function.
 - Done: the N64 missed-function search can recover a verified body inside a handwritten boot
   assembly unit while keeping the surrounding assembly. Planned: apply the same verified
   recovery automatically during the initial import.
