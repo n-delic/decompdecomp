@@ -361,6 +361,19 @@ def test_a_piece_whose_frame_comes_after_scheduled_loads_joins_its_tail():
     assert [(f.vram,f.size) for f in result]==[(BASE,8),(BASE+8,40)]
 
 
+def test_called_load_before_frame_joins_closed_scheduled_switch():
+    words = [0x8f8204b4, 0x27bdffe8, 0xafbf0014,
+             0x2c430002, 0x1060000b, 0x00021880, 0x3c048000, 0x24841100,
+             0x00641021, 0x8c430000, 0x00600008, 0,
+             0x10000003, 0, 0, 0, 0x8fbf0014, 0x03e00008, 0x27bd0018,
+             0x0c000000 | ((BASE >> 2) & 0x3ffffff), 0, 0x03e00008, 0]
+    image, functions, segments = fixture(words, cuts=(0, 4, 76, 92))
+    image += bytes(0x100-len(image)) + (BASE+48).to_bytes(4, 'big') + (BASE+64).to_bytes(4, 'big')
+    segments.append(Segment('table', 0x100, 0x108, BASE+0x100))
+    result = repair(functions, [], image, consoles.get('n64'), segments)
+    assert [(fn.rom, fn.size) for fn in result] == [(0, 76), (76, 16)]
+
+
 @pytest.mark.parametrize('independent_call', [False, True])
 def test_pc_relative_halfword_table_is_data_unless_called(independent_call):
     words = [
