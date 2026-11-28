@@ -13,7 +13,7 @@ O1 diagnostic score was 610; the function was still open.
 Staging the masked index in a used `u32` local, then assigning the used offset
 inside a one-shot scope, changed the read-only linked comparison from 610 to
 550. The source retains field reads after calls. The scope is compiler-matching
-scaffolding. The app confirmation was pending when the observation was made;
+scaffolding. The app subsequently confirmed the 550 diagnostic;
 the function did not match.
 
 Scoping the masked-index assignment instead scored 705; a narrow-index local
