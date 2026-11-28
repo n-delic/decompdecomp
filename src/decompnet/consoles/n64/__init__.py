@@ -301,6 +301,11 @@ class Nintendo64(Console):
 
         return rebind_native_calls(fn, source)
 
+    def retry_reimport_source(self, net, project, fn, source):
+        from .reimport_bindings import retry
+
+        return retry(net, project, fn, source)
+
     def separate_overlay_reference(self, binding, number):
         from .uso_match import separate_reference
 
