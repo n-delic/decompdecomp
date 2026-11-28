@@ -22,6 +22,7 @@ mod native;
 mod rom_judge;
 mod desktop_judge;
 mod entry_fixes;
+mod elf_extract;
 mod scoring;
 mod twins_prints;
 mod automatic_boundaries;
@@ -1093,6 +1094,9 @@ fn main() {
     }
     if args.as_slice() == ["scoring-diff"] {
         std::process::exit(scoring::serve());
+    }
+    if args.as_slice() == ["elf-extract"] {
+        std::process::exit(elf_extract::serve());
     }
     if args.as_slice() == ["automatic-boundaries"] {
         std::process::exit(automatic_boundaries::serve());
