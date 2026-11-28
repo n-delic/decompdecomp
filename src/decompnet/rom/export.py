@@ -185,6 +185,59 @@ def _first_address(path: Path) -> tuple[int | None, int | None]:
     return None, None
 
 
+def _resplit_unemitted(config, root, rows, image, excluded=()):
+    """Give known non-overlapping entries swallowed by splat a new source unit."""
+    paths = sorted((root/'asm'/'nonmatchings').glob('**/*.s'))
+    present = {(vram, rom) for path in paths for rom, vram in [_first_address(path)] if vram is not None}
+    eligible = {row['name']: row for row in rows if row['name'] not in excluded
+                and (row['vram'], row['rom_offset']) not in present}
+    mappings = _segments(config)
+    changed = []
+    for path in paths:
+        # One cut per oversized output file is enough for the next splat pass
+        # to expose the remaining entries; subsequent passes can cut again.
+        text = path.read_text(encoding='utf-8', errors='replace')
+        for kind, name in _SPLAT_LABEL.findall(text):
+            if kind != 'alabel' or name not in eligible:
+                continue
+            row = eligible[name]
+            lo, size, address, target = row['rom_offset'], row['size'], row['vram'], row['target']
+            if (type(lo) is not int or type(size) is not int or type(address) is not int
+                    or lo < 0 or size <= 0 or lo+size > len(image)
+                    or not isinstance(target, bytes) or target != image[lo:lo+size]):
+                continue
+            if any(other['name'] != name and type(other['rom_offset']) is int and type(other['size']) is int
+                   and other['rom_offset'] < lo < other['rom_offset']+other['size'] for other in rows):
+                continue
+            owners = [s for s in mappings if s.get('type') == 'code' and s.get('end') is not None
+                      and s['start'] <= lo < lo+size <= s['end']
+                      and s.get('vram') is not None and s['vram']+lo-s['start'] == address]
+            if len(owners) != 1:
+                continue
+            segment = next((s for s in config['segments'] if isinstance(s, dict)
+                            and s.get('type') == 'code' and s.get('start') == owners[0]['start']), None)
+            if segment is None:
+                continue
+            subs = segment.get('subsegments', [])
+            preceding = [s for s in subs if isinstance(s, list) and len(s) >= 3
+                         and isinstance(s[0], int) and s[0] < lo]
+            following = [s[0] for s in subs if isinstance(s, list) and s and isinstance(s[0], int) and s[0] >= lo]
+            source = max(preceding, key=lambda s:s[0], default=None)
+            if source is None or source[1] != 'c' or (following and min(following) <= lo):
+                continue
+            stem = str(source[2]).rsplit('/', 1)[-1][:120]
+            directory = str(source[2]).rpartition('/')[0]
+            new = f'{stem}_export_{lo:X}'
+            if directory:
+                new = f'{directory}/{new}'
+            subs.append([lo, 'c', new])
+            subs.sort(key=lambda s:s[0] if isinstance(s, list) and s and isinstance(s[0], int)
+                      else s.get('start', float('inf')) if isinstance(s, dict) else float('inf'))
+            changed.append(name)
+            break
+    return changed, present
+
+
 def _symbol_lines(net, proj, rows=None, excluded=(), segments=(), unsized=()) -> list[str]:
     """symbol_addrs.txt entries for every function and every named symbol, so splat writes the project's names. A
     function's size too: spimdisasm ends a function with a switch at its first return, and the import put the cases
@@ -275,6 +328,24 @@ def _export_segments(config: dict, functions) -> dict:
     """
     from .reviewed import extend_config, restore_cut_banks
     config = extend_config(restore_cut_banks(config), functions)
+    starts = {(f['vram'], dict(f).get('rom_offset')) for f in functions}
+    for segment in config.get('segments', []):
+        if not isinstance(segment, dict) or segment.get('type') != 'code' or 'vram' not in segment:
+            continue
+        subs = segment.get('subsegments', [])
+        kept = []
+        for sub in subs:
+            at = sub[0] if isinstance(sub, list) and sub else sub.get('start') if isinstance(sub, dict) else None
+            kind = sub[1] if isinstance(sub, list) and len(sub) > 1 else sub.get('type') if isinstance(sub, dict) else None
+            address = segment['vram']+at-segment['start'] if isinstance(at, int) else None
+            inside_match = (kind == 'c' and address is not None and (address, at) not in starts
+                            and any(dict(f).get('status') == 'matched' and f['vram'] is not None
+                                    and type(dict(f).get('rom_offset')) is int
+                                    and f['vram'] < address < f['vram']+f['size']
+                                    and f['rom_offset']+address-f['vram'] == at for f in functions))
+            if not inside_match:
+                kept.append(sub)
+        segment['subsegments'] = kept
     # The export writes its own complete symbol table; project-specific paths are not copied there.
     config.setdefault('options', {})['symbol_addrs_path'] = ['symbol_addrs.txt']
     # Splat uses the function sizes we supply to keep switch tails in text. Its BSS scan
@@ -451,7 +522,7 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
     proj = net._project(slug)
     cfg = net.cfg(proj)
     store = net.project_store(proj['id'])
-    population = store.all('SELECT name,vram,size,rom_offset,meta,target FROM functions WHERE project_id=?', proj['id'])
+    population = store.all('SELECT name,vram,size,rom_offset,meta,target,status FROM functions WHERE project_id=?', proj['id'])
     analysis_only = _analysis_only_names(cfg, population)
     excluded = analysis_only | {r['name'] for r in population if r['meta'] and console.overlay_cartridge_placement(r, cfg)}
     # Raw overlay entries still occupy space in the cartridge split; build their C
@@ -492,9 +563,23 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
     # exactly at its end; boundary review still decides whether it is valid.
     unsized = _fallthrough_entries(population, console)
     (out / "symbol_addrs.txt").write_text("\n".join(_symbol_lines(net, proj, population, analysis_only, _segments(exported_config), unsized)) + "\n", encoding="utf-8")
-    res = run([console_python(), "-m", "splat", "split", "splat.yaml"], out, log)
-    if res.returncode != 0:
-        raise ExportError("splat failed:\n" + (res.stdout + res.stderr)[-1500:])
+    while True:
+        res = run([console_python(), "-m", "splat", "split", "splat.yaml"], out, log)
+        if res.returncode != 0:
+            raise ExportError("splat failed:\n" + (res.stdout + res.stderr)[-1500:])
+        cuts, present = _resplit_unemitted(exported_config, out, population, image, excluded)
+        if not cuts:
+            missing = [r['name'] for r in population if r['name'] not in excluded and r['status'] == 'matched'
+                       and (r['vram'], r['rom_offset']) not in present]
+            if missing:
+                raise ExportError(f"Splat did not emit {len(missing)} matched functions, including {missing[0]}. "
+                                  "Review their boundaries before exporting.")
+            break
+        log(f"Splitting {len(cuts)} known entries that splat placed inside other functions.")
+        (out/'splat.yaml').write_text(yaml.safe_dump(exported_config, sort_keys=False), encoding='utf-8')
+        for folder in (out/'asm', out/'src'):
+            if folder.is_dir():
+                shutil.rmtree(folder)
     remove_foreign_bank_labels(out, population, _segments(exported_config))
     for generated in (out / "src").glob("*.c"):
         generated.unlink()  # splat's INCLUDE_ASM files: this tree builds one object per function instead
