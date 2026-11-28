@@ -863,7 +863,7 @@ def insert_segments(config: Path, cfg: dict, found, size: int, *, scopes=None) -
     # Several import paths also discover code in a raw child of a code parent. Keep it in that
     # parent: a top-level insertion would cut off the parent's later children and lose their mappings.
     parents = split.segments_from_config_data(cfg)
-    children, outside = [], []
+    children, outside, recovered_tails = [], [], []
     for body in found:
         lo, hi, _ = body
         overlaps = [s for s in parents if s.rom_start < hi and lo < s.rom_end]
@@ -873,7 +873,10 @@ def insert_segments(config: Path, cfg: dict, found, size: int, *, scopes=None) -
                 children.append(body)
                 continue
             if len(overlaps) == 1 and _replaceable_parent_tail(cfg, body):
-                outside.append(body)
+                raw = next(s for s in cfg['segments'] if isinstance(s, dict) and s.get('start') == parent.rom_start)
+                source = max((s for s in raw['subsegments'] if isinstance(s, list) and len(s) >= 2 and s[0] <= lo),
+                             key=lambda s: s[0])
+                recovered_tails.append((body, raw, source[1]))
                 continue
             raw = next((s for s in cfg.get('segments', []) if isinstance(s, dict)
                         and s.get('start') == parent.rom_start and s.get('type') == 'code'), {})
@@ -885,8 +888,22 @@ def insert_segments(config: Path, cfg: dict, found, size: int, *, scopes=None) -
                 raise RomError('Recovered code crosses an existing bank or has a different mapping. Review it before importing.')
         else:
             outside.append(body)
-    if children:
-        _cut_inside(cfg, sorted(children))
+    # Keep discoveries in their existing parent: separate top-level banks at
+    # guessed boundaries can cut one real function across export parents.
+    for (lo, _, _), parent, _ in recovered_tails:
+        child = next((s for s in parent['subsegments'] if isinstance(s, list) and s and s[0] == lo), None)
+        if child is None:
+            parent['subsegments'].append([lo, 'bin'])
+        else:
+            child[1] = 'bin'
+    if children or recovered_tails:
+        _cut_inside(cfg, sorted(children + [body for body, _, _ in recovered_tails]))
+    starts = {body[0] for body, _, _ in recovered_tails}
+    for (_, hi, _), parent, kind in recovered_tails:
+        if hi not in starts:
+            child = next((s for s in parent['subsegments'] if isinstance(s, list) and s and s[0] == hi), None)
+            if child is not None and child[1] == 'bin':
+                child[1] = kind
     found = outside
 
     def start_of(seg):
@@ -1233,7 +1250,7 @@ def _replaceable_parent_tail(cfg, body):
     subs = [s for s in seg.get('subsegments', []) if isinstance(s, list) and len(s) >= 2]
     source = max((s for s in subs if s[0] <= lo), key=lambda s: s[0], default=None)
     return (source is not None and source[1] in ('data', '.data', 'rodata', '.rodata')
-            and not any(s[0] >= lo for s in subs))
+            and not any(s[0] > lo or s[0] == lo and s is not source for s in subs))
 
 
 def _cut_inside(cfg, bodies):
