@@ -592,12 +592,14 @@ def register(app: App) -> None:
             result=rom_explorer.listing(net,slug)
             view_cache.save(net,proj,'rom-explorer',result)
             return result
+        scene = rom_explorer.scene_request(data.get('scene'))
         # Reserve discovery and start atomically: double clicks and two windows
         # must attach to the same project job rather than launch duplicate scans.
         with jobs._lock:
             active = jobs.active(('rom-explorer',), project=slug)
-            if active:return {'job':active['id']}
-            return {'job':jobs.start('rom-explorer',lambda log:rom_explorer.run(net,slug,log),project=slug,
+            if active and scene is None:return {'job':active['id']}
+            return {'job':jobs.start('rom-explorer',lambda log:rom_explorer.run(net,slug,log) if scene is None
+                                     else rom_explorer.run(net,slug,log,scene),project=slug,
                                      cancel_message='ROM scan stopped. The previous completed map and notes are retained.')}
 
     def p_rom_annotation(slug, request, data):

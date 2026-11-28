@@ -70,6 +70,20 @@ function setup(){
     follow.resolve({});await promise;
     assert.equal(t.context.$('romReload').disabled,false);assert.equal(t.context.$('romStop').hidden,true);assert.equal(t.renders.length,1);
   }
+  // A later-scene request acknowledges immediately and carries its script once.
+  {
+    const t=setup(),start=deferred(),follow=deferred();
+    t.context.$('romSceneSeconds').value='600';t.context.$('romSceneInput').value='600:START,608:';
+    t.context.reply=(url,opts)=>opts?.method==='POST' ? start.promise : Promise.resolve({available:true,size:20,regions:[]});
+    t.context.follow=()=>follow.promise;
+    const pending=t.run('scanRomExplorer(true)');await tick();
+    assert.equal(t.context.$('romSceneScan').disabled,true);
+    assert.equal(t.calls[0].options.body.scene.vis,36000);
+    assert.equal(t.calls[0].options.body.scene.inputs,'600:START,608:');
+    await t.run('scanRomExplorer(true)');assert.equal(t.calls.length,1);
+    start.resolve({job:'scene'});await tick();follow.resolve({});await pending;
+    assert.equal(t.context.$('romSceneScan').disabled,false);
+  }
   // Every supported tab entry starts once, including when a saved map exists.
   // Completion and Stop do not trigger another automatic pass.
   {

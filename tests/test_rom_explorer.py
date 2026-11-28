@@ -96,6 +96,133 @@ class Log:
     def check_cancel(self):pass
 
 
+@pytest.mark.parametrize('value',[{}, {'vis':0,'inputs':'1:A'}, {'vis':36001,'inputs':'1:A'},
+                                  {'vis':60,'inputs':''}, {'vis':60,'inputs':'@file'},
+                                  {'vis':True,'inputs':'1:A'}, {'vis':60,'inputs':'1:UNKNOWN'},
+                                  {'vis':60,'inputs':'1:SX=200'}, {'vis':60,'inputs':'2:A,1:'},
+                                  {'vis':60,'inputs':'61:A'}])
+def test_later_scene_rejects_invalid_limits_and_scripts(value):
+    from decompnet.app import rom_explorer
+    from decompnet.network import NetworkError
+
+    with pytest.raises(NetworkError):rom_explorer.scene_request(value)
+    assert rom_explorer.scene_request({'vis':36000,'inputs':'600:START,608:,700:SX=-80,708:'})['vis']==36000
+
+
+def test_later_scene_waits_for_an_earlier_scan_without_losing_its_request(monkeypatch):
+    import threading
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from decompnet.app import rom_explorer
+
+    net=SimpleNamespace(progress=SimpleNamespace(view=nullcontext))
+    entered,release = threading.Event(),threading.Event()
+    seen=[]
+    def run(_net,_slug,_log,scene):
+        seen.append(scene)
+        if scene is None:
+            entered.set()
+            assert release.wait(5)
+        return scene
+    monkeypatch.setattr(rom_explorer,'_run',run)
+    first=threading.Thread(target=rom_explorer.run,args=(net,'game',Log()))
+    later_log=Log()
+    later=threading.Thread(target=rom_explorer.run,args=(net,'game',later_log,{'vis':60,'inputs':'1:A'}))
+    first.start();assert entered.wait(5)
+    later.start()
+    for _ in range(100):
+        if later_log.updates:break
+        threading.Event().wait(.01)
+    assert later_log.updates[-1]['phase']=='Waiting for the earlier ROM scan'
+    release.set();first.join(5);later.join(5)
+    assert not first.is_alive() and not later.is_alive()
+    assert seen == [None,{'vis':60,'inputs':'1:A'}]
+
+
+def test_stopped_waiting_scene_leaves_the_scan_queue(monkeypatch):
+    import threading
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from decompnet.app import rom_explorer
+
+    net=SimpleNamespace(progress=SimpleNamespace(view=nullcontext))
+    entered,release = threading.Event(),threading.Event()
+    def run(_net,_slug,_log,_scene):
+        entered.set()
+        assert release.wait(5)
+    monkeypatch.setattr(rom_explorer,'_run',run)
+    first=threading.Thread(target=rom_explorer.run,args=(net,'game',Log()))
+    first.start();assert entered.wait(5)
+    class Stopped(Log):
+        def check_cancel(self):raise RuntimeError('stopped')
+    with pytest.raises(RuntimeError,match='stopped'):
+        rom_explorer.run(net,'game',Stopped(),{'vis':60,'inputs':'1:A'})
+    release.set();first.join(5)
+    assert not first.is_alive() and (id(net),'game') not in rom_explorer._scan_waiters
+
+
+def test_later_scene_retains_prior_runtime_assets_and_bank_members():
+    from decompnet.app.rom_scan_worker import _retain_assets
+
+    bank=dict(offset=8,size=8,kind='3d model',layout='runtime-packed-model',codec='yay0',
+              meshes=[dict(name='Mesh 1',commands='aa',base=0,vertices=3,triangles=1)],vertices=3,triangles=1)
+    previous=dict(bank,meshes=[dict(name='Another name',commands='aa',base=0,vertices=3,triangles=1),
+                               dict(name='Mesh 2',commands='bb',base=0,vertices=4,triangles=2)])
+    texture=dict(offset=32,size=4,kind='image',layout='runtime-observed-texture')
+    palette=dict(texture,palette_offset=100)
+    assets=[bank]
+    _retain_assets(assets,[previous,texture,palette])
+    assert assets[1] == texture
+    assert assets[2] == palette
+    assert [m['commands'] for m in bank['meshes']] == ['aa','bb']
+    assert (bank['vertices'],bank['triangles']) == (7,3)
+
+
+def test_later_scene_does_not_keep_conflicting_runtime_sound_bases():
+    from decompnet.app.rom_scan_worker import _retain_assets
+
+    sound=dict(offset=10,size=4,kind='audio',audio_kind='sample bank',bank_offset=10,
+               table_offset=100,table_confidence='runtime relocated controls')
+    assets=[sound,dict(offset=40,size=4,kind='image',layout='runtime-observed-texture')]
+    assert _retain_assets(assets,[dict(sound,table_offset=200)]) == 1
+    assert [a['kind'] for a in assets] == ['image']
+
+
+def test_later_scene_bypasses_cache_and_keeps_prior_runtime_previews(project,monkeypatch):
+    from decompnet.app import rom_explorer, rom_scan_worker
+    from decompnet.consoles.n64 import emulator
+
+    net,_,root=project
+    monkeypatch.setattr(emulator,'installed',lambda:root)
+    requests=[]
+    def scan(_source,request,_log):
+        requests.append(request)
+        image=(root/'game.rom').read_bytes()
+        at=64 if request['runtime_scene'] else 32
+        assets=[dict(offset=at,size=4,kind='image',layout='runtime-observed-texture',confidence='validated',
+                     preview_settings=dict(source='rom',format='auto',offset=at))]
+        if not request['runtime_scene']:
+            assets.append(dict(offset=48,size=4,kind='audio',audio_kind='sample bank',bank_offset=48,
+                               table_offset=80,table_confidence='runtime relocated controls',confidence='validated',
+                               preview_settings=dict(source='rom',format='auto',offset=48)))
+        if request.get('previous_image_hash')==hashlib.sha256(image).hexdigest():
+            rom_scan_worker._retain_assets(assets,request['previous_assets'])
+        report=analyse(image,request['source']['segments'],request['functions'],request['symbols'],assets=assets)
+        report['loader_flow']={'chains':[]};report['runtime_observation']='complete'
+        return report
+    monkeypatch.setattr(rom_explorer.rom_scan,'run',scan)
+    rom_explorer.run(net,'game',Log())
+    assert rom_explorer.run(net,'game',Log())['cached']
+    result=rom_explorer.run(net,'game',Log(),{'vis':60,'inputs':'1:A,2:'})
+    assert not result.get('cached') and len(requests)==2
+    assert {a['offset'] for a in requests[1]['previous_assets']}=={32,48}
+    with net.progress.view():report=rom_explorer.listing(net,'game')
+    assert {r['start'] for r in report['regions'] if r['kind']=='image'} == {32,64}
+    assert any(r['start']==48 and r['kind']=='audio' for r in report['regions'])
+
+
 @pytest.fixture
 def project(tmp_path):
     net=RomNetwork(tmp_path/'app.db',tmp_path)
@@ -322,7 +449,8 @@ def test_routes_guard_start_deduplicate_and_reattach(project,monkeypatch):
     from .test_app_server import PORT, SECRET, WINDOW
     net,pid,root=project
     started,release=threading.Event(),threading.Event()
-    def scan(*args):started.set();release.wait(5);return {'size':128}
+    calls=[]
+    def scan(*args):calls.append(args);started.set();release.wait(5);return {'size':128}
     monkeypatch.setattr(rom_explorer,'run',scan)
     with net.progress.view():mcp,manager,security,_=build(net,root/'.decomp',PORT,SECRET)
     monkeypatch.setattr(net.progress,'sync',lambda *a,**kw:pytest.fail('Explorer route synchronized the project'))
@@ -337,6 +465,8 @@ def test_routes_guard_start_deduplicate_and_reattach(project,monkeypatch):
         assert again.json()['job']==first.json()['job']
         status=client.get('/api/rom-explorer?slug=game&view=status').json()
         assert status['job']['id']==first.json()['job'] and status['job']['state']=='running'
+        scene=client.post('/api/rom-explorer',json={'slug':'game','scene':{'vis':60,'inputs':'1:A'}},headers={'X-Decomp':'1'})
+        assert scene.status_code==200 and scene.json()['job']!=first.json()['job']
     finally:release.set()
 
 

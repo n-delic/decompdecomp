@@ -18,11 +18,14 @@ function romWorkLog() {
 }
 function romControls(view) {
   $('romReload').disabled=view.busy && !view.job;
+  $('romSceneScan').disabled=!!view.busy;
   $('romStop').hidden=!view.job;$('romStop').disabled=!!view.stopping;$('romStop').textContent=view.stopping ? 'Stopping…' : 'Stop';
   $('romContext').textContent=view.job ? '— Scan running' : view.report?.available ? `— ${view.report.size.toLocaleString()} bytes` : '';
 }
 async function loadRomExplorer() {
   const slug=S.slug, epoch=++romEpoch, view=romView(slug), log=romWorkLog();
+  $('romSceneSettings').hidden=true;
+  if($('romSceneInput').dataset.slug!==slug){$('romSceneInput').value='';$('romSceneSeconds').value='600';$('romSceneInput').dataset.slug=slug;}
   if(typeof stopRomAssetBrowser==='function')stopRomAssetBrowser();
   $('romAssetBrowser').hidden=true;view._assetReport=null;
   view.busy=true;romControls(view);
@@ -83,13 +86,19 @@ async function followRomExplorer(slug,epoch,job) {
     }
   } finally {finish();if(romCurrent(slug,epoch)){view.busy=!!view.job;romControls(view);}}
 }
-async function scanRomExplorer() {
+async function scanRomExplorer(scene=false) {
   const slug=S.slug,view=romView(slug);if(view.busy)return;
+  let request={slug};
+  if(scene){
+    const seconds=Number($('romSceneSeconds').value),inputs=$('romSceneInput').value.replace(/\s+/g,'');
+    if(!Number.isInteger(seconds) || seconds<1 || seconds>600 || !inputs){showJobError(romWorkLog(),'Enter a controller sequence and a duration from 1 to 600 seconds.');return;}
+    request.scene={vis:seconds*60,inputs};
+  }
   const epoch=++romEpoch,log=romWorkLog();view.busy=true;romControls(view);showJobError(log,'');
   const finish=beginWork(log,'Starting ROM scan',[]);
   let pending;
   try {
-    pending=view.starting=api('/api/rom-explorer',{method:'POST',body:{slug}});
+    pending=view.starting=api('/api/rom-explorer',{method:'POST',body:request});
     const {job}=await pending;view.job=job;
   } catch(error){if(romCurrent(slug,epoch))showJobError(log,error.message);}
   finally {if(view.starting===pending)view.starting=null;finish();if(romCurrent(slug,epoch)){view.busy=!!view.job;romControls(view);}}
@@ -116,6 +125,7 @@ function renderRomExplorer(view=romView()) {
   const report=view.report;
   if(!report?.available){$('romSummary').textContent='No completed map is available yet. Reopen this tab or choose Refresh to try again.';return;}
   $('romMap').hidden=false;
+  $('romSceneSettings').hidden=!report.runtime_scene_supported;
   const totals=report.totals, total=report.size || 1;
   $('romSummary').textContent=`${report.image_name} · ${report.size.toLocaleString()} bytes · ${((totals.recorded||0)/total*100).toFixed(1)}% recorded or validated · ${((totals.tentative||0)/total*100).toFixed(1)}% tentative · ${((totals.unknown||0)/total*100).toFixed(1)}% unknown. This is separate from code matching.`;
   $('romStale').hidden=!report.stale;$('romNotes').textContent=report.note;
@@ -229,6 +239,7 @@ function romFromFunction() {
   const view=romView();view.function=S.fn;hideDrawer('drawer');location.hash=`#/p/${S.slug}/rom`;
 }
 $('romReload').onclick=loadRomExplorer;$('romStop').onclick=stopRomExplorer;
+$('romSceneScan').onclick=()=>scanRomExplorer(true);
 $('romFilter').oninput=()=>{const view=romView();view.query=$('romFilter').value;view.limit=100;renderRomExplorer(view);};
 $('romFunctionFilter').onclick=()=>{romView().function='';renderRomExplorer();};
 $('romResetZoom').onclick=()=>{romView().zoom=null;drawRomMap();};
