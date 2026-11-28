@@ -9,6 +9,9 @@ game needed a profile of its own, and each had a tell in the target:
   Its flags are the game's `-G0 -mips3 -O2 -mgas -meb -mhard-float` (no `-mcpu`) or `-G8 -mips2 -O2`;
 - an `ldc1` anywhere in the target: the pack `sn-n64-272-0001-as0004` (0001's compiler, 0004's assembler), whatever the
   function's own profile and epilogue; it leads the plan (`lead`), three flag sets, one trial each;
+- an integer load from a symbol plus a register whose address the assembler built in `$at` with the destination free,
+  on a function whose own pack assembles with GNU as (KMC GCC 2.7.2, gcc-2.8.1-pm): an SN assembler wrote it, so
+  `sn-n64-272-0001-as0004` and `gcc-2.8.1-pm-sn-as` with the function's own flags (a KMC game: 15 -> 0, no source edit);
 - library code (libultra's `osXxx`, rmon and scheduler blocks): KMC GCC 2.7.2 with `-G0 -mips3 -O2 -mgp32 -mfp32`,
   the SDK's own compiler (46 of 49 library functions of that game matched with it).
 
@@ -26,6 +29,9 @@ SN_272_FLAGS = (['-G8', '-mips2', '-O2'], ['-G0', '-mips3', '-O2', '-mgas', '-me
 KMC_LIBRARY_FLAGS = ['-G0', '-mips3', '-O2', '-mgp32', '-mfp32']
 AS0004 = 'sn-n64-272-0001-as0004'  # 0001's compiler, 0004's assembler: the one that writes `ldc1`
 # the pack's flag sets, in the order to judge them: the game's own, then the two older SN 2.7.2 ones
+SN_AS_281 = 'gcc-2.8.1-pm-sn-as'
+# the packs that assemble with GNU as, and the SN-assembler packs to try for each, nearest compiler first
+GNU_AS = {KMC: (AS0004, SN_AS_281), 'gcc-2.8.1-pm': (SN_AS_281, AS0004)}
 AS0004_FLAGS = (['-G0', '-mips3', '-O2', '-mgas', '-meb', '-mhard-float'], ['-G8', '-mips2', '-O2'], ['-G0', '-mips2', '-O2'])
 
 
@@ -42,6 +48,15 @@ def probes(facts) -> list[dict]:
         for flags in AS0004_FLAGS:
             out.append({'toolchain': AS0004, 'flags': list(flags), 'family': 'sn272_ldc1', 'lead': True,
                         'why': 'its target loads a double with `ldc1`, which only the 0004 assembler writes (0001 writes two `lwc1`)'})
+    if own in GNU_AS and rules.word_load_through_at(facts.words):
+        # A symbol-plus-register load whose address is built in `$at` with the destination free: SN's assembler wrote
+        # it, and the function's own pack assembles with GNU as, which cannot, whatever its flags (`lead`). The
+        # function's own flags (SN's cc1 judged a KMC function the same with and without `-mgp32 -mfp32`), the SN pack
+        # of the same compiler generation first.
+        for toolchain in GNU_AS[own]:
+            out.append({'toolchain': toolchain, 'flags': list(facts.own.get('flags') or ()), 'family': 'sn_assembler',
+                        'lead': True, 'why': 'its target loads from a symbol plus a register through `$at` with the '
+                                             'destination free, which only an SN assembler writes'})
     if own == SN_281 and rules.ends_jr_ra_nop(facts.words):
         order = list(SN_272)
         for toolchain in order:

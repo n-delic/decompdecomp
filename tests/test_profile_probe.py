@@ -820,3 +820,46 @@ def test_the_drafts_unsigned_conversions_are_written_back_with_the_constants():
     draft = 'void f(s32 a) {\n    f64 d;\n    s32 v = a & 0x10;\n    d = (f64) v;\n    if (v < 0) {\n        d += 4294967296.0;\n    }\n    g(d);\n}\n'
     [(_, child)] = profile_probe.draft_constants(draft, 'f', facts(), ['-mgp32', '-O1'])
     assert 'd = (f64) (u32) v;' in child and '4294967296' not in child
+
+
+# --- an SN assembler's `$at` address on a GNU-as pack ---------------------------------------------------------------
+
+LUI_AT_HI = 0x3C010000 | 0x8025            # lui $at, %hi(X)
+ADDU_AT_S0 = 0x00300821                    # addu $at, $at, $s0
+LBU_V1_AT = (0x24 << 26) | (1 << 21) | (3 << 16) | 0x8110   # lbu $v1, %lo(X)($at)
+LUI_V1 = 0x3C030000 | 0x8025               # lui $v1, %hi(X)
+ADDU_V1_S0 = 0x00701821                    # addu $v1, $v1, $s0
+LBU_V1_V1 = (0x24 << 26) | (3 << 21) | (3 << 16) | 0x8110
+KMC_O1 = {'toolchain': 'gcc-2.7.2-kmc', 'flags': '-G0 -mips3 -mgp32 -mfp32 -O1 -g'.split()}
+
+
+def test_a_load_through_at_with_a_free_destination_is_the_sn_assemblers():
+    assert evidence.word_load_through_at([LUI_AT_HI, ADDU_AT_S0, LBU_V1_AT]) is True
+    # GNU as builds the address in the destination itself
+    assert evidence.word_load_through_at([LUI_V1, ADDU_V1_S0, LBU_V1_V1]) is False
+    # the destination is the base: GNU as has to use `$at` too
+    same = (0x24 << 26) | (1 << 21) | (16 << 16) | 0x8110      # lbu $s0, %lo(X)($at)
+    assert evidence.word_load_through_at([LUI_AT_HI, ADDU_AT_S0, same]) is False
+    # a store through `$at` (either assembler) and a float load (always `$at`) say nothing
+    store = (0x28 << 26) | (1 << 21) | 0x8110                  # sb $zero, %lo(X)($at)
+    assert evidence.word_load_through_at([LUI_AT_HI, ADDU_AT_S0, store]) is False
+    assert evidence.word_load_through_at([LUI_AT_HI, ADDU_AT_S0, LWC1_AT]) is False
+
+
+def test_a_kmc_function_with_the_sn_assemblers_load_leads_with_the_sn_packs_under_its_own_flags():
+    words = [LUI_AT_HI, ADDU_AT_S0, LBU_V1_AT, JR, NOP]
+    plan = profile_probe.plan(N64, facts(own=KMC_O1, words=words))
+    own_flags = ' '.join(KMC_O1['flags'])
+    assert keys(plan)[:2] == [('sn-n64-272-0001-as0004', own_flags, 'sn_assembler'),
+                              ('gcc-2.8.1-pm-sn-as', own_flags, 'sn_assembler')]
+    on_281 = profile_probe.plan(N64, facts(own={'toolchain': 'gcc-2.8.1-pm', 'flags': ['-O2']}, words=words))
+    assert [p['toolchain'] for p in on_281 if p['family'] == 'sn_assembler'] == ['gcc-2.8.1-pm-sn-as',
+                                                                               'sn-n64-272-0001-as0004']
+
+
+def test_the_sn_assembler_probe_needs_a_gnu_as_pack_and_the_tell():
+    words = [LUI_AT_HI, ADDU_AT_S0, LBU_V1_AT, JR, NOP]
+    for own in (SN, {'toolchain': 'gcc-2.8.1-pm-sn-as', 'flags': ['-O1']}, {'toolchain': 'ido-7.1', 'flags': ['-O2']}):
+        assert all(p['family'] != 'sn_assembler' for p in profile_probe.plan(N64, facts(own=own, words=words))), own
+    gnu = [LUI_V1, ADDU_V1_S0, LBU_V1_V1, JR, NOP]
+    assert all(p['family'] != 'sn_assembler' for p in profile_probe.plan(N64, facts(own=KMC_O1, words=gnu)))

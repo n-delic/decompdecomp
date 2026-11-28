@@ -28,6 +28,31 @@ def float_pool_through_at(words) -> bool:
     return False
 
 
+GPR_LOADS = (0x20, 0x21, 0x23, 0x24, 0x25, 0x27, 0x37)  # lb lh lw lbu lhu lwu ld
+
+
+def word_load_through_at(words) -> bool:
+    """An integer load from a symbol plus a register written by the assembler with `$at`, though the loaded register was
+    free for it: `lui $at, %hi(X); addu $at, $at, $rB; lbu $rT, %lo(X)($at)` with `$rT` neither `$at` nor `$rB`. GNU as
+    (KMC GCC 2.7.2's and gcc-2.8.1-pm's) builds that address in the destination (`lui $rT; addu $rT, $rT, $rB`) and
+    uses `$at` only when the destination is the base; SN's assembler (asn64: the SN packs and gcc-2.8.1-pm-sn-as)
+    always uses `$at`. A 45-instruction function of a KMC game scored 15 on its KMC profile with only those three rows,
+    and its saved C was exact under sn-n64-272-0001-as0004; that game has this form in some 370 functions and the GNU
+    form in 3."""
+    for index in range(len(words) - 2):
+        lui, add, load = words[index:index + 3]
+        if lui >> 26 != 0x0F or (lui >> 16) & 31 != 1 or add >> 26 != 0 or add & 63 not in (0x21, 0x2D):
+            continue
+        rs, rt = (add >> 21) & 31, (add >> 16) & 31
+        if (add >> 11) & 31 != 1 or 1 not in (rs, rt):
+            continue
+        base = rt if rs == 1 else rs
+        target = (load >> 16) & 31
+        if load >> 26 in GPR_LOADS and (load >> 21) & 31 == 1 and target not in (0, 1, base):
+            return True
+    return False
+
+
 def uses_ldc1(words) -> bool:
     return any(word >> 26 == 0x35 for word in words)
 
