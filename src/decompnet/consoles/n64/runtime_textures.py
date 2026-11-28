@@ -118,6 +118,44 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
                         except emulator.EmulatorError as error:
                             expansion_failed = True
                             log(f'Extended sprite observation skipped: {error}')
+            # Indexed compressed archives can contain display lists that are
+            # first reached after the normal short title observation.
+            from decompassets.n64 import runtime_burp_models
+            models = []
+            check = getattr(log, 'check_cancel', lambda: None)
+            if next(runtime_burp_models.archives(image, check), None):
+                models = runtime_burp_models.regions(image, snapshots, check=check)
+                if not run.timed_out:
+                    log('Checking indexed model resources after a longer menu sequence.')
+                    late = {vi: Path(folder)/f'model-{vi}.ram' for vi in (6000, 8000)}
+                    inputs = ('600:START,608:,1200:START,1208:,1800:START,1808:,2400:START,2408:,'
+                              '3000:A,3008:,4500:A,4508:,6000:START,6008:')
+                    try:
+                        extended = emulator.run(rom, 8000, inputs=inputs, dumps=late,
+                                                timeout=120, expansion_pak=expansion)
+                        captures = [path.read_bytes() for path in late.values() if path.is_file()]
+                        models += runtime_burp_models.regions(image, captures, check=check)
+                        if extended.timed_out:
+                            expansion_failed = True
+                            log('Extended model observation timed out; completed snapshots are still included.')
+                    except emulator.EmulatorError as error:
+                        expansion_failed = True
+                        log(f'Extended model observation skipped: {error}')
+            model_banks = {}
+            for model in models:
+                key = model['offset'], model['size']
+                if key not in model_banks:
+                    model_banks[key] = model
+                    continue
+                bank = model_banks[key]
+                known = {(mesh['offset'], mesh['size'], mesh['slot']) for mesh in bank['meshes']}
+                for mesh in model['meshes']:
+                    identity = mesh['offset'], mesh['size'], mesh['slot']
+                    if identity not in known and len(bank['meshes']) < 512:
+                        bank['meshes'].append(dict(mesh, name=f"Mesh {len(bank['meshes'])+1}"))
+                        known.add(identity)
+                bank['vertices'] = sum(mesh['vertices'] for mesh in bank['meshes'])
+                bank['triangles'] = sum(mesh['triangles'] for mesh in bank['meshes'])
             merged = {}
             for asset in packed:
                 key = asset['offset'], asset.get('layout')
@@ -163,7 +201,7 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
                 bases.setdefault(key, set()).add(asset['table_offset'])
             audio = {(asset['bank_offset'], asset.get('layout'), asset['offset'], asset['size']): asset for asset in sounds
                      if len(bases[asset['bank_offset'], asset.get('layout')]) == 1}
-            assets = list(unique.values()) + list(merged.values()) + list(audio.values()) + sprites
+            assets = list(unique.values()) + list(merged.values()) + list(audio.values()) + sprites + list(model_banks.values())
         if run.timed_out:
             log('Runtime observation timed out; any completed snapshots are still included.')
         graphics = sum(a.get('kind') != 'audio' for a in assets)
