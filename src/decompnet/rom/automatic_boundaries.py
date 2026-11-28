@@ -1836,27 +1836,11 @@ def _code_table_entries(functions, image, order, segments):
 
 
 def _same_stale_instructions(image, first, second, size, order):
-    """Accept exact copies or one consistent relocation, retaining register and instruction shapes."""
-    same = 0
-    delta = None
-    for offset in range(0, size, 4):
-        a = int.from_bytes(image[first+offset:first+offset+4], order)
-        b = int.from_bytes(image[second+offset:second+offset+4], order)
-        if a == b:
-            same += 1
-            continue
-        op = a >> 26
-        if op in (2, 3) and b >> 26 == op:
-            change = ((b & 0x3ffffff) - (a & 0x3ffffff))*4
-        elif (op in (9, 32, 33, 35, 36, 37, 40, 41, 43, 49, 53, 57, 61)
-              and a >> 16 == b >> 16 and (a >> 21) & 31 not in (0, 29, 30, 31)):
-            change = (b & 0xffff) - (a & 0xffff)
-        else:
-            return False
-        if not change or abs(change) > 0x10000 or change % 4 or delta is not None and change != delta:
-            return False
-        delta = change
-    return same >= 6
+    """Require identical instructions; similar targets can be different functions."""
+    # A pair of wrappers can differ only in the callee. Treating that one
+    # changed JAL as a relocation discarded a separately matched function.
+    return (size >= 24 and 0 <= first <= len(image)-size and 0 <= second <= len(image)-size
+            and image[first:first+size] == image[second:second+size])
 
 
 def terminal_loaded_record(fn, previous, image, order, segments, functions, references, lines, entered, data):

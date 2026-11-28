@@ -1497,7 +1497,7 @@ def test_stale_code_copy_between_return_and_called_frame(case):
     assert ((ghost.rom, ghost.vram) in found) == (case in ('stale', 'table_source'))
 
 
-def test_stale_copy_requires_one_consistent_relocation():
+def test_stale_copy_requires_identical_instructions():
     from decompnet.rom.automatic_boundaries import _same_stale_instructions
 
     old = [0xafbf0034, 0x0c014000, 0xafb00030, 0x24040005, 0x27a50010, 0x0c016a90,
@@ -1505,10 +1505,23 @@ def test_stale_copy_requires_one_consistent_relocation():
     new = [0xafbf0034, 0x0c0140e0, 0xafb00030, 0x24040005, 0x27a50010, 0x0c016b70,
            0x00003021, 0x27a40010, 0x3c068008, 0x24c676d8, 0x0c013f90, 0x27a5002c]
     image = b''.join(word.to_bytes(4, 'big') for word in old+new)
+    assert not _same_stale_instructions(image, 0, len(old)*4, len(old)*4, 'big')
+    image = b''.join(word.to_bytes(4, 'big') for word in old+old)
     assert _same_stale_instructions(image, 0, len(old)*4, len(old)*4, 'big')
     new[9] += 4
     image = b''.join(word.to_bytes(4, 'big') for word in old+new)
     assert not _same_stale_instructions(image, 0, len(old)*4, len(old)*4, 'big')
+
+
+def test_stale_copy_does_not_equate_distinct_callees():
+    from decompnet.rom.automatic_boundaries import _same_stale_instructions
+
+    first = [0x3c028006, 0x8c420120, 0x27bdffe8, 0x10400003, 0xafbf0010,
+             0x0c000500, 0, 0x8fbf0010, 0x03e00008, 0x27bd0018]
+    second = first.copy()
+    second[5] = 0x0c000506
+    image = b''.join(word.to_bytes(4,'big') for word in first+second)
+    assert not _same_stale_instructions(image, 0, len(first)*4, len(first)*4, 'big')
 
 
 @pytest.mark.parametrize('case', ['delayed', 'branch_before_frame', 'different_register', 'open_next',
