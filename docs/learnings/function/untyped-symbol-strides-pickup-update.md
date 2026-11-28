@@ -25,4 +25,5 @@ chained colour stores and the goto structure of the draft were not needed.
 
 Controlled evidence: the chain from the machine draft and from the m2cfix-refined draft, each ending at 0. One
 function. Leaving out the switch step stood at 310 and leaving out the member step at 110 (measured on the
-intermediate forms). `prove_chain.py` with the library before these families stood at 2160 after one capped step.
+intermediate forms). `prove_chain.py --families all` from the first form of the stride child (2515), capped at 40
+judged variants, only reached 2160; it was not run from the draft.
