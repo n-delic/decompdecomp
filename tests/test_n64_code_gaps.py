@@ -8,6 +8,22 @@ from decompnet.consoles.n64.code import aligned_gaps, complete_gaps, mapped_data
 LEAF = [0x24020001, 0x24420001, 0x03e00008, 0]
 
 
+def test_exact_sdk_body_before_a_function_uses_its_true_entry(monkeypatch):
+    from decompnet.consoles.n64 import sdk_assembly
+    from decompnet.consoles.n64.code import _sdk_between_functions
+
+    body = b'known SDK body' + bytes(50)
+    rom = bytes(0x30) + body + bytes(0x20)
+    spans = [(0x10, 0x20, 0x80001010), (0x70, 0x80, 0x80001070)]
+    banks = [(0x10, 0x80, 0x80001010)]
+    monkeypatch.setattr(sdk_assembly, 'SIZES', (64,))
+    monkeypatch.setattr(sdk_assembly, 'identify', lambda data: {'name': 'sdk'} if data == body else None)
+    assert _sdk_between_functions(rom, spans, banks) == [(0x30, 0x70, 0x80001030)]
+    assert not _sdk_between_functions(rom, [spans[0], (0x70, 0x80, 0x80101070)], banks)
+    assert not _sdk_between_functions(rom, spans, [(0x10, 0x60, 0x80001010)])
+    assert not _sdk_between_functions(rom[:0x30] + bytes(64) + rom[0x70:], spans, banks)
+
+
 def image_with(spans_words):
     image = bytearray(0x3000)
     for rom, words in spans_words:

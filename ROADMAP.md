@@ -116,6 +116,8 @@
   there are called by the independently verified predecessor and no call supports its former placement.
   Existing projects can also add verified functions in independently corroborated overlapping banks: the search stages the
   affected scopes together and retains them only if the old functions and new bodies split exactly.
+  The search also recovers an exact, complete SDK body immediately before a function when its neighbouring
+  functions establish the same mapping, including routines whose first instruction precedes their stack frame.
 - Done: the N64 missed-function search can recover a verified body inside a handwritten boot
   assembly unit while keeping the surrounding assembly. Planned: apply the same verified
   recovery automatically during the initial import.
