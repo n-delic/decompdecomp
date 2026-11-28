@@ -1439,6 +1439,9 @@ def test_reimport_macro_retry_separates_only_complete_placeholder_calls():
     assert '#define decomp_overlay_call_3 uso_1234_sym_4' in result
     assert 'decomp_overlay_call_1(1)' in result and 'decomp_overlay_call_3(3)' in result
     assert '/* CALL(comment) */' in result
+    implicit = _macro_variant(fn, source, '#define CALL(f) D_80000000\n#define FCALL(f) D_80000000\n',
+                              candidate, info, '')
+    assert 'extern int uso_1234_sym_2();' in implicit and 'extern int uso_1234_sym_4();' in implicit
     assert _macro_variant(fn, source, header, candidate, info | {'relocs': [[0, 4, 2]]}, '') is None
     candidate.relocs[1].symbol = 'other'
     assert _macro_variant(fn, source, header, candidate, info, '') is None
