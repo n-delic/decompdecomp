@@ -66,6 +66,24 @@ def test_runtime_location_requires_unique_prefix_and_entire_closed_body():
     assert located(bytes(rom), [candidate], [bytes(ram)]) == []
 
 
+def test_recoverable_audit_body_needs_execution_direct_call_and_closed_extent():
+    from decompnet.consoles.n64.runtime_scoped import executed_bodies
+
+    body = words(0x27bdfff0, *[0x24020000 + i for i in range(13)], 0x03e00008, 0x27bd0010)
+    image = bytes(0x1000) + body + bytes(0x100)
+    location = {'vram': 0x80002000, 'executed': True, 'direct_call_site': 0x80003000,
+                'execution_retrace': 100, 'snapshots': 1}
+    candidate = {'rom_offset': 0x1000, 'extent_bytes': len(body), 'direct_flow_closed': True,
+                 'runtime_locations': [location]}
+    assert executed_bodies(image, [candidate]) == [(0x1000, 0x1040, 0x80002000)]
+    assert not executed_bodies(image, [{**candidate, 'runtime_locations': [{**location, 'executed': False}]}])
+    assert not executed_bodies(image, [{**candidate, 'runtime_locations': [{k: v for k, v in location.items()
+                                                                           if k != 'direct_call_site'}]}])
+    assert not executed_bodies(image, [{**candidate, 'direct_flow_closed': False}])
+    assert not executed_bodies(image + body, [candidate])
+    assert not executed_bodies(image, [{**candidate, 'runtime_locations': [location, {**location, 'vram': 0x80004000}]}])
+
+
 def test_observed_execution_requires_breakpoint_capture_of_the_exact_body(tmp_path, monkeypatch):
     from types import SimpleNamespace
 

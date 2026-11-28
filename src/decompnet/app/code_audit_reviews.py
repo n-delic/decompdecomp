@@ -101,6 +101,23 @@ def load(net,pid):
     return state
 
 
+def execution_candidates(net, pid):
+    """Read current unreviewed or confirmed candidates with recorded direct-call evidence."""
+    state = load(net, pid)
+    if not state.get('report'):
+        return []
+    if state.get('paged'):
+        rows = net.project_store(pid).all(
+            "SELECT payload FROM code_audit_candidates WHERE project_id=? AND instr(payload, '\"direct_call_site\"')>0 "
+            "AND (review_state IS NULL OR review_state IN ('unreviewed','confirmed_code')) ORDER BY ordinal", pid)
+        return [json.loads(row['payload']) for row in rows]
+    reviews = state.get('reviews', {})
+    return [row for row in state['report'].get('candidates', [])
+            if reviews.get(row.get('review_id'), {}).get('state', 'unreviewed') in ('unreviewed', 'confirmed_code')
+            and any(isinstance(location, dict) and 'direct_call_site' in location
+                    for location in row.get('runtime_locations') or ())]
+
+
 def decorated(state):
     report=state['report']
     if report is None:return {'candidates':[],'available':False,'stale':state.get('stale',False)}

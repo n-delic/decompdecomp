@@ -197,8 +197,11 @@
   different. It checks breakpoints in bounded pages and records execution only when the captured RAM at that
   breakpoint still matches the complete body. Completed checks survive Stop and are reused only for the same
   original image, analysis image and project layout. A captured return address that points to a direct call
-  to the entry is stronger review evidence, but need not be the last edge taken. Neither a RAM copy nor a sampled execution
-  authorizes an import or proves all game states were covered. **Add missed functions** follows these calls to a fixed point and can recover
+  to the entry is stronger review evidence, but need not be the last edge taken. Neither a RAM copy nor sampled execution
+  alone proves all game states were covered. **Add missed functions** can use an unreviewed or confirmed current audit's exact
+  execution capture and direct-call target when the complete body also closes at that runtime mapping; it stages the
+  result and retains only scopes and functions whose split preserves the existing project. Initial imports have no saved
+  audit yet; collecting equivalent execution evidence during import remains planned. **Add missed functions** follows calls to a fixed point and can recover
   uniquely mapped scoped bodies after a temporary export split preserves existing project entries and each new body;
   their overlay scopes and existing symbols are retained. Conflicting groups are subdivided; a stopped search
   retains its verified groups and rechecks them on resume. The cartridge split is checked separately from appended
@@ -989,6 +992,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Derived incomplete state / raw coverage / completion audit | ✓ | ✓ | ✓ (scalar decoder) | — | — | ✓ | — | — | — | — | — | — |
 | Read-only gap/pointer/interior audit / incomplete-target warnings | ✓ | ✓ | ✓ (scalar decoder) | — | — | ✓ | — | — | — | — | — | — |
 | Runtime corroboration of scoped coverage leads | ✓ N64 ROM, sampled | — runtime adapter | — runtime adapter | — runtime adapter | — | — runtime adapter | — runtime adapter | — runtime adapter | — runtime adapter | — runtime adapter | — runtime adapter | — runtime adapter |
+| Recover closed, directly called execution-backed audit entries | ✓ N64 ROM, staged | — runtime adapter | — runtime adapter | — runtime adapter | — project adapter | — runtime adapter | — runtime adapter | — project adapter | — project adapter | — runtime adapter | — project adapter | — project adapter |
 | Guarded jump-table / local callback-consumer audit (scalar MIPS ROM) | ✓ | ✓ | ✓ | — | — | ✓ | — | — | — | — | — | — |
 | Saved code-audit decisions and evidence (local) | ✓ | ✓ | ✓ | — | — | ✓ | — | — | — | — | — | — |
 | Called whole-gap recovery (conservative import rule) | ✓ | — | — | — | — | — | — | — | — | — | — | — |

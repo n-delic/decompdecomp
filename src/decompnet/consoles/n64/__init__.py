@@ -482,6 +482,11 @@ class Nintendo64(Console):
 
         return observe(root, cfg, image, segments, functions, log, candidates=candidates, checkpoint=checkpoint)
 
+    def executable_audit_bodies(self, image, candidates):
+        from .runtime_scoped import executed_bodies
+
+        return executed_bodies(image, candidates)
+
     donor_layout = True
 
     def donor_text_regions(self, image: bytes) -> list:
@@ -540,11 +545,11 @@ class Nintendo64(Console):
         return {'uso': info}
 
     def missed_functions(self, config: Path, image: bytes, log=print, known=(), *, prepare_split=None,
-                         checkpoint=None, expected_config=None) -> list[tuple[int, int, int]] | None:
+                         checkpoint=None, expected_config=None, executed_bodies=()) -> list[tuple[int, int, int]] | None:
         from .code import missed_functions
 
         return missed_functions(config, image, log, known, prepare_split=prepare_split, checkpoint=checkpoint,
-                                expected_config=expected_config)
+                                expected_config=expected_config, executed_bodies=executed_bodies)
 
     def preserve_reimport_entries(self, net, project, result, image, rows, log=print):
         from .reimport_preserve import preserve

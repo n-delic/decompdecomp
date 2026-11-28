@@ -217,6 +217,9 @@ class EditMixin:
             if any(row['rom_offset'] + row['size'] > native_end for row in split_rows):
                 raise NetworkError('A function crosses into an analysis-only bank. Review its mapping before searching.')
             scan_image = image[:native_end]
+            from ..code_audit_reviews import execution_candidates
+
+            executed = console.executable_audit_bodies(scan_image, execution_candidates(self, proj['id']))
             checkpoint_name = f'missed-functions-checkpoint:{proj["id"]}'
             checkpoint = {'finished': False}
 
@@ -265,9 +268,11 @@ class EditMixin:
                     raise ValueError(str(error)) from error
                 return staged, lines, [dict(row) for row in split_rows]
 
+            kwargs = {'prepare_split': prepare_split, 'checkpoint': checkpoint, 'expected_config': before}
+            if executed:
+                kwargs['executed_bodies'] = executed
             found = console.missed_functions(config, scan_image, log,
-                [(r["rom_offset"], r["rom_offset"] + r["size"], r["vram"]) for r in split_rows],
-                prepare_split=prepare_split, checkpoint=checkpoint, expected_config=before)
+                [(r["rom_offset"], r["rom_offset"] + r["size"], r["vram"]) for r in split_rows], **kwargs)
             applied = config.read_text(encoding='utf-8')
         except Exception:
             restore()
@@ -306,6 +311,9 @@ class EditMixin:
                         or cfg.get('donor_overlays') != original_cfg.get('donor_overlays')
                         or current_symbols != original_symbols):
                     raise NetworkError('The project code or mappings changed during the search. Retry with the current project.')
+                if executed and console.executable_audit_bodies(
+                        scan_image, execution_candidates(self, proj['id'])) != executed:
+                    raise NetworkError('The code-audit evidence changed during the search. Retry with the current review.')
                 # A verified runtime bank can replace an unowned data tail at a different address. The staged
                 # split shortened its original parent; keeping the old catalog range would make both mappings
                 # claim those ROM bytes. Preserve all other catalog segments, including analysis-only banks.
