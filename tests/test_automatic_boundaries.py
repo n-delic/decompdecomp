@@ -898,6 +898,23 @@ def test_called_frame_after_repeated_double_at_the_start_of_a_mapping(named):
     assert (20 in {fn.rom for fn in result}) == named
 
 
+def test_external_entries_only_reads_targets_within_adjacent_bodies():
+    from types import SimpleNamespace
+
+    from decompnet.rom.automatic_boundaries import _external_entries
+
+    class References(dict):
+        def __getitem__(self, address):
+            assert 100 <= address < 132
+            return super().__getitem__(address)
+
+    first = SimpleNamespace(vram=100, rom=1000)
+    last = SimpleNamespace(vram=116, rom=1016, size=16)
+    references = References({96: {(0, '')}, 104: {(1008, '')}, 108: {(0, '')},
+                             112: {(1028, ''), (1012, '')}, 132: {(0, '')}})
+    assert _external_entries(first, last, [92, 100, 124, 132], sorted(references), references) == {100, 108, 124}
+
+
 @pytest.mark.parametrize('named', [False, True])
 def test_called_frame_directly_after_repeated_double(named):
     call = 0x0c000000 | ((BASE+32)>>2)&0x3ffffff

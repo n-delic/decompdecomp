@@ -27,6 +27,16 @@ def _owned_partition(group, cuts, padding):
     return spans if all(any(fn.rom <= a < fn.rom + fn.size for fn in group) for a, _ in spans) else None
 
 
+def _external_entries(first, last, named_addresses, destinations, references):
+    """Only entries in these adjacent bodies can prevent their join."""
+    lo, hi = first.vram, last.vram+last.size
+    named = named_addresses[bisect_left(named_addresses, lo):bisect_left(named_addresses, hi)]
+    targets = destinations[bisect_left(destinations, lo):bisect_left(destinations, hi)]
+    return set(named) | {address for address in targets
+                         if any(not first.rom <= source < last.rom+last.size
+                                for source, _ in references[address])}
+
+
 def _restore_original_delay_slots(functions, original_entries, image, order):
     """Keep an original transfer's delay word even when it is also a separate entry."""
     out = []
@@ -274,6 +284,11 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
         if gaps:log(f'Left {len(gaps)} fragments of alignment between functions in the original image.')
     destinations=sorted(references)
     entered_addresses=explicit|pointers|set(destinations)
+    named_addresses = sorted(explicit | pointers)
+
+    def external_entries(first, last):
+        return _external_entries(first, last, named_addresses, destinations, references)
+
     returns={fn.rom+fn.size for fn in functions if fn.size>=8 and fn.lines[-2].word==JR_RA}
     groups=[];group_end=0
     for fn in sorted(functions,key=lambda f:(owner(f),f.rom)):
@@ -630,8 +645,7 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
         if (wrapper is not None and owner(wrapper)[0] >= 0 and owner(wrapper) == owner(previous) == owner(fn)
                 and wrapper.vram in direct_calls and previous.vram in direct_calls
                 and fn.size == 8 and fn.lines[0].word == 0x03200008):
-            external = explicit | pointers | {address for address, sources in references.items()
-                if any(not wrapper.rom <= src < fn.rom+fn.size for src, _ in sources)}
+            external = external_entries(wrapper, fn)
             if shared_return_wrapper(wrapper, previous, fn, image, console, order, segments, external, data):
                 kept[-2] = replace(wrapper, lines=wrapper.lines+previous.lines+fn.lines,
                     labels=wrapper.labels | previous.labels | fn.labels,
@@ -644,8 +658,7 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
         if (previous is not None and owner(previous)[0] >= 0 and owner(previous) == owner(fn)
                 and previous.size == 8 and previous.vram not in direct_calls and fn.vram in direct_calls
                 and previous.lines[0].word >> 26 in (20,21,22,23)):
-            external = explicit | pointers | {address for address, sources in references.items()
-                if any(not previous.rom <= src < fn.rom+fn.size for src, _ in sources)}
+            external = external_entries(previous, fn)
             if backward_loop_entry(previous,fn,image,console,order,segments,external,data):
                 kept[-1] = replace(previous,lines=previous.lines+fn.lines,labels=previous.labels|fn.labels,
                                    entry_aliases={**previous.entry_aliases,fn.vram:fn.name})
@@ -655,8 +668,7 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
         if (previous is not None and owner(previous)[0] >= 0 and owner(previous) == owner(fn)
                 and previous.vram not in direct_calls and fn.vram in direct_calls
                 and 8 <= previous.size <= 64 and fn.size >= 16 and fn.lines[0].word >> 26 == 47):
-            external = explicit | pointers | {address for address, sources in references.items()
-                if any(not previous.rom <= src < fn.rom+fn.size for src, _ in sources)}
+            external = external_entries(previous, fn)
             if cache_fallthrough(previous,fn,image,console,order,segments,external,data):
                 kept[-1] = replace(previous,lines=previous.lines+fn.lines,labels=previous.labels|fn.labels,
                                    entry_aliases={**previous.entry_aliases,fn.vram:fn.name})
@@ -675,16 +687,14 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
                       and 4 <= (previous.lines[0].word >> 21) & 31 <= 7
                       and (previous.lines[0].word >> 21) & 31 == (previous.lines[0].word >> 16) & 31)
         possible_shuffle = same_owner and fn.vram in direct_calls and (previous.size in (8, 12) or arg_adjust)
-        external_entries = (explicit | pointers | {address for address, sources in references.items()
-            if any(not previous.rom <= src < fn.rom+fn.size for src, _ in sources)}
-            if possible_fallthrough or both_called or possible_shuffle else set())
+        external = external_entries(previous, fn) if possible_fallthrough or both_called or possible_shuffle else set()
         fallthrough = (possible_fallthrough
-                       and shared_fallthrough_frame(previous,fn,image,console,order,segments,external_entries,data))
+                       and shared_fallthrough_frame(previous,fn,image,console,order,segments,external,data))
         if (same_owner
                 and (fn.vram in (explicit | pointers)
                      and shared_entry_leaf(previous,fn,image,console,order,segments,entered)
                      or (both_called or possible_shuffle)
-                     and shared_called_leaf(previous,fn,image,console,order,segments,external_entries,data)
+                     and shared_called_leaf(previous,fn,image,console,order,segments,external,data)
                      or fallthrough)):
             kept[-1] = replace(previous,lines=previous.lines+fn.lines,
                                labels=previous.labels|fn.labels,
