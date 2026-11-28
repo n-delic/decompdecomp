@@ -14,6 +14,7 @@ _VARIANT2 = 'd23bb6845b14fa601fdfd283f00ecf4ff1674f580b4d410c6a6c998a4c7624ca'
 _VARIANT2_TEXT = '536038ee4edee1e18fffba67b85e873954b3cb1adab362c169b71e3989b305ac'
 _PRIMARY = '10d91d2c6916496106b399cc05b6ee0663d10a3ae9fd8003cad4936ad5476b71'
 _VARIANT_PRIMARY = '3ca488c5e900ac5748c11ef50a1178305b116e6a70bf22b7826d0c39bf4683a3'
+_VARIANT2_PRIMARY = '5d004f9be05eb8aa3856cedccfdf26b3bc304cae1cf736f77be6f468930ecf9b'
 # Directory index, offset, output and stored sizes, runtime address, text bounds,
 # and the full image digest. The text was checked against independent RAM captures.
 EXTRA_PROGRAMS = (
@@ -46,6 +47,26 @@ VARIANT_PROGRAMS = (
     (10, 0xf220c, 0x8288, 0x4818, 0x80137da8, 0x8, 0x8288,
      'ca2978240f8f0180aabaa69318ad3ccec24ae10d01b41fe1684e298820b286a5'),
 )
+VARIANT2_PROGRAMS = (
+    (1, 0x39be8, 0x40598, 0x1b0d8, 0x800838d0, 0x1020, 0x2d06c,
+     '424cd9b3dd8d8d869fe0a7970a5f59bb20b6fe5e1453edfeb97b11c63fc04150'),
+    (2, 0x54cc0, 0x29f48, 0x1850c, 0x800c3e68, 0x8, 0x29f3c,
+     'ac5ea066b62ec51cede96ca987d01a810f504fc13582f77afc9c41574e33eede'),
+    (3, 0x6d1cc, 0xa2c0, 0x6508, 0x800efbf8, 0x8, 0xa2bc,
+     '65d6ef921bbf57fe168307542ce67281cbc7fc40ace2f494a10c25df2822eccb'),
+    (4, 0x736d4, 0x3f388, 0x24c0c, 0x800fb428, 0x58, 0x3f2f0,
+     'c83acbf330f3cf7f70830a699217fdcaf847b8a83c3d59acd61ccf29c8ebab4b'),
+    (6, 0x9e1f4, 0x9290, 0x5c08, 0x8013a7b0, 0x168, 0x901c,
+     '7ae10a6b88c58abffdc8b8d5e1bb35bd0e355a7784200e43074343c9d44f9890'),
+    (7, 0xa3dfc, 0x3e500, 0x22134, 0x800838d0, 0x1920, 0x3a7ac,
+     'b2b95c99f54ae92fc03d682454d252bc0f7c6fe167386edc7a0d55b241999f44'),
+    (8, 0xc5f30, 0x2bd90, 0x18254, 0x800c3e68, 0x11e8, 0x28e74,
+     'c8a3d3757177934311ff42679b9f84447b450aea02e61537826a966728f972ee'),
+    (9, 0xde184, 0x3a678, 0x203f4, 0x800fb428, 0xe38, 0x36f7c,
+     '5e784f12647cf836ea5fd55d8f336417ffb5cd5a5f25c9d9bf8c69b374b74332'),
+    (10, 0xfe578, 0x83a8, 0x4a58, 0x8013a7b0, 0x8, 0x8394,
+     'b1840371b0cfca33625faf522ec386f841ed6ef65ad8ce72746c4a58dc4c873e'),
+)
 
 
 def drop_impossible_bss(segments):
@@ -59,7 +80,7 @@ def drop_impossible_bss(segments):
 def code_start(vram, text):
     if vram == 0x80000400:
         return 96 if len(text) >= 96 and not any(text[80:96]) else 80
-    return next((start for _, _, _, _, address, start, end, _ in EXTRA_PROGRAMS + VARIANT_PROGRAMS
+    return next((start for _, _, _, _, address, start, end, _ in EXTRA_PROGRAMS + VARIANT_PROGRAMS + VARIANT2_PROGRAMS
                  if address == vram and end == len(text)), None)
 
 
@@ -145,7 +166,8 @@ def find(rom, boot_ranges):
     end = returns[-1] + 8
     primary = (0x80000400, data[:end], data[end:])
     digest = hashlib.sha256(data).hexdigest()
-    extras = EXTRA_PROGRAMS if digest == _PRIMARY else VARIANT_PROGRAMS if digest == _VARIANT_PRIMARY else ()
+    extras = { _PRIMARY: EXTRA_PROGRAMS, _VARIANT_PRIMARY: VARIANT_PROGRAMS,
+              _VARIANT2_PRIMARY: VARIANT2_PROGRAMS }.get(digest, ())
     if not extras:
         return (primary,)
     programs = [primary]

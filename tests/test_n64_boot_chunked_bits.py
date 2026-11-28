@@ -62,6 +62,29 @@ def test_variant_runtime_bank_keeps_its_header_as_data():
     assert bank[6] < bank[2]
 
 
+def test_later_variant_banks_keep_distinct_overlapping_boundaries():
+    first = boot_chunked_bits.VARIANT2_PROGRAMS[0]
+    other = next(row for row in boot_chunked_bits.VARIANT2_PROGRAMS if row[0] == 7)
+    assert first[4] == other[4]
+    assert boot_chunked_bits.code_start(first[4], bytes(first[6])) == first[5]
+    assert boot_chunked_bits.code_start(other[4], bytes(other[6])) == other[5]
+
+
+def test_later_variant_banks_require_primary_and_directory(monkeypatch):
+    rom = bytearray(0x1d00)
+    monkeypatch.setattr(boot_chunked_bits, '_VARIANT2', hashlib.sha256(rom[0x1000:0x1b00]).hexdigest())
+    struct.pack_into('>6I', rom, 0x1b70, 0x54, 0x2000, 0x80000006, 0x5a, 0x2000, 0x80000006)
+    data = bytes(112) + bytes.fromhex('27bdffe803e0000827bd0018') * 400 + bytes(0x2000-112-4800)
+    digest = hashlib.sha256(data).hexdigest()
+    monkeypatch.setattr(boot_chunked_bits, '_VARIANT2_PRIMARY', digest)
+    monkeypatch.setattr(boot_chunked_bits, 'VARIANT2_PROGRAMS', ((1, 0x5a, 0x2000, 6, 0x80090000, 112, 4912, digest),))
+    monkeypatch.setattr(boot_chunked_bits, 'decode', lambda source, expected: data)
+    ranges = [(0x1000, 0x1b00, 0x80200400)]
+    assert len(boot_chunked_bits.find(rom, ranges)) == 2
+    rom[0x1b83] ^= 1
+    assert len(boot_chunked_bits.find(rom, ranges)) == 1
+
+
 def test_impossible_bss_is_dropped_without_changing_valid_segments():
     segments = [{'type': 'code', 'bss_size': 0x80000400}, {'type': 'code', 'bss_size': 0x1000}, [0x100]]
     boot_chunked_bits.drop_impossible_bss(segments)
