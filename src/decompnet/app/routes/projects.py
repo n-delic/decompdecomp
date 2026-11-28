@@ -1341,8 +1341,8 @@ def register(app: App) -> None:
         check = Job()
         check.promote()
         check.ordered.set()
-        check.donor_workers, check.donor_maximum = maintenance_tasks.donor_options(
-            data.get('workers', 0), data.get('maximum_throughput', False))
+        check.donor_workers, check.donor_maximum, check.donor_compile_slots = maintenance_tasks.donor_options(
+            data.get('workers', 0), data.get('maximum_throughput', False), data.get('compile_slots', 0))
         paused = None
 
         def work(log):

@@ -28,11 +28,20 @@ def test_maximum_uses_the_deep_lane_width():
     assert similar_phase.donor_width(job(donor_maximum=True, donor_workers=5), 10_000, 8, 7) == 5
 
 
+def test_lane_compile_slots():
+    assert similar_phase.lane_slots(job(), 6) == 6
+    assert similar_phase.lane_slots(job(donor_maximum=True), 6) == 0
+    assert similar_phase.lane_slots(job(donor_maximum=True, donor_compile_slots=64), 6) == 64
+    assert similar_phase.lane_slots(job(donor_compile_slots=48), 6) == 48
+
+
 def test_donor_options_validate():
-    assert maintenance_tasks.donor_options(0, False) == (0, False)
-    assert maintenance_tasks.donor_options(12, True) == (12, True)
+    assert maintenance_tasks.donor_options(0, False) == (0, False, 0)
+    assert maintenance_tasks.donor_options(12, True, 96) == (12, True, 96)
     for bad in (-1, 257, "4", True, 1.5):
         with pytest.raises(NetworkError):
             maintenance_tasks.donor_options(bad, False)
+        with pytest.raises(NetworkError):
+            maintenance_tasks.donor_options(0, False, bad)
     with pytest.raises(NetworkError):
         maintenance_tasks.donor_options(1, "yes")

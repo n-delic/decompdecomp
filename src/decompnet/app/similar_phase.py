@@ -108,6 +108,16 @@ def donor_width(job, targets, default_workers, compile_limit):
     return min(default_workers, compile_limit, targets)
 
 
+def lane_slots(job, width):
+    """The compile slots the donor lanes share (deep_lanes.Lanes gives each lane its slice, at least two). The
+    automatic `width` leaves each lane two compiles in flight; maximum throughput passes 0, so each lane takes its
+    share of four per core, as the deep permuter's lanes do; the user's number is split between the lanes."""
+    requested = int(getattr(job, 'donor_compile_slots', 0) or 0)
+    if requested:
+        return requested
+    return 0 if getattr(job, 'donor_maximum', False) else width
+
+
 def parallel(twins, slug, job):
     from .. import compiler
     from . import deep_lanes, workers
@@ -143,7 +153,7 @@ def parallel(twins, slug, job):
     # Balance long and short functions across lanes. A destination and its history
     # belong to one lane for the entire pass, including its follow-up repairs.
     partitions = [targets[index::width] for index in range(width)]
-    lanes = deep_lanes.Lanes(net, width, width, maximum=True)
+    lanes = deep_lanes.Lanes(net, width, lane_slots(job, width), maximum=True)
     lock = threading.Lock()
     snapshots = {}
     finished = {}

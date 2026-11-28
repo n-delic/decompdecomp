@@ -34,13 +34,16 @@ def enabled() -> bool:
     return os.environ.get("DECOMP_MAINTENANCE_WORKER", "").strip() != "0"
 
 
-def donor_options(workers=0, maximum=False):
-    """The user's CPU settings for a search of other games: parallel donor workers (0 = automatic), all-cores mode."""
+def donor_options(workers=0, maximum=False, compile_slots=0):
+    """The user's CPU settings for a search of other games: parallel donor workers (0 = automatic), all-cores mode,
+    and concurrent compiles shared by those workers (0 = automatic)."""
     if isinstance(workers, bool) or not isinstance(workers, int) or not 0 <= workers <= 256:
         raise NetworkError('Choose 1–256 parallel workers, or leave blank for automatic.')
     if not isinstance(maximum, bool):
         raise NetworkError('Maximum throughput must be true or false.')
-    return workers, maximum
+    if isinstance(compile_slots, bool) or not isinstance(compile_slots, int) or not 0 <= compile_slots <= 256:
+        raise NetworkError('Choose 1–256 concurrent compiles, or leave blank for automatic.')
+    return workers, maximum, compile_slots
 
 
 def worker_of(net):
@@ -139,7 +142,8 @@ def _cross_game_in_worker(worker, slug, job, log_):
     for attempt in range(WORKER_RESTARTS + 1):
         try:
             payload = {"slug": slug, "workers": getattr(job, "donor_workers", 0),
-                       "maximum": getattr(job, "donor_maximum", False)}
+                       "maximum": getattr(job, "donor_maximum", False),
+                       "compile_slots": getattr(job, "donor_compile_slots", 0)}
             return worker.run_task("cross_game", payload, stop=job.stop,
                                    on_status=lambda fields: apply_fields(job, fields))
         except NetworkError as error:
@@ -256,7 +260,8 @@ def _run_cross_game(net, payload, stop, promote, status):
     job = Job(stop=stop, foreground=promote)
     job.promote()
     job._parallel_donors = deep_lanes.enabled()
-    job.donor_workers, job.donor_maximum = donor_options(payload.get("workers", 0), bool(payload.get("maximum", False)))
+    job.donor_workers, job.donor_maximum, job.donor_compile_slots = donor_options(
+        payload.get("workers", 0), bool(payload.get("maximum", False)), payload.get("compile_slots", 0))
     done = threading.Event()
     _ticker(stop, done, lambda: status({"progress": job.progress}))
     try:
