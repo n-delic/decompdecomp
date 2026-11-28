@@ -1071,6 +1071,7 @@ def missed_functions(config: Path, rom: bytes, log=print, known_functions=(), *,
 
     image = config.parent / (cfg.get('options', {}).get('target_path') or 'rom.z64')
     samples = []
+    runtime_banks = []
     if emulator.installed() and image.is_file() and image.read_bytes() == rom:
         log('Running the game to check for directly called code missing from its mappings.')
         cancel = getattr(log, 'cancel_event', None)
@@ -1136,7 +1137,9 @@ def missed_functions(config: Path, rom: bytes, log=print, known_functions=(), *,
         log(f'Deferred {len(ambiguous)} candidate bodies whose overlay scope is ambiguous.')
         new = [body for body in new if body not in ambiguous]
     inherited = [dict(rom_start=lo, rom_end=hi, vram=vram, scope=scope)
-                 for lo, hi, vram in new if (scope := runtime_scoped.inherited_scope((lo, hi, vram), known))]
+                 for lo, hi, vram in new if (scope := (
+                     runtime_scoped.inherited_scope((lo, hi, vram), known) or
+                     runtime_scoped.separate_runtime_scope((lo, hi, vram), known, runtime_banks, cfg)))]
     scoped = runtime_scoped.closure(rom, known, known_functions, samples, reserved=new + inside,
                                     check=getattr(log, 'check_cancel', lambda: None)) if samples else []
     bodies = [(e['rom_start'], e['rom_end'], e['vram']) for e in scoped]

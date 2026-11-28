@@ -277,3 +277,40 @@ def inherited_scope(body, segments):
            and s.exclusive_ram_id != scope for s in segments):
         return ''
     return scope
+
+
+def separate_runtime_scope(body, segments, runtime_banks, config):
+    """Keep an observed bank out of Splat's global span when an overlay lies between them."""
+    lo, hi, address = body
+    if not any(a <= lo < hi <= b and address - lo == vram - a for a, b, vram in runtime_banks):
+        return ''
+    raw = config.get('segments', [])
+    global_ranges = []
+    for index, segment in enumerate(raw):
+        if not isinstance(segment, dict) or segment.get('type') != 'code' or segment.get('exclusive_ram_id'):
+            continue
+        start, vram = segment.get('start'), segment.get('vram')
+        if type(start) is not int or type(vram) is not int:
+            return ''
+        ends = [s[0] if isinstance(s, list) and s else s.get('start') if isinstance(s, dict) else None
+                for s in raw[index + 1:]]
+        end = next((value for value in ends if type(value) is int), None)
+        if end is None:
+            return ''
+        global_ranges.append((vram, vram + end - start + int(segment.get('bss_size') or 0)))
+    if not global_ranges:
+        return ''
+    low, high = min(a for a, _ in global_ranges), max(b for _, b in global_ranges)
+    body_end = address + hi - lo
+    if address < high and low < body_end:
+        return ''
+    if any(s.vram < body_end and address < s.vram + s.rom_end - s.rom_start for s in segments):
+        return ''
+    expanded_low, expanded_high = min(low, address), max(high, body_end)
+    if not any(s.exclusive_ram_id and s.vram < expanded_high and expanded_low < s.vram + s.rom_end - s.rom_start
+               for s in segments):
+        return ''
+    scope = f'runtime_bank_{(address - lo) & 0xFFFFFFFF:08X}'
+    if any(s.exclusive_ram_id == scope for s in segments):
+        return ''
+    return scope
