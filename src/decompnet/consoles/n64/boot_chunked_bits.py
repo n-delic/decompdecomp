@@ -17,6 +17,7 @@ _VARIANT2_TEXT = '536038ee4edee1e18fffba67b85e873954b3cb1adab362c169b71e3989b305
 _PRIMARY = '10d91d2c6916496106b399cc05b6ee0663d10a3ae9fd8003cad4936ad5476b71'
 _VARIANT_PRIMARY = '3ca488c5e900ac5748c11ef50a1178305b116e6a70bf22b7826d0c39bf4683a3'
 _VARIANT2_PRIMARY = '5d004f9be05eb8aa3856cedccfdf26b3bc304cae1cf736f77be6f468930ecf9b'
+_VARIANT3_PRIMARY = '7e705ffd45678e10581f886ee49bfc6bef54416d77c44b75882bfdd9d245d051'
 # Directory index, offset, output and stored sizes, runtime address, text bounds,
 # and the full image digest. The text was checked against independent RAM captures.
 EXTRA_PROGRAMS = (
@@ -69,6 +70,12 @@ VARIANT2_PROGRAMS = (
     (10, 0xfe578, 0x83a8, 0x4a58, 0x8013a7b0, 0x8, 0x8394,
      'b1840371b0cfca33625faf522ec386f841ed6ef65ad8ce72746c4a58dc4c873e'),
 )
+VARIANT3_PROGRAMS = (
+    (2, 0x65f18, 0x6df34, 0x381d8, 0x80066fb8, 0x8, 0x5ec34,
+     '00024a8cff6777c8ad76447f2877fd8d7b3ee439fc6db021ceba04fae0da728b'),
+    (5, 0xb1b98, 0x26d36, 0x136cc, 0x800d4ef0, 0x8, 0x2452c,
+     'b0d00b75a21ca089c15d735ee788d6990ab10e6f580d60dbb479922be5530d72'),
+)
 
 
 def drop_impossible_bss(segments):
@@ -84,7 +91,8 @@ def code_start(vram, text):
         return 72
     if vram == 0x80000400:
         return 96 if len(text) >= 96 and not any(text[80:96]) else 80
-    return next((start for _, _, _, _, address, start, end, _ in EXTRA_PROGRAMS + VARIANT_PROGRAMS + VARIANT2_PROGRAMS
+    return next((start for _, _, _, _, address, start, end, _ in
+                 EXTRA_PROGRAMS + VARIANT_PROGRAMS + VARIANT2_PROGRAMS + VARIANT3_PROGRAMS
                  if address == vram and end == len(text)), None)
 
 
@@ -173,8 +181,8 @@ def find(rom, boot_ranges):
     end = returns[-1] + 8
     primary = (0x80000400, data[:end], data[end:])
     digest = hashlib.sha256(data).hexdigest()
-    extras = { _PRIMARY: EXTRA_PROGRAMS, _VARIANT_PRIMARY: VARIANT_PROGRAMS,
-              _VARIANT2_PRIMARY: VARIANT2_PROGRAMS }.get(digest, ())
+    extras = {_PRIMARY: EXTRA_PROGRAMS, _VARIANT_PRIMARY: VARIANT_PROGRAMS,
+              _VARIANT2_PRIMARY: VARIANT2_PROGRAMS, _VARIANT3_PRIMARY: VARIANT3_PROGRAMS}.get(digest, ())
     if not extras:
         return (primary,)
     programs = [primary]
