@@ -91,6 +91,14 @@ def complete(image, segments, banks, taken=(), log=print, *, table_ranges=(), wh
             if not is_frame(int.from_bytes(image[at:at+4],'big')):continue
             size=called_extent(image,at,hi,vram+at-lo,table_ranges=table_ranges)
             if size:bodies[at]=(at,at+size,vram+at-lo)
+            # Some compilers load a global just before allocating the frame.
+            # Start only at a two-instruction address/load pair after a hard
+            # control-flow boundary; the whole body still needs corroboration.
+            entry=at-8
+            if entry < lo or not _leading_global_load(image, entry, lo):
+                continue
+            size=called_extent(image,entry,hi,vram+entry-lo,table_ranges=table_ranges)
+            if size:bodies[entry]=(entry,entry+size,vram+entry-lo)
     # A quiet framed function can be dead code or a callback. Its own calls to
     # independently established CPU callees corroborate it even without an incoming
     # edge. Require an RA spill/restore too; an asset's frame-like word is insufficient.
@@ -106,7 +114,9 @@ def complete(image, segments, banks, taken=(), log=print, *, table_ranges=(), wh
         return callee_cache[target]
     def linked_frame(a,b,v):
         words=[int.from_bytes(image[at:at+4],'big') for at in range(a,b,4)]
-        amount=0x10000-(words[0]&0xffff)
+        frame=0 if is_frame(words[0]) else 2
+        if len(words)<=frame or not is_frame(words[frame]):return False
+        amount=0x10000-(words[frame]&0xffff)
         spills={w&0xffff for w in words if w&0xffff0000==0xafbf0000 and (w&0xffff)<amount}
         restores={w&0xffff for w in words if w&0xffff0000==0x8fbf0000}
         return bool(spills&restores) and any(kind=='call' and (target in calls or closed_callee(target))
@@ -164,3 +174,19 @@ def complete(image, segments, banks, taken=(), log=print, *, table_ranges=(), wh
             and not any(r!=s and r[0]<s[1] and s[0]<r[1] for s in accepted.values())]
     if result:log(f'Recovered {len(result)} closed CPU bodies across {what}; other loaded bytes remain raw.')
     return sorted(list(segments)+result)
+
+
+def _leading_global_load(image, entry, gap_start):
+    """A LUI/load pair after a return or unconditional jump and its delay slot."""
+    upper=int.from_bytes(image[entry:entry+4],'big')
+    load=int.from_bytes(image[entry+4:entry+8],'big')
+    register=(upper>>16)&31
+    if (upper>>26 != 15 or register in (0,29) or (load>>21)&31 != register
+            or load>>26 not in (32,33,35,36,37)):
+        return False
+    if entry == gap_start:
+        return True
+    if entry-8 < gap_start:
+        return False
+    previous=int.from_bytes(image[entry-8:entry-4],'big')
+    return previous == 0x03e00008 or previous>>26 == 2
