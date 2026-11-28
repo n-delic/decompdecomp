@@ -99,6 +99,29 @@ def _patches(entries: list[Overlay], rom: bytes) -> list[Overlay]:
     return entries
 
 
+def verify_analysis(original: bytes, analysis: bytes) -> bool:
+    """Verify the complete expanded image against the table and original cartridge."""
+    if not analysis.startswith(original):
+        return False
+    try:
+        entries = read(original)
+    except RomError:
+        return False
+    cursor = len(original)
+    count = 0
+    for entry in entries:
+        if entry.data is None or not any(entry.data[i:i+4] == b'\x03\xe0\x00\x08'
+                                         for i in range(0, len(entry.data)-3, 4)):
+            continue
+        start = cursor + (-cursor % 16) + 0x2000
+        end = start + len(entry.data)
+        if end > len(analysis) or any(analysis[cursor:start]) or analysis[start:end] != entry.data:
+            return False
+        cursor = end
+        count += 1
+    return bool(count) and cursor == len(analysis)
+
+
 def add(config: Path, workdir: Path, image: str, log) -> str | None:
     """Append verified program images and give overlapping banks distinct symbols and Splat contexts."""
     import yaml

@@ -110,6 +110,24 @@ def test_byte_patches_reconstruct_paired_bank_without_mutating_base():
     assert entries[3].data[7] == 0x52
 
 
+@pytest.mark.parametrize('source', [cartridge, patched_cartridge])
+def test_expanded_analysis_requires_exact_verified_overlay_bytes(tmp_path, source):
+    original = source()
+    (tmp_path/'rom.z64').write_bytes(original)
+    config = tmp_path/'splat.yaml'
+    config.write_text(yaml.safe_dump({'options':{'target_path':'rom.z64'}, 'segments':[[0,'bin'],[len(original)]]}))
+    name = overlays.add(config, tmp_path, 'rom.z64', lambda *_:None)
+    expanded = (tmp_path/name).read_bytes()
+    assert overlays.verify_analysis(original, expanded)
+    for offset in (0, len(original), len(original)+0x2000, len(expanded)-1):
+        changed = bytearray(expanded); changed[offset] ^= 1
+        assert not overlays.verify_analysis(original, bytes(changed))
+    assert not overlays.verify_analysis(original, expanded[:-1])
+    assert not overlays.verify_analysis(original, expanded+b'\0')
+    damaged = bytearray(original); damaged[0x2000] ^= 1
+    assert not overlays.verify_analysis(bytes(damaged), expanded)
+
+
 def test_byte_patch_outside_base_fails():
     image = bytearray(patched_cartridge())
     struct.pack_into('>H', image, 0x4060, 0xffff)
