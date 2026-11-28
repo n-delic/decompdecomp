@@ -194,8 +194,8 @@
 - N64 imports also recognize cartridge tables of headerless, chunked MIO0 executables whose back-references can
   reach earlier chunks. A decoded program is included only when a called entry and a long prefix match the game's
   observed RAM; its analysis image is reconstructed from the original cartridge again during export verification.
-  Standard MIO0 streams are also recovered when three called targets and 64 KiB of loaded bytes agree with one
-  unambiguous cartridge stream. Code that is never observed running can still be missing.
+  Standard MIO0 streams and aligned raw DEFLATE streams are also recovered when three called targets and 64 KiB
+  of loaded bytes agree with one unambiguous cartridge stream. Code that is never observed running can still be missing.
   Existing projects need a saved-project restore or another supported migration to use the expanded image.
 
 - Saved projects retain fingerprints for post-import discoveries and re-run verified discovery before applying

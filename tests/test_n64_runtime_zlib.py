@@ -3,6 +3,7 @@ import random
 import struct
 import zlib
 
+import pytest
 import yaml
 
 from decompnet.consoles.n64 import runtime_zlib
@@ -48,6 +49,46 @@ def test_runtime_program_reconstruction_checks_every_byte_and_padding():
     assert not runtime_zlib.verify_analysis(altered,expanded,rows)
     assert not runtime_zlib.verify_analysis(rom,expanded,[])
     assert not runtime_zlib.verify_analysis(rom,expanded,42)
+
+
+@pytest.mark.parametrize('level', [0, 6])
+def test_raw_deflate_program_requires_runtime_evidence_and_exact_source(level):
+    base = 0x80010000
+    rng = random.Random(85)
+    payload = bytes(rng.randrange(32) for _ in range(0x12000))
+    compressor = zlib.compressobj(level=level, wbits=-zlib.MAX_WBITS)
+    packed = compressor.compress(payload) + compressor.flush()
+    rom = bytes(0x200) + packed + bytes(0x20)
+    ram = bytearray(0x40000)
+    ram[0x10000:0x10000+len(payload)] = payload
+    targets = {base+0x100, base+0x500, base+0x1000}
+    rows = runtime_zlib.find(rom, [bytes(ram)], targets)
+    assert rows == [dict(codec='raw_deflate', offset=0x200, size=len(packed),
+                         expanded=len(payload), vram=base, calls=sorted(targets))]
+    assert runtime_zlib.find(rom, [bytes(ram)], set(list(targets)[:2])) == []
+    changed = bytearray(ram); changed[0x18000] ^= 1
+    assert runtime_zlib.find(rom, [bytes(changed)], targets) == []
+    assert runtime_zlib.find(rom, [bytes(ram)], targets, [(0, 0x1000, base)]) == []
+    duplicate = rom + bytes(-len(rom)%16) + packed
+    assert runtime_zlib.find(duplicate, [bytes(ram)], targets) == []
+    expanded = rom + bytes(-len(rom)%16+16) + payload
+    expanded += bytes(-len(expanded)%16)
+    assert runtime_zlib.verify_analysis(rom, expanded, rows)
+    bad = [dict(rows[0], size=rows[0]['size']-1)]
+    assert not runtime_zlib.verify_analysis(rom, expanded, bad)
+    bad = [dict(rows[0], expanded=len(payload)+1)]
+    assert not runtime_zlib.verify_analysis(rom, expanded, bad)
+    altered = bytearray(expanded); altered[-16] ^= 1
+    assert not runtime_zlib.verify_analysis(rom, altered, rows)
+
+
+def test_raw_deflate_rejects_oversized_or_incomplete_streams():
+    compressor = zlib.compressobj(wbits=-zlib.MAX_WBITS)
+    packed = compressor.compress(bytes(runtime_zlib._RAW_LIMIT+1)) + compressor.flush()
+    assert runtime_zlib._raw_deflate(packed) is None
+    compressor = zlib.compressobj(wbits=-zlib.MAX_WBITS)
+    small = compressor.compress(b'code' * 100) + compressor.flush()
+    assert runtime_zlib._raw_deflate(small[:-2]) is None
 
 
 def test_contiguous_tail_requires_multiple_complete_functions():

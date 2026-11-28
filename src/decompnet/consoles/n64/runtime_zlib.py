@@ -3,6 +3,7 @@ import hashlib
 import json
 import re
 import struct
+import zlib
 from pathlib import Path
 
 import yaml
@@ -11,6 +12,19 @@ from decompassets.n64 import paired_resources
 
 _HEADER = re.compile(rb'\x80[\x00-\x3f]..\x78[\x01\x5e\x9c\xda]', re.DOTALL)
 MANIFEST = 'runtime-zlib.json'
+_RAW_LIMIT = 8 * 1024 * 1024
+
+
+def _raw_deflate(data):
+    """Decode a complete, bounded raw stream and report the bytes it consumed."""
+    try:
+        decoder = zlib.decompressobj(-zlib.MAX_WBITS)
+        payload = decoder.decompress(data, _RAW_LIMIT + 1)
+    except zlib.error:
+        return None
+    if not decoder.eof or len(payload) > _RAW_LIMIT:
+        return None
+    return payload, len(data) - len(decoder.unused_data)
 
 
 def _payload(rom, row):
@@ -22,6 +36,11 @@ def _payload(rom, row):
         return None
     if row.get('codec', 'zlib') == 'zlib':
         return paired_resources.unpack_zlib(rom, row['offset'], row['size'])
+    if row.get('codec') == 'raw_deflate':
+        decoded = _raw_deflate(memoryview(rom)[row['offset']:row['offset']+row['size']])
+        if decoded and decoded[1] == row['size'] and len(decoded[0]) == row.get('expanded'):
+            return decoded[0]
+        return None
     if row.get('codec') == 'mio0':
         from .runtime_mio import unpack
         decoded = unpack(rom[:row['offset']+row['size']], row['offset'])
@@ -61,16 +80,10 @@ def find(rom, dumps, targets, occupied=(), check=lambda: None):
     if len(targets) < 3:
         return []
     candidates = []
-    for number, match in enumerate(_HEADER.finditer(rom)):
-        if number % 128 == 0:
-            check()
-        offset = match.start()
-        if offset % 2:
-            continue
-        size = struct.unpack_from('>I', rom, offset)[0] & 0x7fffffff
-        payload = paired_resources.unpack_zlib(rom, offset, size)
+
+    def consider(payload, row):
         if payload is None or len(payload) < 0x10000:
-            continue
+            return
         placements = {}
         for dump in dumps:
             for target in targets:
@@ -92,7 +105,33 @@ def find(rom, dumps, targets, occupied=(), check=lambda: None):
                 placements.setdefault(base, set()).add(target)
         for base, calls in placements.items():
             if len(calls) >= 3:
-                candidates.append(dict(offset=offset, size=size, vram=base, calls=sorted(calls)))
+                candidates.append(dict(row, vram=base, calls=sorted(calls)))
+
+    for number, match in enumerate(_HEADER.finditer(rom)):
+        if number % 128 == 0:
+            check()
+        offset = match.start()
+        if offset % 2:
+            continue
+        size = struct.unpack_from('>I', rom, offset)[0] & 0x7fffffff
+        payload = paired_resources.unpack_zlib(rom, offset, size)
+        consider(payload, dict(offset=offset, size=size))
+    # Headerless streams have no signature. Aligned starts following padding give a bounded
+    # shortlist; exact decompression, three calls and the observed RAM prefix decide identity.
+    for number, match in enumerate(re.finditer(rb'\x00{8,}', rom)):
+        if number % 128 == 0:
+            check()
+        end = match.end()
+        # A stored DEFLATE block can itself begin with zero bytes. Its aligned
+        # start can therefore be just inside the padding run, not at its end.
+        offset = end & ~15
+        if (end == len(rom) or end - offset > 4 or offset - match.start() < 8
+                or rom[offset] & 6 == 6):
+            continue
+        decoded = _raw_deflate(memoryview(rom)[offset:offset+_RAW_LIMIT * 2])
+        if decoded:
+            payload, size = decoded
+            consider(payload, dict(codec='raw_deflate', offset=offset, size=size, expanded=len(payload)))
     return candidates if len(candidates) == 1 else []
 
 
