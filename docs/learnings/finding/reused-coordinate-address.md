@@ -15,7 +15,7 @@ scalar for the first address, then converting it back for the actual
 halfword read, changed the linked local comparison to 345 at either of two
 sites and 340 at both. The integer pointer cast and the one-shot assignment
 scope are matching scaffolding. The scalar's previous value is not observed
-and its later original use resets it. The app trial was pending; the function
+and its later original use resets it. The app subsequently confirmed the 340 diagnostic; the function
 was still open.
 
 Reusing a pointer local for the other address or using the integer local at
