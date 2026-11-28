@@ -619,7 +619,7 @@
         </div>
         <div id="romAudioPanel" role="tabpanel" aria-labelledby="romAudioTab" tabindex="0" hidden>
           <p class="small muted" id="romAudioContext"></p>
-            <p>Browse detected samples and prepare a WAV preview, then press Play to listen. Music sequences, pitch, mixing and loops are not rendered.</p>
+            <p>Browse detected samples and supported music sequences, then prepare a WAV preview and press Play. Music previews approximate pitch, mixing and loops.</p>
           <div class="rom-asset-fields"><label class="field"><span>Find samples, banks or functions</span><input type="search" id="romAudioFilter"></label><label class="field"><span>Codec</span><select id="romAudioCodec"></select></label><label class="field"><span>Preview rate for banks without a stored rate (1000–192000 Hz)</span><input id="romAudioRate" type="number" min="1000" max="192000" value="22050"></label></div>
           <p class="small muted">A marked table match is static evidence, not proof of runtime use. No recorded references does not mean unused. Previews are capped at 30 seconds / 4 MiB.</p>
           <button id="romAudioStop" type="button" class="ghost small-btn" hidden>Stop preparing audio</button><pre id="romAudioWork" class="joblog" hidden></pre><div id="romAudioResult" aria-live="polite"></div>
