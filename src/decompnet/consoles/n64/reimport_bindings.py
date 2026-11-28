@@ -288,9 +288,11 @@ def _probe_grouped(net, project, fn, source, header, candidate, target, info):
         if macro:
             variants.append(macro)
         for prefer_decl in (True, False):
-            direct = _direct_variant(fn, grouped, header, separated, target, extra, prefer_decl=prefer_decl)
-            if direct and direct not in variants:
-                variants.append(direct)
+            for nested_first in (False, True):
+                direct = _direct_variant(fn, grouped, header, separated, target, extra,
+                                         prefer_decl=prefer_decl, nested_first=nested_first)
+                if direct and direct not in variants:
+                    variants.append(direct)
         for variant in variants:
             built = net._compile(project, header, variant, fn)
             if built.ok and net._evaluate(fn, project, built.obj)[1] is True:
