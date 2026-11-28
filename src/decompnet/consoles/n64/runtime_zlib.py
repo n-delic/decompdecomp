@@ -22,6 +22,12 @@ def _payload(rom, row):
         return None
     if row.get('codec', 'zlib') == 'zlib':
         return paired_resources.unpack_zlib(rom, row['offset'], row['size'])
+    if row.get('codec') == 'mio0':
+        from .runtime_mio import unpack
+        decoded = unpack(rom[:row['offset']+row['size']], row['offset'])
+        if decoded and decoded[1] == row['size'] and len(decoded[0]) == row.get('expanded'):
+            return decoded[0]
+        return None
     if row.get('codec') == 'refpack':
         from decompassets import formats, refpack
         try:
