@@ -76,7 +76,8 @@ RESERVE = 3  # compiles left in a search's allowance before one more profile: it
 # v7: the draft's address-named tables are judged as record arrays under -O1 too
 # v8: the draft's float-bit arguments and switch width are judged under -O1 too (draft_constants)
 # v9: ... and its unsigned-to-double conversions
-SIGNATURE = 'profile-probe-v9:'
+# v10: kept other-profile attempts, missing draft externs, and clean_rewrite under -O0/-O1
+SIGNATURE = 'profile-probe-v10:'
 FP_FLAGS = ('-mfp32', '-mfp64')
 # libultra's own names: osXxx, __osXxx, __rmon*, __sc*, the routines whose compiler was the library's, not the game's
 LIBRARY_NAME = re.compile(r'^_{0,2}(?:os[A-Z]|rmon|sc[A-Z])')
@@ -391,6 +392,129 @@ def pending(net, proj, fn) -> bool:
     return record is None or bool(record.get('lead') and not record.get('searched'))
 
 
+_C_BUILTIN_TYPES = frozenset({
+    'u8', 's8', 'u16', 's16', 'u32', 's32', 'u64', 's64', 'f32', 'f64',
+    'char', 'short', 'int', 'long', 'unsigned', 'signed', 'float', 'double', 'void',
+    'M2C_UNK', 'M2C_UNK8', 'M2C_UNK16', 'M2C_UNK32',
+})
+_C_KEYWORDS = frozenset({
+    'if', 'else', 'for', 'while', 'do', 'switch', 'case', 'default', 'break', 'continue', 'return',
+    'goto', 'sizeof', 'struct', 'union', 'enum', 'typedef', 'extern', 'static', 'const', 'volatile',
+    'register', 'inline', 'NULL', 'TRUE', 'FALSE', 'true', 'false',
+})
+
+
+def complete_draft_externs(net, proj, fn, draft: str, header: str) -> str:
+    """Synthesize fallback `extern` declarations for undeclared `D_...` or project data symbols referenced in `draft`
+    so `m2c` drafts with missing globals can compile and be judged under alternate `-O` levels."""
+    from decomprepair.csource import _blank, find
+
+    from .global_types import declaration_text
+    from .polish_scaffolding import DECLARATION, DECLARED, PRELUDE
+
+    if not draft:
+        return draft
+    span = find(draft, fn['name'])
+    if not span:
+        return draft
+    clean = _blank(draft)
+    opening = clean.find('{', span[0], span[1])
+    if opening < 0:
+        return draft
+
+    combined_head = _blank(header or '') + '\n' + clean[:span[0]]
+    declared = {
+        m[1] or m[2]
+        for line in DECLARATION.findall(combined_head)
+        for m in [DECLARED.search(line)]
+        if m and (m[1] or m[2])
+    }
+    declared |= set(re.findall(r'^\s*#\s*define\s+([A-Za-z_]\w*)', (header or '') + '\n' + draft[:span[0]], re.M))
+    known_types = set(_C_BUILTIN_TYPES) | set(
+        re.findall(r'\btypedef\b[^;{}]*?\b([A-Za-z_]\w*)\s*(?:\[[^\]]*\])?\s*;', combined_head)
+    )
+
+    sig_m = re.search(r'\(([^{};]*)\)\s*$', clean[span[0]:opening])
+    params = {
+        m[1]
+        for part in (sig_m[1].split(',') if sig_m else ())
+        for m in [re.search(r'([A-Za-z_]\w*)\s*(?:\[[^\]]*\])?\s*$', part.strip())]
+        if m and part.strip() not in ('', 'void')
+    }
+    body = clean[opening:span[1]]
+    locals_decl = set(
+        re.findall(
+            r'(?:^|[;{}])\s*(?:(?:const|volatile|register|unsigned|signed|struct|union|enum)\s+)*'
+            r'[A-Za-z_]\w*(?:\s*\*+\s*|\s+)([A-Za-z_]\w*)\s*(?=[;=\[,])',
+            body,
+        )
+    )
+    skip = declared | known_types | params | locals_decl | _C_KEYWORDS | {fn['name']}
+
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for hit in re.finditer(r'\b([A-Za-z_]\w*)\b', body):
+        ident = hit[1]
+        if ident in skip or ident in seen or ident.startswith('M2C_'):
+            continue
+        before = body[:hit.start()].rstrip()
+        after = body[hit.end():].lstrip()
+        if before.endswith(('.', '->')) or after.startswith(('(', ':')):
+            continue
+        seen.add(ident)
+        candidates.append(ident)
+    if not candidates:
+        return draft
+
+    sym_types: dict[str, str] = {}
+    try:
+        store = net.project_store(proj['id']) if hasattr(net, 'project_store') else None
+        if store is not None and hasattr(store, 'all'):
+            placeholders = ','.join('?' for _ in candidates)
+            rows = store.all(
+                f"SELECT name, c_type FROM symbols WHERE project_id=? AND kind<>'func' AND name IN ({placeholders})",
+                proj['id'], *candidates,
+            )
+            sym_types = {r['name']: (r['c_type'] or '').strip() for r in (rows or ())}
+    except Exception:  # noqa: BLE001 - fallback heuristics handle missing symbol stores
+        sym_types = {}
+
+    extern_lines: list[str] = []
+    fallback_scalar = 'M2C_UNK' if 'M2C_UNK' in draft else 's32'
+    for ident in candidates:
+        is_d_sym = bool(re.fullmatch(r'D_[0-9A-Fa-f]{6,16}', ident))
+        if not is_d_sym and ident not in sym_types:
+            continue
+        c_type = sym_types.get(ident) or ''
+        base_words = [w for w in re.findall(r'[A-Za-z_]\w*', re.sub(r'\[[^\]]*\]', '', c_type))
+                      if w not in {'const', 'volatile', 'struct', 'union', 'enum', 'unsigned', 'signed'}]
+        if c_type and all(w in known_types for w in base_words):
+            extern_lines.append(f'extern {declaration_text(c_type, ident)};')
+        elif re.search(rf'\b{re.escape(ident)}\s*\[', body):
+            extern_lines.append(f'extern u8 {ident}[];')
+        elif re.search(rf'\*\s*{re.escape(ident)}\b|\b{re.escape(ident)}\s*->', body):
+            extern_lines.append(f'extern u8 *{ident};')
+        else:
+            extern_lines.append(f'extern {fallback_scalar} {ident};')
+    if not extern_lines:
+        return draft
+
+    prelude = PRELUDE.search(draft[:span[0]])
+    insert_at = prelude.end() if prelude else 0
+    block = '\n'.join(extern_lines) + '\n'
+    if insert_at and not draft[:insert_at].endswith('\n'):
+        block = '\n' + block
+    return draft[:insert_at] + block + draft[insert_at:]
+
+
+def _kept_profile_attempt(net, proj, fn) -> dict | None:
+    try:
+        from . import profile_attempts
+        return profile_attempts.closer(net, proj, fn)
+    except Exception:  # noqa: BLE001 - unit stubs without SQLite tables have no kept attempt
+        return None
+
+
 def draft_under_own(search, agent, proj, fn, draft, own) -> int | None:
     """The draft's score under the function's own settings: what its score at another level is compared with."""
     from ..network import NetworkError
@@ -441,9 +565,10 @@ def run(search, agent, proj, fn, source, *, climb=True) -> bool:
     if not planned:
         return False
     seed = fn['seed'] if 'seed' in fn.keys() else None
-    draft = canonical_source(fn, seed) if seed else None
+    draft = complete_draft_externs(net, proj, fn, canonical_source(fn, seed), facts.header) if seed else None
     if draft and draft.strip() == source.strip():
         draft = None
+    kept_attempt = _kept_profile_attempt(net, proj, fn)
     previous, search.phase = search.phase, 'profile probes'
     search.log(f'Profile probe: {len(planned)} per-function profile(s): '
                + '; '.join(f"{p['toolchain']} {' '.join(p['flags'])} ({p['family']})" for p in planned) + '.')
@@ -461,6 +586,17 @@ def run(search, agent, proj, fn, source, *, climb=True) -> bool:
                 matched = True
                 return True
             scores.append({**item, 'score': score})
+            if (kept_attempt and key(kept_attempt) == key(item)
+                    and kept_attempt.get('source', '').strip() not in {source.strip(), (draft or '').strip()}
+                    and search.limit - search.tested >= RESERVE):
+                search.check()
+                kept_score = deep_profiles.probe(search, agent, proj, fn, kept_attempt['source'], profile,
+                                                 scored=True, review_variants=False)
+                if kept_score == 0:
+                    matched = True
+                    return True
+                if kept_score is not None:
+                    scores.append({**item, 'score': kept_score, 'source': kept_attempt['source']})
             if draft and search.limit - search.tested >= RESERVE:
                 # the machine draft under the same profile: a sweep of one KMC game's open functions found 26 of the 64
                 # that score at most half as much under -O1 through their draft, not their saved C
@@ -471,7 +607,7 @@ def run(search, agent, proj, fn, source, *, climb=True) -> bool:
                     return True
                 if drafted is not None:
                     scores.append({**item, 'score': drafted, 'draft': True})
-            if item['family'] == 'level' and '-O1' in item['flags']:
+            if item['family'] == 'level' and ('-O1' in item['flags'] or '-O0' in item['flags']):
                 # spellings that only the old level tells apart: no better under the own settings, so no search keeps them
                 matched, found = judge_record_arrays(search, agent, proj, fn, draft or source, facts, item, profile)
                 if matched:
@@ -509,7 +645,8 @@ def run(search, agent, proj, fn, source, *, climb=True) -> bool:
     search.phase = 'closer optimisation level'
     try:
         texts = [({'toolchain': e['toolchain'], 'flags': e['flags']},
-                  ido_compat.adapted(e['toolchain'], draft if e.get('draft') else source), e['score']) for e in lead]
+                  ido_compat.adapted(e['toolchain'], e.get('source') or (draft if e.get('draft') else source)),
+                  e['score']) for e in lead]
         spent = search.tested
         matched = profile_climb.explore_level(search, agent, proj, fn, texts)
     finally:
@@ -550,7 +687,12 @@ def judge_record_arrays(search, agent, proj, fn, text, facts, item, profile) -> 
     So is a display list written through a `Gfx **` argument, as the SDK's macros with the parameters' widths
     (gbi_param_shapes): five glyph builders' drafts scored 13000 to 23500 under `-O2` either way, and 0 only as that
     source under `-O1`."""
-    from decomprepair import gbi_param_shapes, global_offset_records, indexed_symbol_records
+    from decomprepair import (
+        clean_rewrite,
+        gbi_param_shapes,
+        global_offset_records,
+        indexed_symbol_records,
+    )
 
     from . import deep_profiles
     found = []
@@ -558,7 +700,8 @@ def judge_record_arrays(search, agent, proj, fn, text, facts, item, profile) -> 
     children = [*draft_constants(text, fn['name'], facts, flags.split() if isinstance(flags, str) else flags),
                 *global_offset_records.variants(text, fn['name'], facts.header),
                 *indexed_symbol_records.variants(text, fn['name'], facts.header, facts.asm),
-                *gbi_param_shapes.variants(text, fn['name'], facts.header)]
+                *gbi_param_shapes.variants(text, fn['name'], facts.header),
+                *clean_rewrite.variants(text, fn['name'], facts.header)]
     for family, child in children:
         if search.limit - search.tested < RESERVE:
             break
@@ -567,8 +710,10 @@ def judge_record_arrays(search, agent, proj, fn, text, facts, item, profile) -> 
         if score == 0:
             return True, found
         if score is not None:
-            found.append({**item, 'family': 'level_constants' if family == 'draft_constants' else 'level_records',
-                          'score': score, 'draft': True})
+            label = ('level_constants' if family == 'draft_constants'
+                     else 'level_clean' if family.startswith('clean_rewrite')
+                     else 'level_records')
+            found.append({**item, 'family': label, 'score': score, 'draft': True, 'source': child})
     return False, found
 
 
@@ -586,7 +731,8 @@ def diagnose(search, agent, proj, fn, source, own, scores, complete, *, lead=(),
     net = search.net
     scored = [s for s in scores if s['score'] is not None]
     best = min(scored, key=lambda s: s['score'], default=None)
-    record = {'own_score': fn['best_score'], 'draft_own_score': draft_own, 'probes': scores, 'complete': complete,
+    stored_probes = [{k: v for k, v in s.items() if k != 'source'} for s in scores]
+    record = {'own_score': fn['best_score'], 'draft_own_score': draft_own, 'probes': stored_probes, 'complete': complete,
               'lead': bool(lead), 'searched': False,
               'best': best and {**{k: best[k] for k in ('toolchain', 'flags', 'family', 'score')},
                                 **({'draft': True} if best.get('draft') else {})}}

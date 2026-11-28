@@ -256,10 +256,33 @@ def level_variant(search, proj, fn, profile) -> bool:
         return False
 
 
+def interleave_by_family(options: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Round-robin `(family, child)` across distinct families (preserving first-seen family order and within-family
+    order) so one high-volume family cannot consume the whole climb allowance before 1-child families are judged."""
+    buckets: dict[str, list[tuple[str, str]]] = {}
+    for family, child in options:
+        buckets.setdefault(family, []).append((family, child))
+    out: list[tuple[str, str]] = []
+    round_idx = 0
+    while True:
+        added = False
+        for items in buckets.values():
+            if round_idx < len(items):
+                out.append(items[round_idx])
+                added = True
+        if not added:
+            break
+        round_idx += 1
+    return out
+
+
 def _fp_first(options):
-    """[(family, child)] with the FP-constant and operand families first (stable otherwise): a step judges them in
-    batches of CHAIN_CHILDREN until one improves, and the literal inlining that matches under the flipped profile is one child among hundreds."""
-    return sorted(options, key=lambda item: not any(word in item[0] for word in FP_FIRST))
+    """[(family, child)] with the FP-constant and operand families first and each tier interleaved round-robin across
+    families: a step judges them in batches until one improves, and a 1-child structural family must not sit behind a
+    thousand children of one broad family."""
+    fp = [item for item in options if any(word in item[0] for word in FP_FIRST)]
+    rest = [item for item in options if not any(word in item[0] for word in FP_FIRST)]
+    return interleave_by_family(fp) + interleave_by_family(rest)
 
 
 def repair_chain(search, agent, proj, fn, source, score, profile, budget, check, header, key):
@@ -313,7 +336,8 @@ def repair_chain(search, agent, proj, fn, source, score, profile, budget, check,
         if spent[0] >= budget:
             raise TimeoutError  # (chain's own signal for "out of time": its budget is compiles here)
 
-    final, best, taken, notes = chain(source, generate, judge, None, CHAIN_STEPS, CHAIN_CHILDREN, limit)
+    batch_size = min(budget, max(CHAIN_CHILDREN, 160)) if budget > CHAIN_CHILDREN else max(1, budget)
+    final, best, taken, notes = chain(source, generate, judge, None, CHAIN_STEPS, batch_size, limit)
     for family, result, scored, offered in taken:
         search.log(f'Under {key}: {result} ({family}; {scored} of {offered} children judged)')
     return final, best if best is not None else score, spent[0]
@@ -367,6 +391,9 @@ def climb(search, agent, proj, fn, source, profile, score, seed=0, *, require_cl
                 proposals = draft_repairs.variants(*args, labels, **options)
             except Exception:  # noqa: BLE001 - standalone probes can still try random rewrites
                 proposals = []
+        proposals = [child for _, child in _fp_first(
+            [(labels.get(child, f'unlabelled_{idx}'), child) for idx, child in enumerate(proposals)]
+        )]
         for _ in range(RANDOM_PER_ROUND):
             text = mutate(best_source, rng, header=header)
             if text:
@@ -428,6 +455,31 @@ def explore_level(search, agent, proj, fn, leads) -> bool:
     return False
 
 
+def kept_attempt_lead(search, proj, fn, *, check=None):
+    """`(profile, source, score)` from a closer other-profile attempt already recorded for `fn` (`profile_attempts`),
+    re-judged on current build inputs; None when none exists or it cannot be judged."""
+    if search.tested >= search.limit:
+        return None
+    try:
+        from . import profile_attempts
+        net = getattr(search, 'net', None)
+        if net is None or not hasattr(net, 'project_store'):
+            return None
+        kept = profile_attempts.closer(net, proj, fn)
+    except Exception:  # noqa: BLE001 - optional stored diagnostic lead; unit stubs may have no SQLite tables
+        return None
+    if not kept or not kept.get('source') or not kept.get('toolchain'):
+        return None
+    if check is not None:
+        check()
+    flags = kept['flags']
+    profile = {'toolchain': kept['toolchain'], 'flags': flags.split() if isinstance(flags, str) else list(flags)}
+    score = _judge(search, proj, fn, profile, kept['source'])
+    if score is None:
+        return None
+    return profile, kept['source'], score
+
+
 def explore(search, agent, proj, fn, baseline, clean_profile=None):
     """Give alternate profiles a quarter of the remaining time and return whether one matched."""
     now = time.monotonic()
@@ -446,6 +498,10 @@ def explore(search, agent, proj, fn, baseline, clean_profile=None):
             found = profile, clean_profile['score']
         else:
             source = fn['best_source']
+            kept = kept_attempt_lead(search, proj, fn, check=check)
+            if kept is not None and kept[2] == 0:
+                search.check()
+                return climb(search, agent, proj, fn, kept[1], kept[0], 0, check=check) == 0
             from .profile_detection import detected, settings
             # (the profile compiler detection found for this C, already measured on it: climbed under first)
             if (finding := detected(getattr(search, 'net', None), proj, fn)) is not None:
@@ -453,6 +509,13 @@ def explore(search, agent, proj, fn, baseline, clean_profile=None):
                 found = finding['profile'], finding['score']
             else:
                 found = lead(search, agent, proj, fn, source, baseline, check=check)
+            if kept is not None and kept[2] < baseline and (found is None or kept[2] < found[1]):
+                source = kept[1]
+                found = kept[0], kept[2]
+                search.log(
+                    f"Climbing from closer saved profile attempt ({kept[0]['toolchain']} "
+                    f"{' '.join(kept[0]['flags'])}: score {kept[2]})."
+                )
         if found is not None:
             if found[1] == 0:
                 search.check()

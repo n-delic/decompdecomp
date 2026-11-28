@@ -194,3 +194,31 @@ def test_explore_tries_the_usual_profiles_when_no_profile_leads(monkeypatch):
     monkeypatch.setattr('decompnet.app.profile_detection.detected', lambda net, proj, fn: None)
     assert profile_climb.explore(search, None, PROJ, FN, 15) is True
     assert probed == [('C', USUAL)]
+
+
+def test_explore_climbs_from_closer_kept_profile_attempt_instead_of_poor_saved_best(monkeypatch):
+    from decompnet.app import profile_attempts
+    o1 = {'toolchain': 'sn', 'flags': ['-G0', '-O1', '-mfp64']}
+    given, probed = setup(monkeypatch, {'KEPT_O1': [('trailing_default_return_fallthrough', 'EXACT_O1')]}, options={})
+    # Saved best 'A' scores 70 under own -O2 and 450 under -O1; kept attempt 'KEPT_O1' scores 15 under -O1 -> 0.
+    search = Search({'A': 450, 'KEPT_O1': 15, 'EXACT_O1': 0})
+    search.deadline = time.monotonic() + 600
+    search.net.project_store = lambda pid: object()
+    monkeypatch.setattr(profile_attempts, 'closer', lambda net, proj, fn: {
+        'toolchain': 'sn', 'flags': ['-G0', '-O1', '-mfp64'], 'source': 'KEPT_O1', 'score': 15,
+    })
+    monkeypatch.setattr('decompnet.app.profile_detection.detected', lambda net, proj, fn: {'profile': o1, 'score': 450})
+    assert profile_climb.explore(search, None, PROJ, FN, 70) is True
+    assert probed == [('EXACT_O1', o1)]
+    assert any('closer saved profile attempt' in line for line in search.logs)
+
+
+def test_round_robin_interleaving_prevents_one_noisy_family_from_starving_structural_families(monkeypatch):
+    # One family emits 500 children first; a 1-child structural family at the end still gets judged in round 1.
+    noisy = [('expression_or_near_repair', f'N{i}') for i in range(500)]
+    given, probed = setup(monkeypatch, {'A': noisy + [('trailing_default_return_fallthrough', 'EXACT')]}, options={})
+    other = {'toolchain': 'sn', 'flags': ['-G8', '-O2', '-mfp64']}
+    search = Search({'A': 120, 'EXACT': 0}, limit=40)
+    assert profile_climb.climb(search, None, PROJ, FN, 'A', other, 120) == 0
+    assert probed == [('EXACT', other)]
+    assert len(search.judged) <= 3

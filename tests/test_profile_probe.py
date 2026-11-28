@@ -861,5 +861,69 @@ def test_the_sn_assembler_probe_needs_a_gnu_as_pack_and_the_tell():
     words = [LUI_AT_HI, ADDU_AT_S0, LBU_V1_AT, JR, NOP]
     for own in (SN, {'toolchain': 'gcc-2.8.1-pm-sn-as', 'flags': ['-O1']}, {'toolchain': 'ido-7.1', 'flags': ['-O2']}):
         assert all(p['family'] != 'sn_assembler' for p in profile_probe.plan(N64, facts(own=own, words=words))), own
-    gnu = [LUI_V1, ADDU_V1_S0, LBU_V1_V1, JR, NOP]
+    gnu = [LUI_V1, ADDU_AT_S0 & 0 | ADDU_V1_S0, LBU_V1_V1, JR, NOP]
     assert all(p['family'] != 'sn_assembler' for p in profile_probe.plan(N64, facts(own=KMC_O1, words=gnu)))
+
+
+def test_complete_draft_externs_supplies_undeclared_globals_and_symbol_types():
+    draft = (
+        '#ifndef M2C_DEFINES\n#define M2C_DEFINES\ntypedef s32 M2C_UNK;\n#endif\n'
+        'u8 f(u8 arg0) {\n'
+        '    u8 local_a;\n'
+        '    D_801C746C = -1;\n'
+        '    local_a = D_801C7084[arg0];\n'
+        '    if (*trackInfo == 3 && knownGlobal == 1) {\n'
+        '        return helperCall(local_a, untypedSym);\n'
+        '    }\n'
+        '    return 0;\n'
+        '}\n'
+    )
+    header = 'typedef unsigned char u8;\ntypedef int s32;\ntypedef u8 ModeByte;\nextern u8 knownGlobal;\n'
+
+    class SymStore:
+        def all(self, sql, *params):
+            return [
+                {'name': 'trackInfo', 'c_type': 'ModeByte *'},
+                {'name': 'untypedSym', 'c_type': ''},
+            ]
+
+    net = SimpleNamespace(project_store=lambda pid: SymStore())
+    completed = profile_probe.complete_draft_externs(net, {'id': 1}, {'name': 'f'}, draft, header)
+    assert 'extern M2C_UNK D_801C746C;' in completed
+    assert 'extern u8 D_801C7084[];' in completed
+    assert 'extern ModeByte *trackInfo;' in completed
+    assert 'extern M2C_UNK untypedSym;' in completed
+    assert 'knownGlobal;' not in completed.split('u8 f(')[0]
+    assert 'helperCall' not in completed.split('u8 f(')[0]
+    assert 'local_a' not in completed.split('u8 f(')[0]
+
+
+def test_clean_rewrite_and_kept_attempt_propagate_their_own_source_into_level_climb(monkeypatch):
+    from decompnet.app import deep_profiles, profile_attempts, profile_climb
+    from decomprepair import clean_rewrite
+
+    search, _ = arrange(monkeypatch, {})
+    levels = [{k: v for k, v in entry('-O1', 0).items() if k != 'score'}]
+    search.net._judge_with = lambda *a: None
+    monkeypatch.setattr(profile_probe, 'plan', lambda console, f: [])
+    monkeypatch.setattr(profile_probe, 'level_probes', lambda f: levels)
+    monkeypatch.setattr(profile_probe, 'draft_under_own', lambda *a: 800)
+    monkeypatch.setattr(clean_rewrite, 'variants', lambda text, name, header='': [('clean_rewrite', 'CLEAN_DRAFT')])
+    monkeypatch.setattr(profile_attempts, 'closer', lambda net, proj, fn: {
+        'toolchain': KMC['toolchain'], 'flags': at('-O1'), 'source': 'KEPT_O1', 'score': 40,
+    })
+
+    scores_by_src = {'C': 500, 'DRAFT': 350, 'CLEAN_DRAFT': 90, 'KEPT_O1': 40}
+
+    def probe(search_, agent, proj, fn, source, profile, **kw):
+        search_.tested += 1
+        return scores_by_src.get(source, 999)
+
+    monkeypatch.setattr(deep_profiles, 'probe', probe)
+    climbed = []
+    monkeypatch.setattr(profile_climb, 'explore_level', lambda s, a, p, f, leads: (climbed.extend(leads), True)[1])
+    fn = {**FN, 'seed': 'DRAFT', 'best_score': 200}
+    assert profile_probe.run(search, None, PROJ, fn, 'C') is True
+    assert [(src, sc) for _, src, sc in climbed] == [('KEPT_O1', 40), ('CLEAN_DRAFT', 90), ('DRAFT', 350)]
+    stored_probes = json.loads(search.stored[-1][4])['probes']
+    assert all('source' not in p for p in stored_probes)
