@@ -100,6 +100,28 @@ def test_guarded_switch_uses_a_separate_address_pair(order):
         assert found is None or found['state'] != 'validated'
 
 
+@pytest.mark.parametrize('order', ['big', 'little'])
+def test_guarded_address_pair_scales_in_the_branch_delay_slot(order):
+    words = [0x2c430002, 0x1060000b, 0x00021880, 0x3c048000, 0x24841100,
+             0x00641021, 0x8c430000, 0x00600008, 0, 0x03e00008, 0,
+             0x03e00008, 0, 0x03e00008, 0]
+    image = bytearray(0x1200)
+    image[0x1000:0x103c] = b''.join(word.to_bytes(4, order) for word in words)
+    image[0x1100:0x1108] = b''.join(word.to_bytes(4, order) for word in (0x80001024, 0x8000102c))
+    ranges = [dict(rom_start=0x1100, rom_end=0x1108, vram=0x80001100)]
+    result = jump_table(image, 0x1000, 0x103c, 0x80001000, 0x101c, order, ranges)
+    assert result['state'] == 'validated' and result['entry_count'] == 2
+    assert extent(image, 0x1000, 0x103c, 0x80001000, order, table_ranges=ranges)['flow_closed']
+    for offset, word in ((0x1008, 0x00031880),  # scales a different index
+                         (0x1010, 0x24851100),  # changes the address register
+                         (0x1038, 0x08000403),  # jumps past the guard
+                         (0x1100, 0x80001200)):  # a table target outside the body
+        changed = bytearray(image)
+        changed[offset:offset+4] = word.to_bytes(4, order)
+        found = jump_table(changed, 0x1000, 0x103c, 0x80001000, 0x101c, order, ranges)
+        assert found is None or found['state'] != 'validated'
+
+
 def test_explicit_loader_edges_follow_every_case_and_reject_invalid_offsets():
     image, _ = fixture()
     assert not extent(image, 0x1000, 0x103c, 0x80001000, 'big')['flow_closed']

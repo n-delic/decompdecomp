@@ -354,26 +354,31 @@ def _stack_index_guard(image, start, at, order):
 
 def _address_pair_guard(image, start, at, order):
     """The guarded index and a LUI/addiu address pair meet in a separate result register."""
-    if at-start < 32:
-        return None
-    bound, branch, delay, scale, hi, low, add, load, jump, slot = (
-        int.from_bytes(image[p:p+4], order) for p in range(at-32, at+8, 4))
-    index, cond = (bound >> 21) & 31, (bound >> 16) & 31
-    count = bound & 0xffff
-    scaled, base = (scale >> 11) & 31, (hi >> 16) & 31
-    result, dest = (add >> 11) & 31, (jump >> 21) & 31
-    if (bound >> 26 != 11 or not index or not cond or index == cond or not 0 < count <= MAX_ENTRIES
-            or branch >> 26 != 4 or (branch >> 21) & 31 != cond or (branch >> 16) & 31
-            or delay or slot or scale >> 26 or scale & 63 or (scale >> 6) & 31 != 2
-            or (scale >> 16) & 31 != index or (scale >> 21) & 31 or not scaled
-            or hi >> 26 != 15 or not base or base == scaled
-            or low >> 26 != 9 or (low >> 21) & 31 != base or (low >> 16) & 31 != base
-            or add >> 26 or add & 63 != 33 or not result
-            or {(add >> 21) & 31, (add >> 16) & 31} != {base, scaled}
-            or load >> 26 != 35 or (load >> 21) & 31 != result or (load >> 16) & 31 != dest
-            or jump & 0xfc1fffff != 8 or not dest):
-        return None
-    return at-32, branch, count, (((hi & 0xffff) << 16) + signed(low) + signed(load)) & 0xffffffff
+    for scheduled in (False, True):
+        distance = 28 if scheduled else 32
+        if at-start < distance:
+            continue
+        words = [int.from_bytes(image[p:p+4], order) for p in range(at-distance, at+8, 4)]
+        if not scheduled and words.pop(2):  # the unscheduled guard has an empty delay slot
+            continue
+        bound, branch, scale, hi, low, add, load, jump, slot = words
+        index, cond = (bound >> 21) & 31, (bound >> 16) & 31
+        count = bound & 0xffff
+        scaled, base = (scale >> 11) & 31, (hi >> 16) & 31
+        result, dest = (add >> 11) & 31, (jump >> 21) & 31
+        if (bound >> 26 != 11 or not index or not cond or index == cond or not 0 < count <= MAX_ENTRIES
+                or branch >> 26 != 4 or (branch >> 21) & 31 != cond or (branch >> 16) & 31
+                or slot or scale >> 26 or scale & 63 or (scale >> 6) & 31 != 2
+                or (scale >> 16) & 31 != index or (scale >> 21) & 31 or not scaled
+                or hi >> 26 != 15 or not base or base == scaled
+                or low >> 26 != 9 or (low >> 21) & 31 != base or (low >> 16) & 31 != base
+                or add >> 26 or add & 63 != 33 or not result
+                or {(add >> 21) & 31, (add >> 16) & 31} != {base, scaled}
+                or load >> 26 != 35 or (load >> 21) & 31 != result or (load >> 16) & 31 != dest
+                or jump & 0xfc1fffff != 8 or not dest):
+            continue
+        return at-distance, branch, count, (((hi & 0xffff) << 16) + signed(low) + signed(load)) & 0xffffffff
+    return None
 
 
 def calls(image,functions,order,*,full_scan=False,check=lambda:None,progress=lambda _:None,checkpoint=None):
