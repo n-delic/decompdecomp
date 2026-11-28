@@ -168,6 +168,18 @@ def _subtract_matches(measures: dict, count: int, size: int) -> None:
         measures["matched_" + kind + "_percent"] = 100 * int(measures["matched_" + kind]) / total if total else 0
 
 
+def _absolute_config(project, cfg):
+    """Keep object paths anchored to the real project in a temporary objdiff view."""
+    for key in ('target_dir', 'base_dir'):
+        if cfg.get(key):
+            cfg[key] = str((project / cfg[key]).resolve())
+    for unit in cfg.get('units') or cfg.get('objects') or []:
+        for key in ('target_path', 'base_path'):
+            if unit.get(key):
+                unit[key] = str((project / unit[key]).resolve())
+    return cfg
+
+
 def report(project: Path, out: Path) -> dict:
     """Progress report (objdiff report.proto as JSON) for a project with an objdiff.json.
 
@@ -179,18 +191,29 @@ def report(project: Path, out: Path) -> dict:
     guards = {}
     missing = [u for u in cfg.get("units", []) if u.get("base_path") and
                (not (project / u["base_path"]).is_file() or stale(project, u, guards))]
-    if not missing:
-        _run_compatible(["report", "generate", "-p", str(project), "-o", str(out)], cwd=project, timeout=1800)
-        return _exclude_stubs(project, cfg, subtract_conflicts(project, json.loads(out.read_text(encoding="utf-8"))))
-    for unit in cfg.get("units", []):
-        for key in ("target_path", "base_path"):
-            if unit.get(key):
-                unit[key] = str((project / unit[key]).resolve())
-    for unit in missing:
-        del unit["base_path"]
     with tempfile.TemporaryDirectory(prefix="decompwtf-report-") as tmp:
-        (Path(tmp) / "objdiff.json").write_text(json.dumps(cfg), encoding="utf-8")
-        _run_compatible(["report", "generate", "-p", tmp, "-o", str(out.resolve())], cwd=project, timeout=1800)
+        from .untyped_entries import view
+
+        directory = Path(tmp)
+        changed = False
+        for index, unit in enumerate(cfg.get('units') or cfg.get('objects') or []):
+            target = unit.get('target_path') or (str(Path(cfg['target_dir']) / unit['path'])
+                                                 if cfg.get('target_dir') and unit.get('path') else None)
+            if not target:
+                continue
+            original = (project / target).resolve()
+            adjusted = view(original, directory, f'target-{index}.o')
+            if adjusted != original:
+                unit['target_path'] = str(adjusted)
+                changed = True
+        if not missing and not changed:
+            _run_compatible(["report", "generate", "-p", str(project), "-o", str(out)], cwd=project, timeout=1800)
+        else:
+            _absolute_config(project, cfg)
+            for unit in missing:
+                del unit["base_path"]
+            (directory / "objdiff.json").write_text(json.dumps(cfg), encoding="utf-8")
+            _run_compatible(["report", "generate", "-p", tmp, "-o", str(out.resolve())], cwd=project, timeout=1800)
     return _exclude_stubs(project, cfg, subtract_conflicts(project, json.loads(out.read_text(encoding="utf-8"))))
 
 
@@ -452,6 +475,27 @@ def _renamed(left: dict | None, right: dict | None, lrows: list[dict], rrows: li
 
 
 def diff(target: Path | None, base: Path | None, symbol: str | None, cwd: Path, options: dict | None = None,
+         project: Path | None = None, unit: str | None = None) -> FunctionDiff:
+    """Compare the same verified object view used by project reports."""
+    from .untyped_entries import view
+
+    with tempfile.TemporaryDirectory(prefix='decompwtf-objdiff-entry-') as tmp:
+        directory = Path(tmp)
+        adjusted = view(target, directory)
+        original = Path(target).resolve() if target is not None else None
+        if adjusted != original and project is not None and unit and base is not None and base.exists():
+            cfg = json.loads((project / 'objdiff.json').read_text(encoding='utf-8'))
+            _absolute_config(project, cfg)
+            entry = next((item for item in cfg.get('units') or cfg.get('objects') or []
+                          if (item.get('name') or item.get('path')) == unit), None)
+            if entry is not None:
+                entry['target_path'] = str(adjusted)
+                (directory / 'objdiff.json').write_text(json.dumps(cfg), encoding='utf-8')
+                project = directory
+        return _diff(adjusted, base, symbol, cwd, options, project, unit)
+
+
+def _diff(target: Path | None, base: Path | None, symbol: str | None, cwd: Path, options: dict | None = None,
          project: Path | None = None, unit: str | None = None) -> FunctionDiff:
     """Diff one function between the target (expected) and base (yours) objects; symbol None measures the whole
     unit (unit_scores) without one function's rows.
