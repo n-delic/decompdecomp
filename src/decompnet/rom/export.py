@@ -104,6 +104,13 @@ _SPLAT_CODE_LABEL = re.compile(
     r'([A-Za-z_.$][\w.$]*)(?=[, \t\r\n]|$)[^\n]*(?:\n|$)', re.M)
 
 
+def _starts_with_data_label(text: str, name: str) -> bool:
+    """Splat can put a raw data block in its nonmatchings directory."""
+    label = next(((kind, found) for kind, found in _SPLAT_LABEL.findall(text)
+                  if kind in ('glabel', 'jlabel', 'dlabel')), None)
+    return label == ('dlabel', name)
+
+
 def remove_foreign_bank_labels(root: Path, functions, segments=()) -> None:
     """Keep named entries and scoped local labels only in their original ROM bank."""
     locations = {row['name']: row['rom_offset'] for row in functions if row['rom_offset'] is not None}
@@ -511,10 +518,14 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
         text = path.read_text(encoding="utf-8")
         if (raw := console.export_asm(text)) != text:
             path.write_text(raw, encoding="utf-8")
-    functions = []
+    functions, data_blocks = [], []
     for path in sorted((out / "asm" / "nonmatchings").glob("**/*.s")):
         rom_off, vram = _first_address(path)
         if vram is None:
+            continue
+        if ((vram, rom_off) not in rows
+                and _starts_with_data_label(path.read_text(encoding='utf-8'), path.stem)):
+            data_blocks.append(path)
             continue
         functions.append({"name": path.stem, "seg": path.parent.name, "vram": vram, "rom": rom_off,
                           "asm": path.relative_to(out).as_posix()})
@@ -632,10 +643,13 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
     config = yaml.safe_load((out / "splat.yaml").read_text(encoding="utf-8"))
     segments = _segments(config)
     pieces = []  # (segment name, vram or None, rom offset or None, object, sections)
-    for path in sorted((out / "asm").glob("*.s")) + sorted((out / "asm" / "data").glob("**/*.s")):
+    for path in sorted((out / "asm").glob("*.s")) + sorted((out / "asm" / "data").glob("**/*.s")) + data_blocks:
         rom_off, vram = _first_address(path)
         obj = f"build/{path.relative_to(out).with_suffix('.o').as_posix()}"
-        objects.append({"kind": "asm", "src": path.relative_to(out).as_posix(), "obj": obj})
+        entry = {"kind": "asm", "src": path.relative_to(out).as_posix(), "obj": obj}
+        if path in data_blocks:
+            entry['wrap'] = True  # splat's nonmatching data still uses the function macro preamble
+        objects.append(entry)
         pieces.append((path, vram, rom_off, obj))
     blobs = []
     for seg in segments:

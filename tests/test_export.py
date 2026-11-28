@@ -751,6 +751,28 @@ def test_unresolved_scoped_automatic_names_keep_their_address():
     }
 
 
+def test_nonmatching_data_block_is_not_an_entry_function():
+    from decompnet.rom.export import _starts_with_data_label
+
+    assert _starts_with_data_label('nonmatching func_80001000\n\ndlabel func_80001000\n.word 1\n', 'func_80001000')
+    assert not _starts_with_data_label('nonmatching func_80001000\n\nglabel func_80001000\njr $ra\n', 'func_80001000')
+    assert not _starts_with_data_label('dlabel other\n', 'func_80001000')
+
+
+def test_nonmatching_data_uses_the_assembly_preamble(tmp_path):
+    import runpy
+
+    from decompnet.rom import export
+
+    shutil.copyfile(Path(export.__file__).with_name('export_build.py'), tmp_path/'build.py')
+    entry = {'kind':'asm', 'src':'asm/nonmatchings/bank/data.s', 'obj':'build/asm/data.o', 'wrap':True}
+    (tmp_path/'build.json').write_text(json.dumps({'assembly':[entry], 'functions':[], 'asm_preamble':'# preamble\n'}))
+    script = runpy.run_path(str(tmp_path/'build.py'))
+    objects, _, _ = script['objects']()
+    assert objects == [('asm', 'build/wrap/build/asm/data.s', entry['obj'])]
+    assert (tmp_path/objects[0][1]).read_text() == '# preamble\n.include "asm/nonmatchings/bank/data.s"\n'
+
+
 def test_export_removes_foreign_bank_labels_only(tmp_path):
     from decompnet.rom.export import remove_foreign_bank_labels
 
