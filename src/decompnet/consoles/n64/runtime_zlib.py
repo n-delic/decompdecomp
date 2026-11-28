@@ -41,6 +41,12 @@ def _payload(rom, row):
         if decoded and decoded[1] == row['size'] and len(decoded[0]) == row.get('expanded'):
             return decoded[0]
         return None
+    if row.get('codec') == 'ring_lzss':
+        from .runtime_ring import decode
+        decoded = decode(memoryview(rom)[row['offset']:row['offset']+row['size']])
+        if decoded and decoded[1] == row['size'] and len(decoded[0]) == row.get('expanded'):
+            return decoded[0]
+        return None
     if row.get('codec') == 'mio0':
         from .runtime_mio import unpack
         decoded = unpack(rom[:row['offset']+row['size']], row['offset'])

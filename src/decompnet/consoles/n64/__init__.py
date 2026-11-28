@@ -17,6 +17,7 @@
 - runtime_zlib.py, runtime_refpack.py: compressed programs corroborated by runtime call targets and loaded bytes.
 - runtime_overlays.py: overlapping code banks corroborated by runtime caller and target bytes.
 - runtime_mio.py, runtime_mio_chunks.py: source-backed MIO0 programs corroborated against RAM.
+- runtime_ring.py: a source-backed ring-buffer program identified by its loader and runtime bytes.
 - runtime_textures.py: bounded emulator snapshots for texture loads whose pixels match the cartridge.
 - level_overlay_table.py: shared-slot level banks and adjacent helpers verified from loader instructions.
 - inferred_overlays.py: overlapping code-bank mappings supported by independently called local entries.
