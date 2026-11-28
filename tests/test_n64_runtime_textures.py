@@ -492,6 +492,29 @@ def test_alternate_menu_selection_exposes_textures_without_an_expansion_retry(tm
     assert not any(call.get('expansion_pak') for call in calls)
 
 
+def test_controller_pak_b_prompt_is_tried_when_other_paths_find_nothing(tmp_path, monkeypatch):
+    from decompassets.n64 import runtime_packed_graphics
+
+    rom = tmp_path / 'game.z64'
+    rom.write_bytes(bytes.fromhex('80371240') + b'original')
+    monkeypatch.setattr(runtime_textures.emulator, 'installed', lambda: tmp_path)
+    calls = []
+
+    def run(path, vis, *, dumps, **kwargs):
+        calls.append(kwargs)
+        for dump in dumps.values():
+            dump.write_bytes(b'game' if kwargs.get('inputs', '').startswith('120:B') else b'prompt')
+        return runtime_textures.emulator.Run(vis=vis)
+
+    monkeypatch.setattr(runtime_textures.emulator, 'run', run)
+    monkeypatch.setattr(detector, 'regions', lambda image, snapshots:
+                        [dict(offset=100, size=16, layout='texture')] if b'game' in snapshots else [])
+    monkeypatch.setattr(runtime_packed_graphics, 'regions', lambda *args, **kwargs: [])
+    result = runtime_textures.observe(b'image', rom, sha1(rom.read_bytes()).hexdigest())
+    assert [asset['offset'] for asset in result] == [100]
+    assert calls[-1]['inputs'].startswith('120:B')
+
+
 
 def test_zlib_model_meshes_merge_between_runtime_captures(tmp_path, monkeypatch):
     from decompassets.n64 import runtime_packed_graphics
