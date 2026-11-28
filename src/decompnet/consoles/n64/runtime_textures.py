@@ -182,14 +182,47 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
                     except emulator.EmulatorError as error:
                         expansion_failed = True
                         log(f'Extended image observation skipped: {error}')
+            # The submitted task, not an arbitrary later retrace, supplies the
+            # palette: the game may reuse its memory before the next snapshot.
+            from decompassets.n64 import runtime_lzw_textures
+            lzw_assets = []
+            if runtime_lzw_textures.has_resources(image, check) and not run.timed_out:
+                log('Checking submitted graphics frames for compressed textures.')
+                for inputs in ('', loaded_code.inputs(VIS[-1])):
+                    frames = {n: Path(folder)/f'lzw-{n}.ram' for n in (500, 1000, 1400, 1800, 2200)}
+                    for path in frames.values():
+                        path.unlink(missing_ok=True)
+                        Path(str(path)+'.task').unlink(missing_ok=True)
+                    try:
+                        captured = emulator.run(rom, VIS[-1], inputs=inputs, frame_dumps=frames,
+                                                timeout=120, expansion_pak=expansion)
+                        pairs = [(path.read_bytes(), Path(str(path)+'.task').read_bytes())
+                                 for path in captured.frame_dumps.values()
+                                 if path.is_file() and Path(str(path)+'.task').is_file()]
+                        lzw_assets += runtime_lzw_textures.regions(image, pairs, check=check)
+                        if captured.timed_out:
+                            expansion_failed = True
+                            log('Frame observation timed out; completed frames are still included.')
+                            break
+                    except emulator.EmulatorError as error:
+                        expansion_failed = True
+                        log(f'Frame observation skipped: {error}')
+                        break
             merged = {}
-            for asset in packed:
+            for asset in packed + lzw_assets:
                 key = asset['offset'], asset.get('layout')
                 if key in merged and asset.get('textures'):
                     previous = merged[key]['textures']
-                    known = {tuple(item['preview_settings'].items()) for item in previous}
-                    previous.extend(item for item in asset['textures']
-                                    if tuple(item['preview_settings'].items()) not in known)
+                    def texture_key(item):
+                        return tuple(item['preview_settings'].items()), item.get('palette')
+                    known = {texture_key(item) for item in previous}
+                    for item in asset['textures']:
+                        marker = texture_key(item)
+                        if marker not in known:
+                            previous.append(item)
+                            known.add(marker)
+                    if 'texture_count' in merged[key]:
+                        merged[key]['texture_count'] = len(previous)
                 elif key in merged and asset.get('layout') in ('runtime-zip-model', 'runtime-erz-model', 'runtime-edl-model', 'runtime-deflate-model', 'runtime-chunked-model', 'runtime-zlib-model'):
                     previous = merged[key]['meshes']
                     def identity(item, layout=asset['layout']):
