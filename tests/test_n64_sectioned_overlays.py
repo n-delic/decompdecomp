@@ -55,3 +55,20 @@ def test_insertion_keeps_code_and_data_in_separate_scoped_banks(tmp_path):
     after = next(s for s in segments if isinstance(s, dict) and s.get('start') == 0xc00)
     assert before['vram'] == 0x80001000
     assert after['vram'] == 0x80001820
+
+
+def test_high_inferred_code_does_not_expand_global_range_across_overlays(tmp_path):
+    image = directory_image()
+    config = tmp_path/'splat.yaml'
+    config.write_text(yaml.safe_dump({'segments': [
+        {'start': 0, 'type': 'code', 'name': 'main', 'vram': 0x80000400,
+         'subsegments': [[0, 'c', 'main']]},
+        {'start': 0x200, 'type': 'bin'}, [len(image)]]}))
+    banks = sectioned_overlays.read(image, [])
+    sectioned_overlays.add(config, tmp_path, image, [(0xc20, 0xc40, 0x80300000)], banks, lambda _: None)
+    segments = yaml.safe_load(config.read_text())['segments']
+    main = next(s for s in segments if isinstance(s, dict) and s.get('name') == 'main')
+    extra = next(s for s in segments if isinstance(s, dict) and s.get('start') == 0xc20)
+    assert 'exclusive_ram_id' not in main
+    assert extra['vram'] == 0x80300000 and extra['exclusive_ram_id'] == 'sectioned_extra_80300000'
+    assert [s['vram'] for s in segments if isinstance(s, dict) and s.get('name', '').startswith('sectioned_overlay_')] == [0x80200000]*4
