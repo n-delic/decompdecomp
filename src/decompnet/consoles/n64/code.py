@@ -1065,9 +1065,8 @@ def missed_functions(config: Path, rom: bytes, log=print, known_functions=(), *,
     found = complete_gaps(rom, taken, [], declared, runtime_entries(config.parent), log=log)
     cfg = yaml.safe_load(initial_text)
     inside = _bodies_inside_code(cfg, rom, taken, known_functions, log) if known_functions else []
-    # Existing projects can predate the runtime import scan. A mapped trap table contains independently
-    # bounded entries even when most are never called during the sample run. Other runtime code ranges
-    # need function-boundary analysis before they can be added here.
+    # Existing projects can predate the runtime import scan. Observed ranges still need
+    # function-boundary analysis and staged verification before they can be added.
     from . import emulator, loaded_code, runtime_scoped
 
     image = config.parent / (cfg.get('options', {}).get('target_path') or 'rom.z64')
@@ -1105,6 +1104,18 @@ def missed_functions(config: Path, rom: bytes, log=print, known_functions=(), *,
         for start, end, vram in observed['segments']:
             if loaded_code.trap_symbols(rom, [(start, end, vram)]):
                 found.extend((at, at + 8, vram + at - start) for at in range(start, end, 8))
+        runtime_banks = [bank for bank in observed['segments'] if not loaded_code.trap_symbols(rom, [bank])]
+        if runtime_banks and known_functions:
+            from .loader_code import complete
+
+            established = sorted(set(known_functions) | set(found) | set(inside))
+            tables = [dict(rom_start=a, rom_end=b, vram=v) for a, b, v in runtime_banks]
+            recovered = complete(rom, established, runtime_banks, (), log, table_ranges=tables,
+                                 what='runtime-observed loaded code')
+            extra = set(recovered) - set(established)
+            if reviews:
+                extra = {body for body in extra if safe(body)}
+            found.extend(sorted(extra))
     new = sorted({r for r in found if not any(a < r[1] and r[0] < b for a, b, _ in taken)})
     # A raw child of a code parent is absent from code_ranges, but it is still inside that parent.
     # Inserting another top-level segment there truncates the parent's later children and breaks its split.

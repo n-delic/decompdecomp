@@ -812,6 +812,30 @@ def test_existing_project_gains_every_entry_of_a_runtime_verified_trap_table(tmp
     assert len([r for r in split.code_ranges(tmp_path / 'game.yaml') if 0x1200 <= r[0] < 0x1200 + len(table)]) == 12
 
 
+def test_existing_project_recovers_called_code_from_a_runtime_observed_range(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import emulator, loaded_code
+
+    net, pid = project(tmp_path)
+    rom = bytearray(image())
+    address = 0x80201000
+    caller = [0x0c000000 | ((address >> 2) & 0x03ffffff), 0, 0x03e00008, 0]
+    body = [0x27bdffe8, 0xafbf0014, 0x24020007, 0x8fbf0014, 0x03e00008, 0x27bd0018]
+    for index, word in enumerate(caller):
+        rom[0x1000+index*4:0x1004+index*4] = word.to_bytes(4, 'big')
+    for index, word in enumerate(body):
+        rom[0x1200+index*4:0x1204+index*4] = word.to_bytes(4, 'big')
+    (tmp_path/'rom.z64').write_bytes(rom)
+    with net.project_store(pid).tx() as db:
+        db.execute("UPDATE functions SET target=? WHERE project_id=? AND name='a'", (bytes(rom[0x1000:0x1010]), pid))
+    monkeypatch.setattr(emulator, 'installed', lambda: tmp_path)
+    monkeypatch.setattr(loaded_code, 'find', lambda *a, **kw: {'segments': [(0x1200, 0x1218, address)]})
+    result = net.find_missed_functions('game', log=lambda *_: None)
+    assert any(row['vram'] == address and row['size'] == 24 for row in result['added'])
+    row = net.project_store(pid).one('SELECT target FROM functions WHERE project_id=? AND vram=?', pid, address)
+    assert row['target'] == bytes(rom[0x1200:0x1218])
+    assert net.project_store(pid).one("SELECT status FROM functions WHERE name='a'")['status'] == 'matched'
+
+
 def test_existing_project_does_not_run_a_different_image(tmp_path, monkeypatch):
     from decompnet.consoles.n64 import emulator, loaded_code
 
