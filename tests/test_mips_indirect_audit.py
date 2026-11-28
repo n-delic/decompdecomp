@@ -59,6 +59,33 @@ def test_guarded_switch_follows_all_cases_only_with_explicit_mapping():
 
 
 @pytest.mark.parametrize('order', ['big', 'little'])
+def test_switch_index_scaled_in_prior_branch_delay_slot(order):
+    words = [0x14200004, 0x00047080, 0x3c014416, 0x44811000, 0,
+             0x2c810002, 0x10200009, 0x3c018000, 0x002e0821, 0x8c2e1100,
+             0x01c00008, 0, 0x03e00008, 0, 0x03e00008, 0, 0x03e00008, 0]
+    image = bytearray(0x1200)
+    image[0x1000:0x1048] = b''.join(w.to_bytes(4, order) for w in words)
+    image[0x1100:0x1108] = b''.join(w.to_bytes(4, order) for w in (0x80001030, 0x80001038))
+    ranges = [dict(rom_start=0x1100, rom_end=0x1108, vram=0x80001100)]
+    result = jump_table(image, 0x1000, 0x1048, 0x80001000, 0x1028, order, ranges)
+    assert result['state'] == 'validated' and result['entry_count'] == 2
+    assert extent(image, 0x1000, 0x1048, 0x80001000, order, table_ranges=ranges)['flow_closed']
+    for index, word in ((0, 0x54200004), (1, 0x00047040), (2, 0x3c0e4416)):
+        changed = bytearray(image)
+        changed[0x1000+4*index:0x1004+4*index] = word.to_bytes(4, order)
+        assert jump_table(changed, 0x1000, 0x1048, 0x80001000, 0x1028, order, ranges) is None
+    # A separate jump into the guard can bypass the scale's delay slot.
+    changed = bytearray(image)
+    shifted = [0x08000407, 0] + words
+    changed[0x1000:0x1050] = b''.join(w.to_bytes(4, order) for w in shifted)
+    changed[0x1100:0x1108] = b''.join(w.to_bytes(4, order) for w in (0x80001038, 0x80001040))
+    assert jump_table(changed, 0x1000, 0x1050, 0x80001000, 0x1030, order, ranges) is None
+    changed = bytearray(image)
+    changed[0x1040:0x1044] = (0x08000405).to_bytes(4, order)  # backedge to the guard
+    assert jump_table(changed, 0x1000, 0x1048, 0x80001000, 0x1028, order, ranges) is None
+
+
+@pytest.mark.parametrize('order', ['big', 'little'])
 def test_unoptimized_switch_reloads_the_checked_frame_slot(order):
     words = [0x8fc20018, 0x2c430002, 0x1060000e, 0, 0x8fc20018,
              0x00401821, 0x00031080, 0x3c038000, 0x24631100, 0x00431021,

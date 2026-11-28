@@ -193,6 +193,47 @@ def _guard_slot(word, index, condition):
             or word & 0xffe0003f in (0x46000002, 0x46000006))
 
 
+def _prescaled_guard(image, start, end, at, order, vram):
+    """A prior branch always scales the index in its delay slot before the guard."""
+    if at-start < 40:
+        return None
+    early, scale, const, fp, nop, bound, branch, hi, add, load, jump, slot = [
+        int.from_bytes(image[p:p+4], order) for p in range(at-40, at+8, 4)]
+    guard = at-20
+    index, condition, count = (bound >> 21) & 31, (bound >> 16) & 31, bound & 0xffff
+    scaled, base, dest = (scale >> 11) & 31, (hi >> 16) & 31, (jump >> 21) & 31
+    temp = (const >> 16) & 31
+    if (early >> 26 not in (4, 5) or at-36+signed(early)*4 != guard
+            or scale >> 26 or scale & 63 or (scale >> 6) & 31 != 2
+            or (scale >> 16) & 31 != index or (scale >> 21) & 31
+            or const >> 26 != 15 or temp in (0, index, scaled)
+            or fp & 0xffe007ff != 0x44800000 or (fp >> 16) & 31 != temp or nop
+            or bound >> 26 != 11 or not 0 < count <= MAX_ENTRIES or not index or not condition
+            or not scaled or scaled == index or condition in (index, scaled) or branch >> 26 != 4
+            or {(branch >> 21) & 31, (branch >> 16) & 31} != {0, condition}
+            or hi >> 26 != 15 or not base or base in (index, scaled)
+            or add >> 26 or add & 63 != 33 or (add >> 11) & 31 != base
+            or {(add >> 21) & 31, (add >> 16) & 31} != {base, scaled}
+            or load >> 26 != 35 or (load >> 21) & 31 != base or (load >> 16) & 31 != dest
+            or jump & 0xfc1fffff != 8 or not dest or slot):
+        return None
+    # No local edge may enter after the scale or bypass it on the way to the guard.
+    for pc in range(start, end-3, 4):
+        if pc == at-40:
+            continue
+        word = int.from_bytes(image[pc:pc+4], order)
+        op = word >> 26
+        if op in (1, 4, 5, 6, 7, 20, 21, 22, 23) or op == 17 and (word >> 21) & 31 == 8:
+            target = pc+4+signed(word)*4
+        elif op in (2, 3):
+            target = start+(((((vram+pc-start+4) & 0xf0000000) | ((word & 0x3ffffff) << 2)))-vram)
+        else:
+            continue
+        if at-40 < target <= guard:
+            return None
+    return guard, branch, count, (((hi & 0xffff) << 16)+signed(load)) & 0xffffffff
+
+
 def jump_table(image,start,end,vram,at,order,ranges=(),mappings=(),*,reader=None, allow_saved_base=False):
     """Recognize one exact guard/scale/LUI/add/load/JR idiom (its scale in the guard's delay slot or after it),
     with no interior entry. Import data classification may also follow an early saved-register base."""
@@ -238,10 +279,16 @@ def jump_table(image,start,end,vram,at,order,ranges=(),mappings=(),*,reader=None
         address=(((hi&0xffff)<<16)+signed(load))&0xffffffff
         break
     else:
-        saved = _stack_index_guard(image, start, at, order)
+        prescaled = _prescaled_guard(image, start, end, at, order, vram)
+        saved = _stack_index_guard(image, start, at, order) if prescaled is None else None
+        if prescaled is not None:
+            guard, branch, count, address = prescaled
+            saved = prescaled
+            direct = prescaled
         if saved is not None:
-            stack_guard = True
-            guard, branch, count, address = saved
+            if prescaled is None:
+                stack_guard = True
+                guard, branch, count, address = saved
         else:
             direct = _address_pair_guard(image, start, at, order)
             if direct is not None:
