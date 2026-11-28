@@ -142,8 +142,26 @@ _LIBULTRA = {
     },
 }
 _LIBULTRA['0f07d05f6696deb9df26481881723517833a134c'] = _LIBULTRA['cf806ff2603640a748fca5026ded28802f1f4a50']
+# This complete interrupt-mask body agrees instruction by instruction with a
+# known linked SDK build; only its two linked data addresses differ. Bind the
+# digest to both the cartridge and its verified expanded analysis image.
+_LIBULTRA['f8c7ae14df7341881346b1ceaf838d2219291279'] = {
+    'edc0efe838c67cb9e72ccb30fe6d1dff36e113b8336b749cc830754949764dc0':
+        ('osSetIntMask', 160, False, 'os/setintmask.s'),
+}
+_LIBULTRA['b31db97a665dcc5c1a100a886b1ca76eea565d8c'] = _LIBULTRA['f8c7ae14df7341881346b1ceaf838d2219291279']
 SIZES = tuple(sorted({size for entries in _KNOWN.values() for _, size in entries.values()}
                      | {entry[1] for entries in _LIBULTRA.values() for entry in entries.values()}))
+
+
+def assembly_fingerprints(image: bytes) -> dict[int, set[str]]:
+    """Full linked assembly digests for this exact image, grouped by body size."""
+    entries = _LIBULTRA.get(hashlib.sha1(image).hexdigest(), {})
+    result = {}
+    for digest, (_, size, from_c, _) in entries.items():
+        if not from_c:
+            result.setdefault(size, set()).add(digest)
+    return result
 
 
 def identify(code: bytes, image_sha1: str) -> dict | None:
