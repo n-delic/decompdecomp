@@ -110,3 +110,20 @@ def test_variant_removes_only_the_false_relocation_pair(tmp_path, monkeypatch):
     path.write_text(first + keep + second, encoding='utf-8')
     assert boot_chunked_bits.repair_variant_relocations(path, rom)
     assert path.read_text(encoding='utf-8') == keep
+
+
+def test_variant_programs_require_their_own_primary_and_descriptors(monkeypatch):
+    rom = bytearray(0x1d00)
+    monkeypatch.setattr(boot_chunked_bits, '_VARIANT', hashlib.sha256(rom[0x1000:0x1b00]).hexdigest())
+    struct.pack_into('>6I', rom, 0x1b68, 0x54, 0x2000, 0x80000006, 0x5a, 0x2000, 0x80000006)
+    data = bytes(96) + bytes.fromhex('27bdffe803e0000827bd0018') * 400 + bytes(0x2000-96-4800)
+    digest = hashlib.sha256(data).hexdigest()
+    monkeypatch.setattr(boot_chunked_bits, '_VARIANT_PRIMARY', digest)
+    monkeypatch.setattr(boot_chunked_bits, 'VARIANT_PROGRAMS', ((1, 0x5a, 0x2000, 6, 0x80090000, 96, 4896, digest),))
+    monkeypatch.setattr(boot_chunked_bits, 'decode', lambda source, expected: data)
+    ranges = [(0x1000, 0x1b00, 0x80200400)]
+    found = boot_chunked_bits.find(rom, ranges)
+    assert len(found) == 2
+    assert boot_chunked_bits.code_start(found[1][0], found[1][1]) == 96
+    rom[0x1b7b] ^= 1
+    assert len(boot_chunked_bits.find(rom, ranges)) == 1
