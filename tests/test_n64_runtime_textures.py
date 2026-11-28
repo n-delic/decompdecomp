@@ -752,3 +752,34 @@ def test_compressed_model_observation_keeps_distinct_meshes(tmp_path, monkeypatc
     bank, = [asset for asset in assets if asset.get('layout') == 'runtime-variable-lz-model']
     assert [item['commands'] for item in bank['meshes']] == ['title', 'game']
     assert (bank['vertices'], bank['triangles']) == (8, 6)
+
+
+def test_generated_model_observation_keeps_distinct_captured_meshes(tmp_path, monkeypatch):
+    from decompassets.n64 import runtime_generated_lz_models, runtime_packed_graphics
+
+    rom = tmp_path / 'game.z64'
+    rom.write_bytes(bytes.fromhex('80371240') + b'original')
+    monkeypatch.setattr(runtime_textures.emulator, 'installed', lambda: tmp_path)
+    monkeypatch.setattr(runtime_generated_lz_models, 'has_resources', lambda *_: True)
+    monkeypatch.setattr(runtime_packed_graphics, 'regions', lambda *args, **kwargs: [])
+    monkeypatch.setattr(detector, 'regions', lambda *_: [dict(offset=1, size=1, layout='texture')])
+
+    def run(path, vis, *, dumps=None, frame_dumps=None, **kwargs):
+        for dump in (dumps or {}).values():
+            dump.write_bytes(b'ram')
+        for dump in (frame_dumps or {}).values():
+            dump.write_bytes(b'game' if kwargs.get('inputs') else b'title')
+            Path(str(dump)+'.task').write_bytes(b'task')
+        return runtime_textures.emulator.Run(vis=vis, frame_dumps=frame_dumps or {})
+
+    def regions(image, frames, **kwargs):
+        mesh = dict(data=frames[0][0].hex(), faces=[[0, 1, 2]], vertices=3, triangles=1)
+        return [dict(offset=100, size=16, kind='3d model', layout=runtime_generated_lz_models.LAYOUT,
+                     meshes=[mesh], vertices=3, triangles=1)]
+
+    monkeypatch.setattr(runtime_textures.emulator, 'run', run)
+    monkeypatch.setattr(runtime_generated_lz_models, 'regions', regions)
+    assets = runtime_textures.observe(b'image', rom, sha1(rom.read_bytes()).hexdigest())
+    bank, = [asset for asset in assets if asset.get('layout') == runtime_generated_lz_models.LAYOUT]
+    assert [bytes.fromhex(item['data']) for item in bank['meshes']] == [b'title', b'game']
+    assert (bank['vertices'], bank['triangles']) == (6, 2)

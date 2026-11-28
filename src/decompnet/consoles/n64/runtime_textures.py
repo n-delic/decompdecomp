@@ -227,16 +227,17 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
             # palette: the game may reuse its memory before the next snapshot.
             from decompassets.n64 import (
                 runtime_deflate_ci8,
+                runtime_generated_lz_models,
                 runtime_lsb_lz,
                 runtime_lzw_textures,
                 runtime_variable_lz,
                 runtime_variable_lz_models,
             )
             frame_assets = []
-            recognizers = [module for module in (runtime_lzw_textures, runtime_deflate_ci8, runtime_lsb_lz, runtime_variable_lz, runtime_variable_lz_models)
+            recognizers = [module for module in (runtime_lzw_textures, runtime_deflate_ci8, runtime_lsb_lz, runtime_variable_lz, runtime_variable_lz_models, runtime_generated_lz_models)
                            if module.has_resources(image, check)]
             if recognizers and not run.timed_out:
-                log('Checking submitted graphics frames for compressed textures.')
+                log('Checking submitted graphics frames for compressed textures and models.')
                 for inputs in ('', loaded_code.inputs(VIS[-1]), *([pak_inputs] if pak_inputs else [])):
                     frames = {n: Path(folder)/f'lzw-{n}.ram' for n in (500, 1000, 1400, 1800, 2200)}
                     for path in frames.values():
@@ -273,13 +274,15 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
                             known.add(marker)
                     if 'texture_count' in merged[key]:
                         merged[key]['texture_count'] = len(previous)
-                elif key in merged and asset.get('layout') in ('runtime-zip-model', 'runtime-erz-model', 'runtime-edl-model', 'runtime-deflate-model', 'runtime-chunked-model', 'runtime-zlib-model', 'runtime-packed-model', 'runtime-variable-lz-model'):
+                elif key in merged and asset.get('layout') in ('runtime-zip-model', 'runtime-erz-model', 'runtime-edl-model', 'runtime-deflate-model', 'runtime-chunked-model', 'runtime-zlib-model', 'runtime-packed-model', 'runtime-variable-lz-model', 'runtime-generated-lz-model'):
                     previous = merged[key]['meshes']
                     def identity(item, layout=asset['layout']):
                         if layout in ('runtime-zip-model', 'runtime-erz-model'):
                             return item['vertex_offset'], item['commands']
                         if layout == 'runtime-edl-model':
                             return tuple(item['source']), tuple(tuple(face) for face in item['faces'])
+                        if layout == 'runtime-generated-lz-model':
+                            return item['data'], tuple(tuple(face) for face in item['faces'])
                         if layout == 'runtime-chunked-model':
                             return item['vertex'], item.get('captured', (item['command'], item.get('command_size'))) 
                         if layout in ('runtime-zlib-model', 'runtime-packed-model', 'runtime-variable-lz-model'):
