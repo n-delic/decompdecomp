@@ -107,3 +107,41 @@ def test_preserve_restores_contiguous_called_code_misclassified_as_data(tmp_path
         assert count == 0
         assert {f.name for f in result.functions} == {'caller','fragment'}
         assert yaml.safe_load(path.read_text()) == cfg
+
+
+@pytest.mark.parametrize('obstacle', ['none', 'no_call', 'other_mapping', 'changed_bytes', 'proven_data',
+                                      'competing', 'owner_known', 'staging'])
+def test_reimport_keeps_an_independently_called_old_entry_inside_a_new_body(tmp_path, monkeypatch, obstacle):
+    result, original, row = fixture(tmp_path)
+    image = bytearray(original)
+    # An actual direct call from the same loaded bank to the old entry.
+    call = 0x0c000000 | ((row['vram'] & 0x0fffffff) >> 2)
+    image[0x140:0x148] = call.to_bytes(4, 'big') + bytes(4)
+    owner = split.function_from_bytes('new_prefix', bytes(image[0x108:0x118]), 0x108, 0x80001008, 'bank')
+    caller = split.function_from_bytes('caller', bytes(image[0x140:0x148]), 0x140,
+                                       0x80002040 if obstacle == 'other_mapping' else 0x80001040, 'bank')
+    result.functions = [owner, caller]
+    result.data = []
+    if obstacle == 'no_call':
+        image[0x140:0x144] = bytes(4)
+    if obstacle == 'changed_bytes':
+        row['target'] = bytes(8)
+    if obstacle == 'proven_data':
+        result.data = [split.DataSymbol('data', row['vram'], row['rom_offset'], row['size'], 'data',
+                                        boundary_proven=True)]
+    rows = [row]
+    if obstacle == 'competing':
+        rows.append({**row, 'name': 'another_old'})
+    if obstacle == 'owner_known':
+        rows.append(dict(name=owner.name, rom_offset=owner.rom, vram=owner.vram, size=owner.size,
+                         target=bytes(image[owner.rom:owner.rom + owner.size]), unit='bank'))
+    monkeypatch.setattr(runtime_staging, 'verify', lambda *args, **kwargs: obstacle != 'staging')
+    count = reimport_preserve.preserve(None, None, result, bytes(image), rows, lambda *_: None)
+    if obstacle == 'none':
+        assert count == 1
+        functions = {fn.name: (fn.rom, fn.size) for fn in result.functions}
+        assert functions['new_prefix'] == (0x108, 8)
+        assert functions['old'] == (0x110, 8)
+    else:
+        assert count == 0
+        assert {fn.name: fn.size for fn in result.functions} == {'new_prefix': 16, 'caller': 8}

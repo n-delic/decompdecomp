@@ -7,6 +7,62 @@ import yaml
 from ...rom import split
 
 
+def _called_suffixes(result, image, rows, log):
+    """Find old called entries swallowed by a new short, fallthrough prefix."""
+    from collections import defaultdict
+
+    from ...arch.mips_references import references
+
+    check = getattr(log, 'check_cancel', lambda: None)
+    names = {fn.name for fn in result.functions}
+    old_names = {row['name'] for row in rows}
+    old_starts = {(row['rom_offset'], row['vram']) for row in rows}
+    proven_data = [(d.rom, d.vram, d.size) for d in getattr(result, 'data', ())
+                   if getattr(d, 'boundary_proven', False) and d.rom is not None and d.vram is not None]
+    by_end = defaultdict(list)
+    for fn in result.functions:
+        if fn.rom is not None and fn.vram is not None:
+            by_end[(fn.rom + fn.size, fn.vram - fn.rom)].append(fn)
+    candidates = []
+    for raw in rows:
+        check()
+        row = dict(raw)
+        lo, size, vram, target = (row.get(k) for k in ('rom_offset', 'size', 'vram', 'target'))
+        if (row.get('name') in names or type(lo) is not int or type(size) is not int or type(vram) is not int
+                or size <= 0 or size % 4 or lo < 0 or lo + size > len(image)
+                or not isinstance(target, bytes) or target != image[lo:lo + size]
+                or any(vram-lo == address-start and start < lo+size and lo < start+length
+                       for start, address, length in proven_data)):
+            continue
+        owners = [fn for fn in by_end[(lo + size, vram - lo)] if fn.rom < lo]
+        if len(owners) != 1:
+            continue
+        owner = owners[0]
+        if (not 4 <= lo - owner.rom <= 64 or owner.name in old_names
+                or (owner.rom, owner.vram) in old_starts):
+            continue
+        if any(other is not raw and other['rom_offset'] is not None and other['size'] is not None
+               and other['rom_offset'] < lo + size and lo < other['rom_offset'] + other['size']
+               for other in rows):
+            continue
+        candidates.append((row, owner))
+    if not candidates:
+        return []
+    by_shift = defaultdict(dict)
+    for row, owner in candidates:
+        by_shift[row['vram'] - row['rom_offset']][row['vram']] = owner
+    incoming = set()
+    for fn in result.functions:
+        check()
+        if fn.rom is None or fn.vram is None or fn.size <= 0 or not 0 <= fn.rom < fn.rom+fn.size <= len(image):
+            continue
+        wanted = by_shift.get(fn.vram - fn.rom, {})
+        if wanted:
+            incoming.update(target for target, _, kind in references(image, fn.rom, fn.rom+fn.size, fn.vram)
+                            if kind == 'call' and target in wanted and wanted[target] is not fn)
+    return [(row, owner) for row, owner in candidates if row['vram'] in incoming]
+
+
 def _covered_text(cfg, result, image, rows, log):
     """Recover a completely covered data section from independently called old bodies."""
     from collections import defaultdict
@@ -149,6 +205,43 @@ def preserve(net, project, result, image, rows, log=print):
         cfg = proposed
         restored += len(selected)
         log(f'Kept {len(selected)} independently corroborated existing functions that the new split marked as data.')
+    paired = _called_suffixes(result, image, rows, log)
+    if paired:
+        owners = {id(owner) for _, owner in paired}
+        remaining = [fn for fn in result.functions if id(fn) not in owners]
+        current = [dict(name=fn.name, rom_offset=fn.rom, size=fn.size, vram=fn.vram,
+                        target=b''.join(line.word.to_bytes(4, 'big') for line in fn.lines))
+                   for fn in remaining if fn.rom is not None]
+        parts = []
+        for row, owner in paired:
+            prefix_size = row['rom_offset'] - owner.rom
+            parts.append(dict(name=owner.name, rom_offset=owner.rom, size=prefix_size, vram=owner.vram,
+                              target=image[owner.rom:row['rom_offset']], unit=owner.segment))
+            parts.append(dict(row, unit=owner.segment))
+        bodies = [dict(rom_start=row['rom_offset'], rom_end=row['rom_offset'] + row['size'], vram=row['vram'])
+                  for row in parts]
+        proposed = copy.deepcopy(cfg)
+        code._cut_inside(proposed, [(r['rom_start'], r['rom_end'], r['vram']) for r in bodies])
+
+        def prepare_suffixes(config, staged):
+            population = current + (parts if staged else [])
+            config = _export_segments(config, population)
+            lines = _symbol_lines(net, project, population, segments=_segments(config),
+                                  unsized=_fallthrough_entries(population, net.console(project)))
+            return config, lines, current
+
+        log(f'Checking {len(paired)} existing called entries enclosed by new boundaries.')
+        if runtime_staging.verify(result.config_path, image, proposed, bodies, log, prepare=prepare_suffixes):
+            check()
+            split.write_config_atomic(result.config_path, yaml.safe_dump(proposed, sort_keys=False))
+            for row in parts:
+                remaining.append(split.function_from_bytes(row['name'], row['target'], row['rom_offset'],
+                                                           row['vram'], row['unit'], True))
+            result.functions = remaining
+            result.segments = split.segments_from_config(result.config_path)
+            cfg = proposed
+            restored += len(paired)
+            log(f'Kept {len(paired)} byte-verified called entries enclosed by new boundaries.')
     current = [dict(name=fn.name, rom_offset=fn.rom, size=fn.size, vram=fn.vram,
                     target=b''.join(line.word.to_bytes(4, 'big') for line in fn.lines))
                for fn in result.functions if fn.rom is not None]
