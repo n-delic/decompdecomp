@@ -8,6 +8,10 @@ decompdecomp: AI agents decompile games the user owns into C that compiles, with
 the exact same bytes. Python 3.12+, managed with uv. A continuation of decomp.wtf (Sam Wolfs, i12bp8/decomp.wtf,
 archived at 0.10.6): `origin` is RetroReversing/decompdecomp, `upstream` the archived original.
 
+The long-term goal is to replace most of the Python logic with standalone Rust processes (starting with `gateway/`
+and CPU/GIL-heavy workers) so UI responsiveness, concurrency, and memory usage are not bottlenecked by a single
+Python GIL. See [docs/RUST_MIGRATION_PLAN.md](docs/RUST_MIGRATION_PLAN.md) for the phased plan.
+
 Naming: the project is **decompdecomp** in everything users read. Internal names stay as decomp.wtf left them, so
 existing installs and projects keep working: the `decomp` command, the `decompnet` package and data folder,
 `.decomp.wtf.json` manifests, `.decomp-wtf/` state, the `decomp-wtf` git branch. Installs and updates
