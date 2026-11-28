@@ -18,6 +18,7 @@ from .engine import RomNetwork
 # The guides every console shares (app/guide/); each console's own are in its package (consoles/<id>/guides/)
 GUIDES = {
     "workflow": "the matching loop, reading diffs, priorities",
+    "rules": "source that matches and reads like the original: fakematches, why a function won't match, names",
     "mips": "MIPS registers, calling convention, delay slots, types from instructions",
     "m2c": "reading the machine-generated draft",
     "data": "globals, strings, tables, floats, data you define",
@@ -76,7 +77,9 @@ one claim; one function back is normal.)
    helper)? release_function(needs=that one) hands it to you. Sure that
    no C makes its code at all (hand-written assembly): not_c=true, saying why.
 
-Write plausible original code, pure C (no inline asm). Never fetch or copy code from outside this project
+Write plausible original code, pure C (no inline asm). A match through a trick that steers the compiler (a
+`volatile` local, a dummy temporary, an empty block, `x = x;`) is a fakematch: it hides the real source. Look for
+the helper, type or variable it stands for (guide("rules")). Never fetch or copy code from outside this project
 (another repository, a finished decomp of this game, the internet): a match must come from your own C. Be brief
 in your messages: work, don't narrate.
 """
@@ -166,7 +169,9 @@ neighbours may come along in one claim; one function back is normal.)
 Rules: C/C++ only (no inline asm, asm functions or asm includes); don't touch targets, configs or build
 scripts (the tools refuse). Never fetch or copy code from outside this project (another repository, a
 finished decomp of this game, the internet): a match must come from your own C. Write code a human would
-have written: match the file's style and names.
+have written: match the file's style and names. A match through a trick that steers the compiler (a `volatile`
+local, a dummy temporary, an empty block, `x = x;`) is a fakematch: it hides the real source. Look for the helper,
+type or variable it stands for.
 Guides: {guides}. Be brief in your messages: work, don't narrate.
 """
 
@@ -227,9 +232,11 @@ def for_platform(text: str, platform: str | None) -> str:
 
 def up_front(platform: str | None, kind: str, toolchain: str) -> str:
     """The know-how a helper gets before its first claim, for its project's platform: the loop's guide (a fork's
-    and objdiff's, or ROM projects' workflow) and its console's compiler guide."""
+    and objdiff's, or ROM projects' workflow), the rules for source that reads like the original, and its console's
+    compiler guide."""
     guide = consoles.get(platform).up_front_guide(toolchain)
     topics = ["fork", "objdiff"] if kind == "fork" else ["workflow"]
+    topics += ["rules"]  # every helper: a match through a trick hides the source it's for (fakematch.py)
     topics += [guide] if guide else []
     return "\n\n".join(guide_text(t, platform) for t in topics)
 

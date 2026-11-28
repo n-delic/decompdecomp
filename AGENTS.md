@@ -148,7 +148,8 @@ system GTK/WebKitGTK, macOS uses Cocoa/WebKit through the app's Python; the page
 secret in its user agent; Linux and Windows have a tray icon; tests set `DECOMP_WINDOW=0` and `DECOMP_TRAY=0`),
 `app/prompt_settings.py` (global and per-helper prompt overrides), `app/tool_policy.py` (which MCP tools helpers may use),
 `app/manual_mcp.py` (project-scoped credentials for manual MCP clients),
-`app/edition.py` (release or development copy), `app/saves.py` (a ROM project's work as plain files, and a project
+`fakematch.py` (tricks that steer the compiler: named where a match is announced and in polishing, kept out of the
+permuter), `app/edition.py` (release or development copy), `app/saves.py` (a ROM project's work as plain files, and a project
 restored from them), `app/readable.py` (polishing matched code), `app/knowledge.py` (what agents learn, shared once
 two models agree), `app/drafts.py` + `app/permute.py` (background drafts and the permuter), `structs.py` (struct
 layouts from loads and stores), `app/guide/*.md` and `consoles/<id>/guides/*.md` (know-how agents read through
@@ -201,3 +202,7 @@ linting). In short:
 - Let agents edit a project's build setup: `forks/project.py` (`EDITABLE`, `FORBIDDEN_PARTS`) limits them to
   source and header files on purpose.
 - Weaken the judge: a match means byte-identical after linking (ROM mode) or objdiff 100% (fork mode).
+- Teach agents a trick that steers the compiler, or let a background rewrite add one: a `volatile` local, a dummy
+  temporary, an empty block, `do { } while (0)` in a function body. The bytes match, the source lies. `fakematch.py`
+  names them and `app/guide/rules.md` says what each usually hides; widen both together, narrowly, so genuine code
+  (hardware `volatile`, empty loop bodies, a macro's own `do { } while (0)`) still passes.

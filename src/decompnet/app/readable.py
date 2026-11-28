@@ -26,7 +26,7 @@ import threading
 import time
 from pathlib import Path
 
-from .. import scoring
+from .. import fakematch, scoring
 from ..forks.project import ForkProject
 from ..network import GAME_CODE, IN_BUILD, Agent, NetworkError
 
@@ -255,12 +255,21 @@ class Readability:
         # picked its own style (Shape3_Init, Shape2_init, vec3_dot_product)
         names += ("- read_data a global before you name it: what it holds (a string, a table, a constant) says what it "
                   "is;\n- name things in the style the names around them already use.\n")
+        matching = self._matching_c(proj, fn)
+        # a trick that steers the compiler is the one part of the shape not to keep: it hides the original's source
+        found = fakematch.findings(matching)
+        tricks = ("Its C matches through tricks that steer the compiler (fakematches, guide(\"rules\")):\n"
+                  + fakematch.listing(found) + "\nTry the real form of each (a helper or macro, the right type, one "
+                  "variable per meaning): it's judged like the rest, and refused if it no longer matches.\n\n"
+                  if found else "")
         return (f"{given_up}MAKE READABLE: {fn['name']}{where}, {fn['n_insns']} instructions "
                 f"({counts['readable']} of {counts['matched']} matched functions are readable so far).\n\n"
-                f"It matches today with this C:\n```c\n{self._matching_c(proj, fn).strip()}\n```\n\n"
+                f"It matches today with this C:\n```c\n{matching.strip()}\n```\n\n{tricks}"
                 "Make it readable without changing what the compiler makes of it:\n" + names +
                 "- give parameters and locals meaningful names; write one comment saying what the function does;\n"
-                "- keep the statements' shape: the order, the casts and the temporaries that make it match.\n"
+                "- keep the statements' shape: the order, the casts and the temporaries that make it match;\n"
+                "- add no trick to keep it matching (a `volatile` local, an empty block, `x = x;`, `+ 0`): it's "
+                "refused.\n"
                 + ("- it's a big function: rename and comment in place, statement for statement; don't restructure it "
                    "(one slip anywhere in it and the rewrite is refused).\n" if fn["n_insns"] > BIG_INSNS else "") +
                 f"Then make_readable(\"{fn['name']}\", source). It's judged again: it must still match byte for byte, or "
@@ -301,8 +310,13 @@ class Readability:
         claim = self.net.store.one("SELECT agent_id FROM claims WHERE function_id=?", fn["id"])
         if claim is not None and claim["agent_id"] != agent.id:
             raise NetworkError(f"{fn['name']} is held by {self.net._agent_name(claim['agent_id'])}")
-        if " ".join(source.split()) == " ".join(self._matching_c(proj, fn).split()):
+        matching = self._matching_c(proj, fn)
+        if " ".join(source.split()) == " ".join(matching.split()):
             raise NetworkError("that's the C it has already: rename, type and comment it first")
+        if fakematch.added(matching, source):  # readable means a reader's C, not a new trick that keeps the bytes
+            raise NetworkError("your version adds a trick that steers the compiler, which the matching C doesn't "
+                               "have:\n" + fakematch.listing(fakematch.findings(source)) + "\nTake it out: the "
+                               "matching C stays until a version without it still matches (guide(\"rules\")).")
         if not self.net.is_rom(proj):  # the project's own file, judged and committed (or put back) as any compile
             res = self.net.forks.attempt(agent, proj["slug"], fn["name"], source, comment=True)
             if not res.get("matched"):

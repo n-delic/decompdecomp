@@ -34,7 +34,7 @@ from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .. import consoles, permuter_gen, scoring, seeds, toolchains
+from .. import consoles, fakematch, permuter_gen, scoring, seeds, toolchains
 from ..hostenv import NO_WINDOW
 from ..network import NetworkError
 from ..permuter import mutate
@@ -340,6 +340,11 @@ class Permuter:
                 for cand in batch:
                     if cand is None or time.monotonic() >= deadline or st.stop.is_set():
                         break
+                    if fakematch.added(start_src, cand):
+                        # a rewrite that steers the compiler with a trick (a `volatile` local, an empty block, `+ 0`)
+                        # isn't judged: a match through one would be saved as the function's C, and it hides the
+                        # source it stands for (guide("rules")); the permuter's job is the original's shape
+                        continue
                     st.add(variants=1)
                     try:
                         score = self._score(agent, proj, fn, cand, best, fork)

@@ -20,5 +20,7 @@ arithmetic are usually right; its types and names usually wrong. Start from it a
 - Calls declared `/* extern */` with `?` arguments: m2c guessed the signature from register use. Check
   it against other callers and add a real prototype to context.h.
 - `saved_reg_*`: a register preserved for the caller; usually nothing to write in C.
-- m2c inlines expressions aggressively. The original often had temporaries; put them back when the
-  register allocation differs.
+- m2c inlines expressions aggressively. The original often had named intermediate values (a length, the current
+  element); put back the ones with a meaning when the register allocation differs. A temporary with no meaning
+  (`temp`, `t1`) is a fakematch: guide `rules`.
+- `temp_v0` used for two unrelated values is two variables in the original: give each its own local and name.

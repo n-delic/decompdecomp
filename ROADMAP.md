@@ -51,6 +51,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Named Claude accounts, assigned per helper; recorded usage per account | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Shared knowledge (two models agree) | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Tidy each source file once it's polished (shared types in one header, names, dead declarations) | — | — | — | — | — | — | — | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Fakematch check: tricks that steer the compiler named in matches and polishing, kept out of the permuter (`fakematch.py`) | ✓ | ✓ | ✓ | ✓ | ✓ matches (no polishing yet) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Polish matched code (still matching) | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Real names for the game's symbols (`rename_symbol`) | ✓ | ✓ | ✓ | ✓ | ✓ functions | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | dtk and ds-decomp projects |
 | Save and restore (`progress/`, Open a saved project); remember each project's save destination | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | partly: the project's git, best attempts saved; a new copy starts without them | partly: the project's git, best attempts saved; a new copy starts without them | the project's git; best attempts saved; the PE view made again from your XBE or disc | partly: the project's git, best attempts saved; a new copy starts without them | the project's git; best attempts saved |
@@ -122,6 +123,12 @@ Where to start on a gap:
   of the project.
 
 ## Recently done
+
+- **Matches that read like the original.** A match whose C reaches the bytes through a trick that steers the
+  compiler (a `volatile` local, an empty block, `do { } while (0)` in a body, `x = x;`, `+ 0`) is still saved, and
+  its helper is told which line hides what (`fakematch.py`, the new `rules` guide every helper reads up front). The
+  polishing brief lists the tricks to take out, a polished version may not add one, and the permuter no longer
+  judges rewrites that add one. The guides no longer teach meaningless temporaries or padding members.
 
 - **Browse compiler profiles.** Group applied ranges by compiler and arguments, compiler family, or address;
   sort by range count, verification status, compiler name, or address. Expand profiles and the default settings to see function links,
@@ -894,6 +901,15 @@ In a fork built with ninja, a unit whose build fails at a step before its object
 generated source) counts as not building: `ninja -t query` says what each failed step goes into. A make-built fork
 has no such query, so only the failed target itself is counted, and an edit that breaks such a step there can still
 be kept as breaking nothing. Make's own dry run (`make -n -W <file>`) or its database (`make -p`) could say the same.
+
+### Matched under the rules: a second count
+
+Today a match through a trick counts like any other, and only its helper and the polishing pass are told. The
+community's own measure is two numbers: bytes matched, and matched under the rules (bytes matched and no
+fakematch finding). Show both in the progress bars, the README card and the export, and offer a match with findings
+to helpers as open work, ranked like a near miss: its bytes are known, its source isn't. Then widen the checks to
+what can be tested mechanically: an offset cast (`*(int *)((char *)p + 0x1C)`), one type defined twice with
+different bodies, an `extern` of a global outside its header.
 
 ### A list of open rooms (to investigate)
 

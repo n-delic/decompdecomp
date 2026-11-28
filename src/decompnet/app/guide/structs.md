@@ -8,14 +8,15 @@
 1. Collect every offset used with one base pointer: `lw $v0, 0x1C($a0)`, `sh $a1, 0x22($a0)`, ...
 2. The width and signedness of each access gives the field type (lw = 32-bit, lhu = u16, lb = s8, lwc1 =
    f32, ...).
-3. Lay fields out in offset order with explicit padding for gaps, and comment the offsets:
+3. Lay fields out in offset order, with a placeholder member named by its offset for each unknown range, and
+   comment the offsets:
 
 ```c
 typedef struct Actor {
     /* 0x00 */ s16 type;
     /* 0x02 */ u16 flags;
     /* 0x04 */ f32 x;
-    /* 0x08 */ char pad08[0x14];
+    /* 0x08 */ u8 unk_08[0x14];
     /* 0x1C */ s32 hp;
 } Actor; /* size >= 0x20 */
 ```
@@ -25,4 +26,5 @@ typedef struct Actor {
 5. The size shows in array indexing (`mult` by a constant, or `sll` + `addu` sequences for stride) and
    in `sizeof` loops.
 6. Put the struct in context.h with `edit_context` once it works, so every agent uses the same one, and
-   rename the global with `rename_symbol`. Unknown fields: `unk_1C` style names are fine.
+   rename the global with `rename_symbol`. Unknown fields: `unk_1C` style names are fine. Never a padding member
+   or array sized to push known fields into place: a wrong base struct or missing fields are the usual cause.

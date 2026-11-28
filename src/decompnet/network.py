@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import agents, scoring
+from . import agents, fakematch, scoring
 from .compiler import compile_source
 from .elfobj import FunctionObj, Reloc, extract_function
 from .project import compiler_config, compiler_for
@@ -215,6 +215,10 @@ def says_matched(text: str) -> bool:
 # released 12 big open functions of a DS game, untried, on such notes ("Already 100% match on claim, no work needed"
 # from a false 100% objdiff gave before #59), each one's note the next agent's reason.
 ONLY_SAYS_MATCHED = 200
+# How a ROM helper replaces a fakematch's C: its claim ends with the match, and a matched function's compiles are scratch
+ROM_AGAIN = ("The match is saved. If you can see the real form now, make_readable(function, source) "
+             "replaces this C once it still matches byte for byte; otherwise add_note what you suspect, and polishing "
+             "shows these lines again.")
 
 
 def stale_note(text: str, status: str) -> str:
@@ -1119,7 +1123,7 @@ class Network:
         elif d.bytes_match:
             return {"text": f"✅ MATCH! {fn['name']} is byte-identical to the target ({fn['n_insns']} instructions). "
                             f"Credited to {agent.name}; your claim is released. Call claim_function for the next one."
-                            f"{self.dependents_note(fn['id'])}",
+                            f"{self.dependents_note(fn['id'])}{fakematch.note(source, ROM_AGAIN)}",
                     "score": 0, "matched": True}
         else:
             best = self.store.one("SELECT best_score FROM functions WHERE id=?", fn["id"])["best_score"]

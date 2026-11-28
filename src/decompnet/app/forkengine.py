@@ -27,7 +27,7 @@ from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from .. import arch, classes, coffobj, consoles, similarity, structs, toolchains
+from .. import arch, classes, coffobj, consoles, fakematch, similarity, structs, toolchains
 from ..forks import (
     convention,
     csource,
@@ -207,6 +207,10 @@ class _TreeLock:
 
 
 BATCH_UNITS = 16  # units one run of a project's build takes at most
+# How a fork's helper replaces a fakematch's C (fakematch.note): a matched function's rewrite is kept only if it matches
+FORK_AGAIN = ("The match is committed. If you can see the real form now, compile_and_diff it: a version "
+              "that still matches replaces this one. Otherwise add_note what you suspect, and polishing shows these "
+              "lines again.")
 
 
 class _UnitBuilds:
@@ -3334,7 +3338,7 @@ class ForkEngine:
                                                         f"Decompiled by {agent.name} with decompdecomp.")
                 return {"text": f"✅ MATCH! {fn['name']} is 100% identical to the original. Committed to git in the "
                                 f"project. Call claim_function for the next one.{_renamed_note(d)}"
-                                f"{self.net.dependents_note(fn['id'])}"
+                                f"{self.net.dependents_note(fn['id'])}{fakematch.note(code, FORK_AGAIN)}"
                                 f"{self._file_done(slug, proj, fp, unit, d.unit_scores, agent)}", "score": 0,
                         "matched": True}
         stall = self.net.stall_note(fn["id"], agent.id)
