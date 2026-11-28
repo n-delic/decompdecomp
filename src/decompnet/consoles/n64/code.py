@@ -1404,9 +1404,39 @@ def _bodies_inside_code(cfg, rom, taken, known, log):
     spans = sorted((lo, hi, vram) for lo, hi, vram in known)
     banks = [(a, b, v) for a, b, v in taken]
     table = [dict(rom_start=a, rom_end=b, vram=v) for a, b, v in banks]
-    found = complete(rom, spans, banks, (), log, table_ranges=table, what="the gaps inside code segments")
+    sdk = _sdk_between_functions(rom, spans, banks, getattr(log, 'check_cancel', lambda: None))
+    found = complete(rom, sorted(spans + sdk), banks, (), log, table_ranges=table, what="the gaps inside code segments")
+    found += sdk
     found += _called_scoped_bin_bodies(cfg, rom, spans, log)
     return sorted(set(found) - set(spans))
+
+
+def _sdk_between_functions(rom, spans, banks, check=lambda: None):
+    """Recover a complete, byte-identical SDK body immediately before another function on the same mapping.
+
+    Some SDK functions schedule their first instruction before the stack frame, so frame-based searches start
+    four bytes late. Both neighbours establish the mapping, and the full linked-body digest establishes identity.
+    Short fingerprints and overlapping interpretations stay raw: they are weaker evidence of a real boundary.
+    """
+    from . import sdk_assembly
+
+    recovered = []
+    sizes = [size for size in sdk_assembly.SIZES if size >= 32]
+    for (lo, end, vram), (next_lo, _, next_vram) in zip(spans, spans[1:]):
+        check()
+        if (end >= next_lo or vram - lo != next_vram - next_lo
+                or not any(a <= end < next_lo <= b and v - a == vram - lo for a, b, v in banks)):
+            continue
+        matches = []
+        for size in sizes:
+            start = next_lo - size
+            if start < end or start % 4 or next_lo > len(rom):
+                continue
+            if sdk_assembly.identify(rom[start:next_lo]):
+                matches.append((start, next_lo, vram + start - lo))
+        if len(matches) == 1:
+            recovered.extend(matches)
+    return recovered
 
 
 def _called_scoped_bin_bodies(cfg, rom, known, log):
