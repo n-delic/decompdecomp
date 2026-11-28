@@ -212,3 +212,32 @@ def test_literal_pointer_inside_verified_compression_is_not_a_direct_pointer(mon
         return decoded, 146
     monkeypatch.setattr(rnc, 'unpack_at', unpack)
     assert reimport_preserve._uncompressed_pointer(bytes(image), low, low+16) == (case != 'compressed')
+def test_matched_module_entry_is_preserved_only_with_unchanged_unoccupied_bank():
+    import json
+    from types import SimpleNamespace
+
+    from decompnet.consoles.n64.reimport_preserve import _matched_module_entries
+    from decompnet.rom.split import Segment, function_from_bytes
+
+    target = bytes.fromhex('03e0000800000000')
+    image = bytes(0x110) + target + bytes(0x28)
+    meta = {'uso': {'section': 0x40, 'start': 0x10, 'size': 8, 'relocs': []}}
+    row = {'name': 'saved', 'status': 'matched', 'unit': 'donor_uv_40', 'rom_offset': 0x110,
+           'vram': 0x10, 'size': 8, 'target': target, 'meta': json.dumps(meta), 'gone_mark': None}
+
+    def result():
+        return SimpleNamespace(functions=[], analysis_banks={'64': 0x100},
+                               segments=[Segment('donor_uv_40', 0x100, 0x140, 0)])
+
+    restored = result()
+    assert _matched_module_entries(restored, image, [row]) == 1
+    assert restored.functions[0].uso == meta['uso']
+    assert restored.functions[0].rom == 0x110
+    for altered in (row | {'status': 'open'}, row | {'target': bytes(8)}, row | {'gone_mark': 'removed'},
+                    row | {'vram': 0x14}, row | {'unit': 'donor_uv_41'}):
+        assert _matched_module_entries(result(), image, [altered]) == 0
+    occupied = result()
+    occupied.functions.append(function_from_bytes('new', target, 0x110, 0x10, 'donor_uv_40'))
+    assert _matched_module_entries(occupied, image, [row]) == 0
+
+
