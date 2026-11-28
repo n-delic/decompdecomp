@@ -393,7 +393,7 @@ def _fallthrough_epilogue(before, after, pointed, shared, flow, stored, big_endi
     end = after.vram + len(after.code)
     if any(a in shared for a in range(before.vram, end, 4)):
         return None
-    if any(a in stored or pointed.get(a)
+    if any(pointed.get(a)
            or any(not before.vram <= source < end for source in flow.get(a, ()))
            for a in range(after.vram, end, 4)):
         return None
@@ -409,6 +409,10 @@ def _fallthrough_epilogue(before, after, pointed, shared, flow, stored, big_endi
     restored_tail = {(w >> 16 & 31, w & 0xffff) for w in rest if w >> 26 == 35 and w >> 21 & 31 == 29}
     restored = {(w >> 16 & 31, w & 0xffff) for w in words if w >> 26 == 35 and w >> 21 & 31 == 29}
     if not saved & restored_tail or not any(reg == 31 and (reg, slot) in restored for reg, slot in saved) or _handwritten(words, before.vram):
+        return None
+    # Checking each address against the whole image is expensive. Only do it
+    # for an otherwise proven epilogue, not every adjacent pair in the game.
+    if any(a in stored for a in range(after.vram, end, 4)):
         return None
     return Fix(after.name, after.vram, 'join_previous', before.vram, 'auto', [
         f'{before.name} falls through into {after.name}, which restores a saved register and its stack frame.',

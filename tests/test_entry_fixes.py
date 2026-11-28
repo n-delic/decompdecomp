@@ -294,6 +294,30 @@ def test_unentered_fallthrough_epilogue_is_joined():
     assert 'tail' not in ef.decide([head, wrong]) or ef.decide([head, wrong])['tail'].kind != 'join_previous'
 
 
+def test_fallthrough_only_searches_stored_addresses_after_shape_checks():
+    class Stored:
+        def __init__(self):
+            self.queries = []
+
+        def __contains__(self, address):
+            self.queries.append(address)
+            return False
+
+    start = 0x80001000
+    head = entry('head', start, [JR_RA, NOP])
+    tail = entry('tail', start+8, body())
+    stored = Stored()
+    assert ef._fallthrough_epilogue(head, tail, {}, set(), {}, stored, True) is None
+    assert stored.queries == []
+
+    first = [addiu(SP, SP, -0x18), sw(S0, SP, 0x10), sw(RA, SP, 0x14),
+             jal(0x80023D58), NOP, lw(RA, SP, 0x14)]
+    head = entry('head', start, first)
+    tail = entry('tail', start+len(first)*4, [lw(S0, SP, 0x10), addiu(SP, SP, 0x18), JR_RA, NOP])
+    assert ef._fallthrough_epilogue(head, tail, {}, set(), {}, stored, True).kind == 'join_previous'
+    assert stored.queries == list(range(tail.vram, tail.vram+len(tail.code), 4))
+
+
 def test_called_frame_shared_with_previous_return_delay_slot_joins_continuation():
     start = 0x80001000
     head = entry('head', start, [addiu(SP, SP, -0x18)])
