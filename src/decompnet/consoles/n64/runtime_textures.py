@@ -47,6 +47,29 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
                 snapshots = [path.read_bytes() for path in dumps.values() if path.is_file()]
                 direct += runtime_textures.regions(image, snapshots)
                 packed += runtime_packed_graphics.regions(image, snapshots, progress=progress)
+            # Some games display a memory-expansion warning using the base RAM
+            # rather than stalling before video. A successful retrace alone does
+            # not show that their title or gameplay ran. Retry without changing
+            # the user's save when neither run yielded a texture.
+            expansion_failed = False
+            if not run.timed_out and not expansion and not direct and not any(a.get('textures') for a in packed):
+                log('No textures were observed; checking whether the game needs expanded memory.')
+                try:
+                    for inputs in ('', loaded_code.inputs(VIS[-1])):
+                        for path in dumps.values():
+                            path.unlink(missing_ok=True)
+                        expanded = emulator.run(rom, VIS[-1], inputs=inputs, dumps=dumps,
+                                                timeout=120, expansion_pak=True)
+                        snapshots = [path.read_bytes() for path in dumps.values() if path.is_file()]
+                        direct += runtime_textures.regions(image, snapshots)
+                        packed += runtime_packed_graphics.regions(image, snapshots, progress=progress)
+                        if expanded.timed_out:
+                            expansion_failed = True
+                            log('Expanded-memory observation timed out; completed snapshots are still included.')
+                            break
+                except emulator.EmulatorError as error:
+                    expansion_failed = True
+                    log(f'Expanded-memory observation skipped: {error}')
             merged = {}
             for asset in packed:
                 key = asset['offset'], asset.get('layout')
@@ -69,7 +92,7 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
         if run.timed_out:
             log('Runtime observation timed out; any completed snapshots are still included.')
         log(f'Found {len(assets)} graphics regions backed by runtime commands and cartridge bytes.')
-        status['state'] = 'failed' if run.timed_out else 'complete'
+        status['state'] = 'failed' if run.timed_out or expansion_failed else 'complete'
         progress(dict(phase='Observing runtime textures', done=1, total=1))
         return assets
     except (OSError, emulator.EmulatorError) as error:
