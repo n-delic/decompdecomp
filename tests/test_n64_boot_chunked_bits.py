@@ -151,3 +151,18 @@ def test_variant_programs_require_their_own_primary_and_descriptors(monkeypatch)
     assert boot_chunked_bits.code_start(found[1][0], found[1][1]) == 96
     rom[0x1b7b] ^= 1
     assert len(boot_chunked_bits.find(rom, ranges)) == 1
+
+
+def test_third_audited_loader_startup(monkeypatch):
+    rom = bytearray(0x4000)
+    monkeypatch.setattr(boot_chunked_bits, '_VARIANT3', hashlib.sha256(rom[0x1000:0x1738]).hexdigest())
+    struct.pack_into('>4I', rom, 0x1738, 0x54, 0x2000, 0x80000006, 0x5a)
+    data = bytes(72) + bytes.fromhex('27bdffe803e0000827bd0018') * 400 + bytes(0x2000-72-4800)
+    monkeypatch.setattr(boot_chunked_bits, 'decode', lambda source, expected: data)
+    text_end = 72 + 4800
+    monkeypatch.setattr(boot_chunked_bits, '_VARIANT3_TEXT', hashlib.sha256(data[:text_end]).hexdigest())
+    programs = boot_chunked_bits.find(rom, [(0x1000, 0x1738, 0x80200400)])
+    assert len(programs) == 1
+    assert boot_chunked_bits.code_start(programs[0][0], programs[0][1]) == 72
+    rom[0x1000] ^= 1
+    assert boot_chunked_bits.find(rom, [(0x1000, 0x1738, 0x80200400)]) is None
