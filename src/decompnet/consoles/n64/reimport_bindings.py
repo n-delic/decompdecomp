@@ -299,6 +299,87 @@ def _probe_grouped(net, project, fn, source, header, candidate, target, info):
                 return variant
     return None
 
+def _group_object_data(fn, source, header, candidate):
+    """Separate named object aliases of one placeholder for a private probe."""
+    span = csource.find(source, fn['name'])
+    if span is None:
+        return None
+    clean = csource._blank(source)
+    body = clean[span[0]:span[1]]
+    if re.search(r'(?m)^\s*#', body):
+        return None
+    definitions = csource._blank(header + '\n' + source)
+    aliases = set(re.findall(r'(?m)^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)[ \t]+D_00000000[ \t]*$', definitions))
+    tokens = aliases | {'D_00000000'}
+    sites = [(span[0] + m.start(), span[0] + m.end(), m.group())
+             for m in re.finditer(r'\b[A-Za-z_]\w*\b', body) if m.group() in tokens]
+    used = sorted({token for _, _, token in sites})
+    low = [r for r in candidate.relocs if r.type == 6 and r.symbol == 'D_00000000']
+    if len(used) < 2 or len(low) < len(used):
+        return None
+    macros = set(re.findall(r'(?m)^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)\(', definitions))
+    for start, _, token in sites:
+        if token != 'D_00000000' and re.search(r'(?m)^[ \t]*#[ \t]*undef[ \t]+' + re.escape(token) + r'\b', definitions):
+            return None
+        if re.search(r'(?:\.|->)\s*$', clean[span[0]:start]):
+            return None
+        depth = 0
+        for at in range(start - 1, span[0] - 1, -1):
+            if clean[at] == ')':
+                depth += 1
+            elif clean[at] == '(':
+                if depth:
+                    depth -= 1
+                    continue
+                caller = re.search(r'([A-Za-z_]\w*)\s*$', clean[span[0]:at])
+                if caller:
+                    name = caller.group(1)
+                    if name in macros or (name.isupper() and not re.fullmatch(r'D_[0-9A-Fa-f]{8}', name)):
+                        return None
+    declaration = re.search(r'(?m)^[ \t]*extern[ \t]+[^;{}#\n]+\bD_00000000[ \t]*;', csource._blank(header))
+    if declaration is None:
+        return None
+    prototype = header[declaration.start():declaration.end()]
+    names = {token: f'decomp_overlay_object_ref_{index}' for index, token in enumerate(used, 1)}
+    if any(re.search(r'\b' + re.escape(name) + r'\b', definitions) for name in names.values()):
+        return None
+    for start, end, token in reversed(sites):
+        source = source[:start] + names[token] + source[end:]
+    port = '\n'.join(f'#define {name} {token}' for token, name in names.items())
+    rom = '\n'.join(rename_identifiers(prototype, {'D_00000000': name}) for name in names.values())
+    return '#ifdef PORT\n' + port + '\n#else\n' + rom + '\n#endif\n' + source
+
+
+def _probe_objects(net, project, fn, source, header, candidate, target, info):
+    grouped = _group_object_data(fn, source, header, candidate)
+    if not grouped:
+        return None
+    built = net._compile(project, header, grouped, fn)
+    if not built.ok:
+        return None
+    separated, _, _ = net._evaluate(fn, project, built.obj)
+    bound = overlay_donor_aliases.explicit_symbol_bindings(
+        grouped, header, separated, target, net.console(project).separate_overlay_reference)
+    if not bound or not bound[1].startswith(header):
+        return None
+    extra = '\n#ifndef PORT\n' + bound[1][len(header):] + '\n#endif\n'
+    variants = [grouped + '\n' + extra]
+    macro = _macro_variant(fn, grouped, header, separated, info, extra)
+    if macro:
+        variants.append(macro)
+    for prefer_decl in (True, False):
+        for nested_first in (False, True):
+            direct = _direct_variant(fn, grouped, header, separated, target, extra,
+                                     prefer_decl=prefer_decl, nested_first=nested_first)
+            if direct and direct not in variants:
+                variants.append(direct)
+    for variant in variants:
+        built = net._compile(project, header, variant, fn)
+        if built.ok and net._evaluate(fn, project, built.obj)[1] is True:
+            return variant
+    return None
+
+
 def retry(net, project, fn, source):
     """Return a rewritten saved source only after its complete module-aware judge passes."""
     try:
@@ -344,6 +425,9 @@ def retry(net, project, fn, source):
         grouped = _probe_grouped(net, project, fn, source, header, candidate, target, info)
         if grouped:
             return grouped
+        objects = _probe_objects(net, project, fn, source, header, candidate, target, info)
+        if objects:
+            return objects
         split = _split_direct_data(fn, source, header, candidate)
         if split:
             built = net._compile(project, header, split, fn)

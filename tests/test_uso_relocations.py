@@ -1555,6 +1555,23 @@ def test_reimport_direct_retry_can_bind_nested_calls_inside_first():
     assert '#define decomp_overlay_direct_2 func_00000000' in result
 
 
+def test_reimport_groups_named_objects_but_skips_macro_arguments():
+    from types import SimpleNamespace
+
+    from decompnet.consoles.n64.reimport_bindings import _group_object_data
+
+    fn = {'name': 'work'}
+    header = 'extern int D_00000000;\n#define saved_object D_00000000\n#define READ(x) (x)\n'
+    source = 'int work(void) { return D_00000000 + saved_object + D_00000000; }'
+    candidate = SimpleNamespace(relocs=[SimpleNamespace(type=6, symbol='D_00000000') for _ in range(3)])
+    result = _group_object_data(fn, source, header, candidate)
+    assert '#define decomp_overlay_object_ref_1 D_00000000' in result
+    assert '#define decomp_overlay_object_ref_2 saved_object' in result
+    assert 'extern int decomp_overlay_object_ref_1;' in result
+    assert 'decomp_overlay_object_ref_1 + decomp_overlay_object_ref_2' in result
+    assert _group_object_data(fn, source.replace('saved_object +', 'READ(saved_object) +'), header, candidate) is None
+
+
 def test_reimport_binding_retry_returns_only_exact_result(monkeypatch):
     import json
     from types import SimpleNamespace
