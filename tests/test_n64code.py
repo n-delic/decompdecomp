@@ -141,6 +141,25 @@ def test_yaz0():
     assert yaz0(data) == b"abcabcabc"
 
 
+def test_insert_segments_uses_supplied_config_when_rolling_back(tmp_path):
+    import yaml
+
+    from decompnet.consoles.n64.code import insert_segments
+
+    original = {'segments': [
+        {'name': 'main', 'type': 'code', 'start': 0, 'vram': 0x80000400,
+         'subsegments': [[0, 'c']]},
+        {'type': 'bin', 'start': 0x100}, [0x400],
+    ]}
+    path = tmp_path / 'game.yaml'
+    newer = {'segments': [*original['segments'][:-1],
+                          {'name': 'bank', 'type': 'code', 'start': 0x200, 'vram': 0x80100000,
+                           'subsegments': [[0x200, 'c']]}, [0x400]]}
+    path.write_text(yaml.safe_dump(newer))
+    insert_segments(path, original, [], 0x400)
+    assert all(s.get('name') != 'bank' for s in yaml.safe_load(path.read_text())['segments'] if isinstance(s, dict))
+
+
 def test_discovered_code_preserves_the_original_explicit_bss_extent(tmp_path, monkeypatch):
     import yaml
     from splat.scripts.split import initialize_segments
