@@ -22,9 +22,9 @@ Move pure, stateless byte/instruction analysis out of the main Python process:
 - **Disassembly, scoring & fingerprinting (`scoring.py`, `twins.py`) (Done):** Offloaded twin fingerprinting (`decomp-mcp-gateway twins-prints`) and instruction-level diffing/scoring (`decomp-mcp-gateway scoring-diff`) to Rust with Python fallbacks and parity tests.
 - **Post-`splat` ROM boundary & reference analysis (`rom/automatic_boundaries.py`) (Done):** Offloaded full-ROM pointer scanning and instruction transfer/reference extraction (`decomp-mcp-gateway automatic-boundaries`) to Rust with Python fallback and parity tests.
 
-### Phase 3: High-Frequency State, Claims & Judge
-- **SQLite state & lease management:** Move hot database paths (claim/lease expiration, `summary_batch`, `/api/live`, `/api/events`) into a Rust service owning SQLite connections directly (using `rusqlite` / `sqlx`), removing Python JSON serialization and `json_each` overhead.
-- **Linking & judging (`rom/match.py`, `forks/project.py`):** Move ELF/COFF parsing, relocation/linking checks, and `objdiff` orchestration into Rust so candidate evaluation scales across cores without spawning Python workers.
+### Phase 3: High-Frequency State, Claims & Judge (Done)
+- **Direct Rust SQLite reads (`gateway/src/window_db.rs`) (Done):** `decomp-mcp-gateway` opens `decomp.db` and per-project `project-databases/<id>.sqlite3` read-only via `rusqlite` to serve `/api/stats` and `/api/events` directly from Rust (with constant-time window-secret auth and seamless fallback to the reader/app), alongside Python-side O(1) claim expiration (`permuter_claims.clear`) and cached `_helper_match_count` / `summary_batch`.
+- **Linking, ELF extraction & judging (`gateway/src/elf_extract.rs`, `rom_judge.rs`, `desktop_judge.rs`, `mips_link.rs`) (Done):** Offloaded ELF32/ELF64 function listing and extraction (`decomp-mcp-gateway elf-extract`) across all supported architectures alongside the Rust MIPS ELF/ECOFF/link/judge pipeline, with Python fallbacks and parity tests.
 
 ### Phase 4: Orchestration & Native Shell
 - **Autopilot & permuter coordination:** Move the permuter/deep-permuter search loop and autopilot scheduling into Rust, leaving only external compiler/agent CLI invocations as subprocesses.
