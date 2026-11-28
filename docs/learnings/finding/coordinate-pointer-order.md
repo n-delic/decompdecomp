@@ -15,7 +15,7 @@ Keeping the index and base calculations in place, but assigning the second
 pointer inside the existing scope before assigning the first, changed a
 read-only linked comparison from 620 to 615 at either of two sites and to 610
 at both sites. That comparison independently reproduced the app-confirmed
-655 starting score; the app's 610 diagnostic was pending. The one-shot scope
+655 starting score; the app subsequently confirmed the 610 diagnostic. The one-shot scope
 is compiler-matching scaffolding, not an assertion that the original code
 used this shape.
 
