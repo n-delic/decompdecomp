@@ -781,6 +781,52 @@ def test_audio_payload_pointer_does_not_protect_alignment(independent):
     assert any(fn.rom == 8 for fn in result) == independent
 
 
+@pytest.mark.parametrize('protect', ['none', 'literal', 'branch', 'internal_branch', 'materialized'])
+def test_closed_self_loop_tail_keeps_independent_entries(protect):
+    from collections import defaultdict
+
+    from decompnet.rom.automatic_boundaries import _closed_loop_tails
+
+    loop = 0x08000000 | ((BASE+4) >> 2 & 0x3ffffff)
+    words = [0x27bdffe8, loop, 0, 0x0c000000 | ((BASE+20) >> 2 & 0x3ffffff), *BODY,
+             0x03e00008, 0]
+    if protect == 'materialized':
+        words += [0x3c088000, 0x2508100c]
+    image, functions, _ = fixture(words, cuts=(0,16,48,len(words)*4))
+    if protect == 'literal':
+        image += (BASE+12).to_bytes(4, 'big')
+    references = defaultdict(set, {BASE: {(48, 'code')}})
+    if protect == 'branch':
+        references[BASE+12].add((48, 'code'))
+    if protect == 'internal_branch':
+        references[BASE+12].add((4, 'code'))
+    result, removed = _closed_loop_tails(functions,image,'big',consoles.get('n64'),lambda _: (0,''),
+                                         set(),references,{BASE+16},[])
+    assert result[0].size == (12 if protect == 'none' else 16)
+    assert removed == ({12} if protect == 'none' else set())
+
+
+def test_closed_self_loop_tail_follows_swallowed_callback():
+    from collections import defaultdict
+
+    from decompnet.rom.automatic_boundaries import _closed_loop_tails
+
+    jump = lambda address: 0x08000000 | ((address >> 2) & 0x3ffffff)  # noqa: E731
+    words = [0x27bdffe8, jump(BASE+4), 0, 0x27bdffe8, jump(BASE+16), 0,
+             0x0c000000 | ((BASE+36) >> 2 & 0x3ffffff), 0, *BODY,
+             0x3c088000, 0x2508100c, 0x03e00008, 0]
+    image, functions, _ = fixture(words,cuts=(0,32,64,len(words)*4))
+    refs = defaultdict(set, {BASE: {(64, 'code')}})
+    result, removed = _closed_loop_tails(functions,image,'big',consoles.get('n64'),lambda _: (0,''),
+                                         set(),refs,{BASE+32},[])
+    assert result[0].size == 24 and removed == {24,28}
+    # An independent entry into the discarded words prevents the repair.
+    refs[BASE+24].add((64,'code'))
+    result, removed = _closed_loop_tails(functions,image,'big',consoles.get('n64'),lambda _: (0,''),
+                                         set(),refs,{BASE+32},[])
+    assert result[0].size == 32 and not removed
+
+
 @pytest.mark.parametrize('protect', [False, True])
 def test_long_alignment_before_a_directly_called_entry(protect):
     call = 0x0c000000 | ((BASE+32) >> 2) & 0x3ffffff
