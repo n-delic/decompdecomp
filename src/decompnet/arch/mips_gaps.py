@@ -137,7 +137,8 @@ def extent(image, start, end, vram, order, cpu="", *, table_ranges=(), mapping_c
 
 
 def audit(image, segments, functions, *, big_endian=True, cpu="", progress=lambda _:None, data_mappings=(),
-          review_ranges=(), full_scan=False, check=lambda:None, entrypoints=(), callback_checkpoint=None):
+          review_ranges=(), full_scan=False, check=lambda:None, entrypoints=(), callback_checkpoint=None,
+          candidate_store=None):
     """Frozen image + known code ranges. Even closed direct flow remains review-only."""
     order='big' if big_endian else 'little'
     spans=sorted((s['rom_start'],s['rom_end'],s['vram']) for s in segments)
@@ -176,7 +177,7 @@ def audit(image, segments, functions, *, big_endian=True, cpu="", progress=lambd
             raise ValueError('Review ranges must be aligned original-image intervals.')
         regions=sorted(set((max(a,lo),min(b,hi),kind) for a,b,kind in regions for lo,hi in review_ranges if a<hi and lo<b))
     starts=[a for a,_,_ in regions]
-    candidates={};references=0;overflow=False
+    candidates=candidate_store if candidate_store is not None else {};references=0;overflow=False
     def region_at(offset):
         index=bisect_right(starts,offset)-1
         if index>=0 and offset<regions[index][1]:return regions[index]
@@ -317,12 +318,15 @@ def audit(image, segments, functions, *, big_endian=True, cpu="", progress=lambd
                     candidates[key]=dict(rom_offset=at,vram=at+mapping,gap_start=lo,gap_end=hi,
                                          region=region_name,evidence='frame/return pattern only',incoming=[],pointer_references=[],**info);hints+=1
         completed_bytes+=hi-lo
-    rows=[]
-    for index,row in enumerate(candidates.values()):
+    from .audit_spool import editable
+    rows=candidates if candidate_store is not None else []
+    source=editable(candidates) if candidate_store is not None else candidates.values()
+    for index,row in enumerate(source):
         check()
         if not index % 128:progress({'phase':'Checking candidate flow','step':5,'steps':6,'done':index,'total':len(candidates)})
         info=extent(image,row['rom_offset'],min(row['gap_end'],row['rom_offset']+0x10000),row['vram'],order,cpu,table_ranges=table_ranges,mapping_choices=mapping_choices)
-        rows.append({**row,**info,'review_only':True})
+        if candidate_store is not None:row.update({**info,'review_only':True})
+        else:rows.append({**row,**info,'review_only':True})
     from .mips_indirect import consumers
     unresolved_callbacks=[]
     progress({'phase':'Checking indirect references','step':6,'steps':6})
