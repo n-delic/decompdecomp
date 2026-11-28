@@ -308,8 +308,11 @@ class Gateway:
         errors = open(self.log_path, "ab") if self.log_path else subprocess.DEVNULL  # noqa: SIM115 (kept by the child)
         env = dict(os.environ)
         env.pop("DECOMP_GATEWAY_WINDOW_SECRET", None)
+        env.pop("DECOMP_GATEWAY_STATIC_DIR", None)
         if self.window and self.window.get("secret"):
             env["DECOMP_GATEWAY_WINDOW_SECRET"] = str(self.window["secret"])
+        if self.window and self.window.get("static_dir"):
+            env["DECOMP_GATEWAY_STATIC_DIR"] = str(self.window["static_dir"])
         try:
             process = subprocess.Popen(self._command(port, window_port), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                        stderr=errors, close_fds=True, env=env,
@@ -486,7 +489,8 @@ def start(app_port: int, log_path: Path | None = None, port_file: Path | None = 
     from .tool_reader import READER_TOOLS
     from .window_reads import GATEWAY_READS
     window_reader = getattr(reader, "window_url", None) if reader is not None else None
-    window_spec = ({"upstream": f"http://127.0.0.1:{app_port}", "reader": window_reader, "reads": list(GATEWAY_READS)}
+    window_spec = ({"upstream": f"http://127.0.0.1:{app_port}", "reader": window_reader, "reads": list(GATEWAY_READS),
+                    "static_dir": str(Path(__file__).with_name("static"))}
                    | ({"secret": window_secret} if window_secret else {})
                    if window and window_wanted() else None)
     gateway = Gateway(exe, f"http://127.0.0.1:{app_port}/mcp", log_path,
