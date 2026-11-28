@@ -117,6 +117,24 @@ def test_quiet_frame_calls_an_independently_known_callee_and_preserves_ra():
     assert complete(image,[],banks,taken)==[(0x4000,0x401c,BASE)]
 
 
+def test_quiet_function_with_a_global_load_before_its_frame_is_recovered():
+    words=[0x03e00008,0,0x3c028010,0x8c420020,0x27bdffe8,0xafbf0014,
+           0x10400003,0,jal(0x80001000),0,0x8fbf0014,0x03e00008,0x27bd0018]
+    image,taken,banks=setup(words)
+    assert (0x4008,0x4034,BASE+8) in complete(image,[],banks,taken)
+
+
+@pytest.mark.parametrize('damage',['no_boundary','wrong_base','no_saved_ra','interior_call'])
+def test_quiet_leading_load_requires_a_safe_boundary_and_independent_evidence(damage):
+    words=[0x03e00008,0,0x3c028010,0x8c420020,0x27bdffe8,0xafbf0014,
+           0x10400003,0,jal(0x80001000),0,0x8fbf0014,0x03e00008,0x27bd0018]
+    if damage=='no_boundary': words[0]=0
+    if damage=='wrong_base': words[3]=0x8c620020
+    if damage=='no_saved_ra': words[5]=0
+    image,taken,banks=setup(words,[BASE+16] if damage=='interior_call' else ())
+    assert (0x4008,0x4034,BASE+8) not in complete(image,[],banks,taken)
+
+
 @pytest.mark.parametrize('words',[FRAME,LEAF,[0x27bdffe8,0x03e00008,0x27bd0020,0]])
 def test_assets_or_unbalanced_patterns_without_independent_evidence_stay_raw(words):
     image,taken,banks=setup(words)
