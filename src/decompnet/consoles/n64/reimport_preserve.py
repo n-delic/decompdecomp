@@ -9,6 +9,51 @@ import yaml
 from ...rom import split
 
 
+def _uncompressed_pointer(image, low, high):
+    """Find an aligned target pointer, excluding verified compressed bytes with no decoded pointer."""
+    from decompassets import rnc
+
+    if not 0 <= low < high <= 0x100000000:
+        return True
+    prefixes = b'|'.join(re.escape(value.to_bytes(2, 'big')) for value in range(low >> 16, ((high-1) >> 16)+1))
+    pattern = re.compile(b'(?=(' + prefixes + b')..)', re.S)
+    compressed = re.compile(rb'(?:RNC|ERZ)[\x01\x02]')
+    for hit in pattern.finditer(image):
+        at = hit.start()
+        if at % 4 or at+4 > len(image):
+            continue
+        value = int.from_bytes(image[at:at+4], 'big')
+        if not low <= value < high or (value-low) % 4:
+            continue
+        safe = False
+        # Only a complete, checksummed block can explain an apparent pointer
+        # as compressed bytes. Also inspect its decoded payload for the target.
+        for header in compressed.finditer(image, max(0, at-4*1024*1024-18), at):
+            start = header.start()
+            if start+18 > at or start+18 > len(image):
+                continue
+            packed = int.from_bytes(image[start+8:start+12], 'big')
+            if not 0 < packed <= 4*1024*1024 or not start+18 <= at < start+18+packed:
+                continue
+            try:
+                decoded, size = rnc.unpack_at(image, start, max_output=4*1024*1024, max_packed=4*1024*1024)
+            except rnc.RncError:
+                continue
+            if at+4 > start+size:
+                continue
+            # Decoded data may be loaded at a different alignment; inspect all
+            # byte offsets conservatively, not only aligned ones.
+            if any(low <= int.from_bytes(decoded[m.start():m.start()+4], 'big') < high
+                   and (int.from_bytes(decoded[m.start():m.start()+4], 'big')-low) % 4 == 0
+                   for m in pattern.finditer(decoded) if m.start()+4 <= len(decoded)):
+                return True
+            safe = True
+            break
+        if not safe:
+            return True
+    return False
+
+
 def _joined_bodies(result, image, rows):
     """Keep an unchanged prior join only while its absorbed tail has no outside entry."""
     from ...arch.mips_references import references
@@ -43,13 +88,11 @@ def _joined_bodies(result, image, rows):
                 or head_old.get('size') != size or head_old.get('target') != image[start:start+size]
                 or tail_old.get('rom_offset') != tail.rom or tail_old.get('vram') != tail.vram
                 or tail_old.get('size') != tail.size or tail_old.get('target') != image[tail.rom:tail.rom+tail.size]
-                or tail.size > 0x400
+                or tail.size > 0x10000
                 or any(d.rom is not None and d.size and d.rom < start+size and start < d.rom+d.size
                        for d in getattr(result,'data', ()))):
             continue
-        pointer_words = b'|'.join(re.escape(address.to_bytes(4,'big'))
-                                  for address in range(tail.vram,tail.vram+tail.size,4))
-        if any(match.start()%4 == 0 for match in re.finditer(b'(?=('+pointer_words+b'))',image)):
+        if _uncompressed_pointer(image, tail.vram, tail.vram+tail.size):
             continue
         all_edges = [(target,source,kind) for fn in result.functions if fn.rom is not None
                      for target,source,kind in references(image,fn.rom,fn.rom+fn.size,fn.vram)]

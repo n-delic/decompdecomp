@@ -217,6 +217,12 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
         if not references[dest]:del references[dest]
     stale = stale_code_copies(functions, image, order, console, segments, owner, explicit,
                               references, direct_calls, data)
+    distant = distant_stale_fragments(functions, image, order, console, segments, owner, explicit,
+                                      references, direct_calls, data)
+    for fn in functions:
+        if (fn.rom, fn.vram) in distant:
+            data.append(DataSymbol(fn.name, fn.vram, fn.rom, fn.size, 'data', boundary_proven=True))
+    stale |= distant
     if stale:
         removed_sources = {line.rom for fn in functions if (fn.rom, fn.vram) in stale for line in fn.lines}
         functions = [fn for fn in functions if (fn.rom, fn.vram) not in stale]
@@ -1730,6 +1736,59 @@ def stale_code_copies(functions, image, order, console, segments, owner, explici
                     break
             if (fn.rom, fn.vram) in stale:
                 break
+    return stale
+
+
+def distant_stale_fragments(functions, image, order, console, segments, owner, explicit, references, calls, data):
+    """An unentered fragment exactly repeats an interior of another complete, called body."""
+    ordered = sorted(functions, key=lambda fn: (owner(fn), fn.rom))
+    stale = set()
+    for index in range(1, len(ordered)-1):
+        before, fn, after = ordered[index-1:index+2]
+        gap = fn.rom-before.rom-before.size
+        if (not 32 <= fn.size <= 64 or fn.size % 4 or not 0 <= gap <= 16 or gap % 4
+                or owner(fn)[0] < 0 or owner(before) != owner(fn) or owner(after) != owner(fn)
+                or before.vram+before.size+gap != fn.vram or before.size < 8 or before.lines[-2].word != JR_RA
+                or any(image[before.rom+before.size:fn.rom]) or fn.rom+fn.size != after.rom
+                or fn.vram+fn.size != after.vram or after.vram not in calls or not is_frame(after.lines[0].word)
+                or not any(not fn.rom <= src < fn.rom+fn.size and int.from_bytes(image[src:src+4], order) >> 26 == 3
+                           for src, _ in references.get(after.vram, ()))
+                or sum(s.contains(fn.vram, fn.size) for s in segments) != 1
+                or any(d.rom is not None and d.rom < fn.rom+fn.size and fn.rom < d.rom+d.size for d in data)):
+            continue
+        lo = fn.vram-gap
+        if (any(lo <= address < fn.vram+fn.size for address in explicit)
+                or any(any(not fn.rom <= source < fn.rom+fn.size for source, _ in references.get(address, ()))
+                       for address in range(lo, fn.vram+fn.size, 4))
+                or any(not match.start() % 4 for address in range(lo, fn.vram+fn.size, 4)
+                       for match in re.finditer(re.escape(address.to_bytes(4, order)), image))):
+            continue
+        segment = segments[owner(after)[0]]
+        if called_extent(image, after.rom, min(segment.rom_end, after.rom+0x4000), after.vram,
+                         big_endian=console.big_endian, cpu=console.cpu_variant,
+                         asm_check=console.asm_reason) != after.size:
+            continue
+        source = image[fn.rom:fn.rom+fn.size]
+        if source != b''.join(line.word.to_bytes(4, order) for line in fn.lines):
+            continue
+        hits = [m.start() for m in re.finditer(b'(?=('+re.escape(source)+b'))', image) if not m.start() % 4]
+        if len(hits) != 2 or fn.rom not in hits:
+            continue
+        donor = hits[0] if hits[1] == fn.rom else hits[1]
+        bodies = [other for other in functions if other is not fn and other.rom < donor
+                  and donor+fn.size <= other.rom+other.size and other.vram in calls and owner(other)[0] >= 0]
+        if len(bodies) != 1:
+            continue
+        body = bodies[0]
+        segment = segments[owner(body)[0]]
+        if (not any(not fn.rom <= src < fn.rom+fn.size and not body.rom <= src < body.rom+body.size
+                    and int.from_bytes(image[src:src+4], order) >> 26 == 3 for src, _ in references.get(body.vram, ()))
+                or sum(s.contains(body.vram, body.size) for s in segments) != 1
+                or called_extent(image, body.rom, min(segment.rom_end, body.rom+0x4000), body.vram,
+                                 big_endian=console.big_endian, cpu=console.cpu_variant,
+                                 asm_check=console.asm_reason) != body.size):
+            continue
+        stale.add((fn.rom, fn.vram))
     return stale
 
 

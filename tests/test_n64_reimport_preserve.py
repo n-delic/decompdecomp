@@ -176,3 +176,39 @@ def test_reimport_keeps_an_independently_called_old_entry_inside_a_new_body(tmp_
     else:
         assert count == 0
         assert {fn.name: fn.size for fn in result.functions} == {'new_prefix': 16, 'caller': 8}
+
+
+def test_large_proven_join_is_retained_without_large_pointer_patterns():
+    base = 0x80001000
+    head_bytes = bytes.fromhex('10000001 00000000')
+    tail_bytes = bytes(1100) + bytes.fromhex('03e00008 00000000')
+    raw = head_bytes + tail_bytes
+    image = bytes(0x100) + raw
+    head = split.function_from_bytes('head', head_bytes, 0x100, base, 'code')
+    tail = split.function_from_bytes('tail', tail_bytes, 0x108, base+8, 'code')
+    old = [dict(name='head', rom_offset=0x100, vram=base, size=len(raw), target=raw,
+                meta=json.dumps({'boundary_decision': {'action': 'join_previous'}})),
+           dict(name='tail', rom_offset=0x108, vram=base+8, size=len(tail_bytes), target=tail_bytes,
+                gone_mark='1', meta=json.dumps({'boundary_absorbed_by': 'head'}))]
+    result = SimpleNamespace(functions=[head, tail], data=[])
+    assert reimport_preserve._joined_bodies(result, image, old) == 1
+    assert result.functions[0].size == len(raw)
+    assert result.retained_join_archives == {'tail'}
+
+
+@pytest.mark.parametrize('case', ['compressed', 'decoded_pointer', 'invalid_block', 'raw_pointer'])
+def test_literal_pointer_inside_verified_compression_is_not_a_direct_pointer(monkeypatch, case):
+    from decompassets import rnc
+
+    low = 0x80001000
+    image = bytearray(256)
+    image[0x40:0x44] = b'RNC\x01'
+    image[0x48:0x4c] = (128).to_bytes(4, 'big')
+    location = 0xe0 if case == 'raw_pointer' else 0x80
+    image[location:location+4] = (low+4).to_bytes(4, 'big')
+    def unpack(*args, **kwargs):
+        if case == 'invalid_block':raise rnc.RncError('bad checksum')
+        decoded = b'\xff' + (low+4).to_bytes(4, 'big') if case == 'decoded_pointer' else b'no target pointers'
+        return decoded, 146
+    monkeypatch.setattr(rnc, 'unpack_at', unpack)
+    assert reimport_preserve._uncompressed_pointer(bytes(image), low, low+16) == (case != 'compressed')

@@ -273,3 +273,22 @@ def test_unentered_noop_before_graphics_bootstrap(monkeypatch, case):
     if case == 'alias':ranges.append((0, len(image), base+0x1000))
     monkeypatch.setattr(rsp_prefix, 'graphics_spans', lambda _: [(at+4, at+0x80)])
     assert list(inline_data.unentered_rsp_markers(image, ranges)) == ([(at, at+4)] if case == 'valid' else [])
+
+
+@pytest.mark.parametrize('case', ['valid', 'pointer', 'branch', 'alias', 'not_source', 'not_frame', 'unclosed'])
+def test_unentered_source_text_between_return_and_frame(monkeypatch, case):
+    from decompnet.arch import mips_code_recovery
+
+    image = bytearray(0x200)
+    start, base = 0x48, 0x80001000
+    image[start-8:start] = bytes.fromhex('03e0000800000000')
+    text = b'field:16;\r\n unsigned int field;' + b' '
+    assert len(text) == 32
+    image[start:start+32] = text if case != 'not_source' else b'X' * 32
+    struct.pack_into('>I', image, start+32, 0x27bdffe0 if case != 'not_frame' else 0)
+    if case == 'pointer':struct.pack_into('>I', image, 0x10, base+start)
+    if case == 'branch':struct.pack_into('>I', image, 0x10, 0x08000000 | (((base+start)>>2)&0x3ffffff))
+    ranges = [(0, len(image), base)]
+    if case == 'alias':ranges.append((0, len(image), base+0x1000))
+    monkeypatch.setattr(mips_code_recovery, 'called_extent', lambda *a, **k: None if case == 'unclosed' else 32)
+    assert list(inline_data._unentered_source_fragments(image, ranges)) == ([(start, start+32)] if case == 'valid' else [])

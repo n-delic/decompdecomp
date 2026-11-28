@@ -1569,3 +1569,41 @@ def test_saved_stack_body_retains_independently_entered_restore(case):
     if case == 'entered_gap':entered.add(first.vram+first.size)
     if case == 'entered_tail':entered.add(last.vram+4)
     assert saved_stack_shared_tail(first, last, image, 'big', segments, entered, []) == (case == 'valid')
+
+
+@pytest.mark.parametrize('case', ['valid', 'pointer', 'branch', 'extra_copy', 'changed', 'gap_data', 'uncalled', 'unclosed'])
+def test_distant_identical_fragment_requires_closed_called_donor(monkeypatch, case):
+    from decompnet.rom import automatic_boundaries, split
+
+    image = bytearray(0x3000)
+    prefix = bytes.fromhex('03e00008 00000000')
+    fragment = b''.join((0x24020001+i).to_bytes(4, 'big') for i in range(8))
+    frame = bytes.fromhex('27bdffe0 afbf001c 8fbf001c 03e00008 27bd0020')
+    donor_prefix = bytes.fromhex('27bdffe0 afbf001c')
+    donor_suffix = bytes.fromhex('8fbf001c 03e00008 27bd0020')
+    image[:8] = prefix
+    image[16:48] = fragment
+    image[48:68] = frame
+    donor_at = 0x1000
+    donor = donor_prefix + fragment + donor_suffix
+    image[donor_at:donor_at+len(donor)] = donor
+    image[0x800:0x804] = (0x0c000000 | (((BASE+48)>>2)&0x3ffffff)).to_bytes(4, 'big')
+    image[0x804:0x808] = (0x0c000000 | (((BASE+0x1000)>>2)&0x3ffffff)).to_bytes(4, 'big')
+    if case == 'pointer':image[0x810:0x814] = (BASE+16).to_bytes(4, 'big')
+    if case == 'extra_copy':image[0x2000:0x2020] = fragment
+    if case == 'changed':image[donor_at+8] ^= 1
+    if case == 'gap_data':image[8] = 1
+    first = split.function_from_bytes('first', bytes(image[:8]), 0, BASE, 'a')
+    part = split.function_from_bytes('part', bytes(image[16:48]), 16, BASE+16, 'a')
+    following = split.function_from_bytes('following', bytes(image[48:68]), 48, BASE+48, 'a')
+    body = split.function_from_bytes('donor', bytes(image[donor_at:donor_at+len(donor)]), donor_at, BASE+donor_at, 'b')
+    segments = [Segment('a', 0, 68, BASE), Segment('b', donor_at, donor_at+len(donor), BASE+donor_at)]
+    owner = lambda fn: (0 if fn.segment == 'a' else 1, '')
+    calls = {following.vram, body.vram} if case != 'uncalled' else {following.vram}
+    refs = {following.vram: {(0x800, 'caller')}, body.vram: {(0x804, 'caller')}}
+    if case == 'branch':refs[part.vram] = {(0x700, 'other')}
+    monkeypatch.setattr(automatic_boundaries, 'called_extent',
+                        lambda image, start, *a, **k: 0 if case == 'unclosed' else following.size if start == 48 else body.size)
+    result = automatic_boundaries.distant_stale_fragments([first, part, following, body], bytes(image), 'big',
+                                                         consoles.get('n64'), segments, owner, set(), refs, calls, [])
+    assert result == ({(part.rom, part.vram)} if case == 'valid' else set())

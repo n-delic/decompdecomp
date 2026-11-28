@@ -315,6 +315,48 @@ def _unentered_invalid_jump_prefixes(image, ranges):
     for start in candidates.values():yield start, start+4
 
 
+def _unentered_source_fragments(image, ranges):
+    """Keep unentered source text after a closed return and before a closed frame as data."""
+    from ...arch.mips import is_frame
+    from ...arch.mips_code_recovery import called_extent
+    from ...arch.mips_references import references
+
+    candidates = {}
+    for match in re.finditer(rb'\x03\xe0\x00\x08....', image, re.S):
+        start = match.end()
+        if start % 4:
+            continue
+        end = start
+        while end < min(start+128, len(image)) and (32 <= image[end] < 127 or image[end] in (9, 10, 13)):
+            end += 1
+        end = start + (end-start)//4*4
+        text = image[start:end]
+        if (not 16 <= len(text) <= 128 or b';' not in text or b'\n' not in text
+                or len(re.findall(rb'[A-Za-z_][A-Za-z_0-9]+', text)) < 2 or end+4 > len(image)
+                or not is_frame(int.from_bytes(image[end:end+4], 'big'))):
+            continue
+        owners = [(lo, hi, base) for lo, hi, base in ranges if lo <= start and end <= hi]
+        if len(owners) != 1:
+            continue
+        lo, _, base = owners[0]
+        mapping = base-lo
+        previous = [(a,b,v) for a,b,v in ranges if a <= start-8 and start <= b and v-a == mapping]
+        following = [(a,b,v) for a,b,v in ranges if a <= end and end+4 <= b and v-a == mapping]
+        address = mapping+start
+        if (len(previous) != 1 or len(following) != 1 or not 0 <= address < address+len(text) <= 0x100000000
+                or sum(v < address+len(text) and address < v+stop-begin for begin,stop,v in ranges) != 1
+                or any(value.to_bytes(4, 'big') in image for value in range(address, address+len(text), 4))
+                or not called_extent(image, end, min(following[0][1], end+0x1000), mapping+end, cpu='vr4300')):
+            continue
+        candidates[(start,end)] = address
+    for lo, hi, base in ranges:
+        for target, source, _ in references(image, lo, min(hi, len(image)), base):
+            for (start,end), address in list(candidates.items()):
+                if address <= target < address+end-start and not start <= source < end:
+                    del candidates[start,end]
+    yield from candidates
+
+
 def unentered_rsp_markers(image, ranges):
     """An unentered no-op follows a closed epilogue immediately before RSP text."""
     from ...arch.mips_references import references
@@ -352,7 +394,8 @@ def apply(config, image, log=print):
     code = split.code_ranges(config)
     regions = sorted([*spans(image), *_startup_padding(image, code), *_stack_padding(image, code),
                       *_leading_code_pointer_tables(image, code), *_unentered_call_words(image, code),
-                      *_unentered_invalid_jump_prefixes(image, code), *unentered_rsp_markers(image, code)])
+                      *_unentered_invalid_jump_prefixes(image, code), *unentered_rsp_markers(image, code),
+                      *_unentered_source_fragments(image, code)])
     if not regions:
         return
     ranges = {start: end for start, end, _ in code}
