@@ -350,7 +350,10 @@ def test_reimport_still_blocks_projects_with_an_active_room(tmp_path):
 
 
 @pytest.mark.parametrize('derived', [False, True])
-def test_reimport_pairs_saved_matches_by_overlay_and_address(tmp_path, monkeypatch, derived):
+@pytest.mark.parametrize('unit_changed', [False, True])
+def test_reimport_pairs_saved_matches_by_overlay_and_address(tmp_path, monkeypatch, derived, unit_changed):
+    import hashlib
+
     from decompnet import consoles
 
     root = tmp_path / 'banks'
@@ -358,7 +361,9 @@ def test_reimport_pairs_saved_matches_by_overlay_and_address(tmp_path, monkeypat
     net = RomNetwork(tmp_path / 'banks.db', tmp_path)
     cfg = {'kind': 'rom', 'platform': 'n64', 'big_endian': True,
            'compiler': {'toolchain': 'gcc-2.7.2-kmc', 'flags': ['-O2']},
-           'rom': {'file': 'rom.z64', 'sha1': 'same', 'analysis_sha1': 'stale'}, 'segments': []}
+           'rom': {'file': 'rom.z64', 'sha1': 'same',
+                   'analysis_sha1': hashlib.sha1(b'derived image' if derived else bytes(16)).hexdigest()
+                   if unit_changed else 'stale'}, 'segments': []}
     originals = {}
     with net.store.tx() as db:
         pid = db.execute('INSERT INTO projects(slug,name,root,arch,config) VALUES(?,?,?,?,?)',
@@ -366,26 +371,28 @@ def test_reimport_pairs_saved_matches_by_overlay_and_address(tmp_path, monkeypat
         for index in [1, 2]:
             name = f'renamed_bank_{index}'
             body = bytes.fromhex(f'2402000{index}')
-            fid = db.execute('INSERT INTO functions(project_id,name,unit,vram,size,n_insns,target,relocs,status,matched_source) '
-                             'VALUES(?,?,?,?,?,?,?,?,?,?)', (pid, name, f'overlay_{index:03d}', 0x80300000,
-                              4, 1, body, '[]', 'matched', f'int {name}(void) {{ return {index}; }}')).lastrowid
+            fid = db.execute('INSERT INTO functions(project_id,name,unit,vram,size,n_insns,target,relocs,status,matched_source,rom_offset) '
+                             'VALUES(?,?,?,?,?,?,?,?,?,?,?)', (pid, name, f'overlay_{index:03d}', 0x80300000,
+                              4, 1, body, '[]', 'matched', f'int {name}(void) {{ return {index}; }}',
+                              index * 4 if unit_changed else None)).lastrowid
             originals[fid] = (name, body)
 
     def replacement(work, *a, **kw):
         functions = []
         # Reverse order to catch accidental address-only pairing and stolen match identities.
         for index in [2, 1]:
-            unit = f'overlay_{index:03d}'
+            unit = f'{"renamed" if unit_changed else "overlay"}_{index:03d}'
             line = split.AsmLine(index * 4, 0x80300000, 0x24020000 + index, 'addiu', f'v0, zero, {index}')
             functions.append(split.RomFunction(f'func_80300000_{unit}', 0x80300000, index * 4, unit,
                                                 [line], work / (unit + '.s')))
+        if unit_changed:
+            (work/'splat.yaml').write_text('segments: []\n')
         if derived:(work/'analysis.bin').write_bytes(b'derived image')
         return split.SplitResult(functions, [], [], {}, work / 'splat.yaml', 'KMC', '', image='analysis.bin' if derived else 'rom.z64')
     monkeypatch.setattr(split, 'split_rom', replacement)
     picked = Picked('n64', bytes(16), 'rom.z64', {'title': 'Banks', 'size': 16, 'sha1': 'same',
                     'game_code': 'DEMO', 'region': 'Test', 'compiler_guess': 'KMC'}, True)
     net.import_split(consoles.get('n64'), picked, reimport_slug='banks', log=lambda *_: None)
-    import hashlib
     recorded = net.cfg(net.project_row('banks'))['rom']
     assert recorded['sha1'] == 'same'
     assert recorded['analysis_sha1'] == hashlib.sha1(b'derived image' if derived else bytes(16)).hexdigest()

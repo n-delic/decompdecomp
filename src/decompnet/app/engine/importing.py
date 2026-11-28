@@ -418,10 +418,10 @@ class ImportMixin:
                                and old_counts[r['vram']] == new_counts[r['vram']] == 1}
                     by_unit = {(r['unit'], r['vram']): r for r in rows}
                     by_name = {r["name"]: r for r in rows}
-                    # An improved overlay mapping can move a function's VRAM while its original image bytes
-                    # stay put. Reserve such matches by unique ROM offset before an unrelated function at the old
-                    # virtual address can take their identity. Only identical analysis images and entry bytes
-                    # are safe; changed extents are judged again. A name used by other code cannot be retained.
+                    # An improved overlay mapping can move a function or rename its unit while its original
+                    # image bytes stay put. Reserve unique ROM offsets before another function at the same
+                    # virtual address can take their identity. Changed extents are judged again, and a name
+                    # used by other code cannot be retained.
                     old_functions = {}
                     used_ids = set()
                     blocked_ids = set()
@@ -435,13 +435,14 @@ class ImportMixin:
                         order = 'big' if picked.big_endian else 'little'
                         for fn in res.functions:
                             old = by_offset.get(fn.rom)
-                            if (old is None or old['vram'] == fn.vram or not old['target'] or not fn.lines
+                            if (old is None or not old['target'] or not fn.lines
                                     or old['target'][:4] != fn.lines[0].word.to_bytes(4, order)):
                                 continue
                             if old['name'] in symbols.by_name and old['name'] != fn.name:
-                                # The old name now belongs to different code. Keep its saved C in notes rather
-                                # than silently assigning it to that code or creating a duplicate function name.
-                                blocked_ids.add(old['id'])
+                                # A moved entry's old name belongs to other code; don't assign its C there.
+                                # At the same VRAM, leave existing unit/name pairing to resolve the alias.
+                                if old['vram'] != fn.vram:
+                                    blocked_ids.add(old['id'])
                                 continue
                             old_functions[fn.name] = old
                             used_ids.add(old['id'])
