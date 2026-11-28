@@ -7,4 +7,6 @@
   `gPlayer`, `sSaveMagic`, `D_8001` -> `gSineTable`.
 - Common convention in N64 decomps: `g` prefix for globals, `s` for file statics, `unk_XX` for unknown
   struct fields, `func_8000XXXX` until you know better.
-- Rename once you're confident; a misleading name is worse than an address.
+- Name from evidence: a string that names the function (`"PlayerUpdate: bad state"`), assert text, debug
+  symbols, a matched caller that passes it a named value, the data it reads (`read_data`).
+- Rename once you're confident; a misleading name is worse than an address. No evidence: keep the placeholder.

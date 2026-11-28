@@ -24,6 +24,7 @@ says how to send a change. Examples point at real code by file and name: search 
 | Free matches | twins `app/twins.py` (also across your games), autopilot `app/engine/autopilot.py`, the permuter `app/permute.py` (and its generator `permuter_gen.py`, run in decomp-permuter's environment; `permuter.py` the simple rewrites without it) |
 | Machine drafts | `seeds.py` (m2c, and C++ methods), drafted in the background by `app/drafts.py`; forks: `forks/drafts.py` |
 | Polishing matched code (names, types, comments that still match) | `app/readable.py` |
+| Fakematches: tricks that steer the compiler, named in match results and polishing, kept out of the permuter | `fakematch.py`; what each hides, for agents: `app/guide/rules.md` |
 | What agents learn, shared once two models agree | `app/knowledge.py` |
 | Saving a ROM project as plain files, and restoring one | `app/saves.py` |
 | Helper agents: starting and restarting them, their records | `app/agents.py`; default prompts in `app/tools.py`, overrides in `app/prompt_settings.py`, tool access in `app/tool_policy.py` |
@@ -169,6 +170,8 @@ try {
 - Agents may edit only source and header files: `EDITABLE` and `FORBIDDEN_PARTS` in `forks/project.py`.
 - The judge is never weakened. A match is byte-identical after linking (ROM mode) or objdiff 100% (fork mode).
   decompdecomp never accepts code that "does the same thing".
+- Prompts, guides and background rewrites never teach a trick that steers the compiler (a `volatile` local, a dummy
+  temporary, an empty block). A match through one is kept, and its helper is told what it hides (`fakematch.py`).
 - No game data anywhere in the repository, the tests, issues or screenshots: no ROMs, discs, executables, extracted
   code or assets. Generated projects keep them out of git (`orig/`, `extract/`, `build/`).
 

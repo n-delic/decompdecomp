@@ -12,6 +12,8 @@ How to use it
 - 70-90%: the same structure with a different body part; reuse the skeleton.
 - Similar but unmatched: when you match one, the others get easier; note what you learned on them
   (`add_note`) so other agents benefit.
+- The same few statements in many functions: usually one inline helper or macro the original called. Write it
+  once in the header and call it at each site (guide `rules`).
 
 Beyond this project: games built on the same SDK or engine share code (libultra on N64, the Dolphin and
 Revolution SDKs, NitroSDK on DS, PSY-Q on PS1, sead/nn on Switch, RenderWare, Havok...). Those library

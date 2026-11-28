@@ -801,3 +801,16 @@ def test_a_source_the_project_refuses_is_one_line_in_the_log(tmp_path, caplog, m
     assert caplog.records[-1].exc_info is None
     # the same best attempt is refused every time: its other turns go too
     assert net.store.one("SELECT permuted FROM functions WHERE id=1")["permuted"] == permute.MAX_TURNS
+
+
+def test_a_variant_that_adds_a_trick_isnt_judged(monkeypatch):
+    """decomp-permuter's rewrites may steer the compiler with a trick (a `volatile` local, `+ 0`, an empty block); a
+    match through one would be saved as the function's C and hide the source it stands for (fakematch.py)."""
+    net = FakeNet()
+    trick = SOURCE.replace("s32 b = a + 1;", "volatile s32 b = a + 1;")
+    real = SOURCE.replace("return b * 2;", "return (b * 2);")
+    p = ScriptedPermuter(net, {trick: 0, real: 0})
+    batches(monkeypatch, [trick, real])
+    st = State()
+    p._permute(AGENT, net.project_row("game"), net.function(), st)
+    assert p.judged == [real] and (st.variants, st.matched) == (1, 1)

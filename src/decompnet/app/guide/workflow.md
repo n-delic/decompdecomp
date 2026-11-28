@@ -7,7 +7,8 @@ Goal: C that the game's own compiler turns into exactly the bytes in the ROM. No
 2. Read `get_context`: the shared header every compile includes (types, structs, prototypes).
 3. Write the function, then `compile_and_diff`. Your object is linked at the function's real address
    and compared with the ROM. Score 0 = byte-identical = matched and saved.
-4. Iterate. Change one thing at a time and watch the score; keep what lowers it.
+4. Iterate. Change one thing at a time and watch the score; keep what lowers it, unless it's a trick that steers
+   the compiler (a `volatile` local, a dummy temporary, an empty block): that hides the real source (guide `rules`).
 5. Matched: add what you learned to the codebase so others benefit:
    - prototypes and structs you worked out -> `edit_context` (accepted only if every matched function
      still matches);
@@ -28,5 +29,7 @@ Goal: C that the game's own compiler turns into exactly the bytes in the ROM. No
   defined that differs from the ROM data. Fix these first.
 
 ## Priorities
-Get the instruction count and control flow right first, then operands, then register allocation.
-Plausible original code beats contortions: games were written by people, quickly.
+Get the calls, the instruction count and control flow right first, then operands, then register allocation (guide
+`rules`, "Why a function doesn't match"). Plausible original code beats contortions: games were written by people,
+quickly. A match through a trick is a clue to the real source, not the end: the `rules` guide says what each
+trick usually hides.

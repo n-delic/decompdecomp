@@ -73,7 +73,8 @@ Conventions
 <!-- only: x86 -->
   (`unk_0x10`, `D_00402034`, `func_00401000`).
 <!-- end -->
-- No inline assembly, asm functions or asm includes: a match must come from C/C++.
+- No inline assembly, asm functions or asm includes: a match must come from C/C++. No tricks that steer the
+  compiler either (a `volatile` local, a dummy temporary, an empty block): guide `rules` says what each hides.
 <!-- only: !x86 -->
   Register variables (`register u32 x asm("r4")`) are fine where the project uses them.
 <!-- end -->
