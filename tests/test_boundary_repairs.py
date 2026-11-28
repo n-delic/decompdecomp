@@ -325,6 +325,24 @@ def test_safe_fixes_join_code_that_runs_on_into_the_next_piece(tmp_path,monkeypa
     assert net._function('after','game')['gone_mark'] is None and result['remaining']==0
 
 
+@pytest.mark.parametrize('branches_to_tail', [False, True])
+def test_safe_join_after_return_requires_a_branch_into_the_tail(tmp_path, monkeypatch, branches_to_tail):
+    first = 0x10400003 if branches_to_tail else STEP
+    net,_ = layout(tmp_path,monkeypatch,[('head',[first,NOP,JR_RA,NOP],'open'),
+                                       ('tail',[STEP,JR_RA,NOP],'open')])
+    proj = net.project_row('game')
+    plan = repair._preview(net,proj,net._function('tail','game'),'join_previous')
+    assert bool(repair._safe(net,proj,net.console(proj),plan,set())) == branches_to_tail
+
+
+def test_safe_fix_does_not_join_data_after_a_closed_return(tmp_path, monkeypatch):
+    net,_ = layout(tmp_path,monkeypatch,[('closed',[STEP,JR_RA,NOP],'asm'),
+                                       ('data',[0x80146810,0x80400000],'open')])
+    assert not repair.apply_safe(net,'game')['fixed']
+    assert net._function('closed','game')['size'] == 12
+    assert net._function('data','game')['gone_mark'] is None
+
+
 @pytest.mark.parametrize('case',['call that never returns','own stack frame','called directly','matched','claimed','set aside by you'])
 def test_safe_fixes_never_absorb_a_separate_function(tmp_path,monkeypatch,case):
     first=[jal(BASE+0x100),NOP] if case=='call that never returns' else [STEP]
