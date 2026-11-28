@@ -756,6 +756,13 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
         from ..consoles.n64.code import unpack_code
 
         original = (work / original_name).read_bytes()
+        from ..consoles.n64 import runtime_zlib
+        manifest = work / runtime_zlib.MANIFEST
+        try:
+            runtime_programs = json.loads(manifest.read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            runtime_programs = []
+        runtime_verified = runtime_zlib.verify_analysis(original, image, runtime_programs)
         blocks, cursor = [], len(original)
         compressed = unpack_code(original)
         verified_blocks = any(original[offset:offset + 4] != b"RNC\x01" for offset, _ in compressed)
@@ -765,38 +772,31 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
                 raise ExportError("compressed analysis export needs a verified reconstruction for every block")
             blocks.append({"rom": offset, "analysis": cursor, "size": len(payload)})
             cursor += len(payload)
-        if verified_blocks:
+        if verified_blocks and not runtime_verified:
             from ..consoles.n64.code import verify_unpacked_analysis
             if not verify_unpacked_analysis(original, image):
                 raise ExportError("compressed analysis differs from its original cartridge and decoded blocks")
         gzip_boot_ranges = []
         archive_analysis = False
-        runtime_programs = []
-        if not blocks:
+        if not blocks and not runtime_verified:
             gzip_boot_ranges = [entry for entry in split.code_ranges(configs[0]) if entry[1] <= len(original)]
             if not boot_gzip.verify_analysis(original, image, gzip_boot_ranges):
                 from ..consoles.n64 import indexed_runtime_code
                 archive_analysis = indexed_runtime_code.verify_analysis(original, image)
                 if not archive_analysis:
-                    from ..consoles.n64 import runtime_zlib
-                    manifest = work / runtime_zlib.MANIFEST
-                    try:
-                        runtime_programs = json.loads(manifest.read_text(encoding='utf-8'))
-                    except (OSError, ValueError):
-                        runtime_programs = []
                     if not runtime_zlib.verify_analysis(original, image, runtime_programs):
                         raise ExportError("expanded analysis image has no verified compressed-block reconstruction")
                 gzip_boot_ranges = []
         cartridge = f"baserom.cartridge{ext}"
         (out / cartridge).write_bytes(original)
         build["cartridge"] = {"image": cartridge, "sha1": hashlib.sha1(original).hexdigest(), "blocks": blocks}
-        if verified_blocks:
+        if verified_blocks and not runtime_verified:
             build["cartridge"]["verified_blocks"] = True
         if gzip_boot_ranges:
             build["cartridge"]["gzip_boot_ranges"] = gzip_boot_ranges
         if archive_analysis:
             build["cartridge"]["indexed_archive"] = True
-        if runtime_programs:
+        if runtime_verified or runtime_programs and not blocks:
             build["cartridge"]["runtime_zlib"] = runtime_programs
     (out / "build.json").write_text(json.dumps(build, indent=1), encoding="utf-8")
     shutil.copyfile(Path(__file__).with_name("export_build.py"), out / "build.py")

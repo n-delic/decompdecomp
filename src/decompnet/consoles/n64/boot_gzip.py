@@ -324,4 +324,16 @@ def add(config, workdir, image, rom, boot_ranges, log):
     cfg['sha1'] = hashlib.sha1(expanded).hexdigest()
     config.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding='utf-8')
     log(f'Unpacked {len(programs)} compressed program(s) at the addresses supplied by the boot loader')
+    # Some boot programs load further compressed executables themselves.
+    # Observe their calls against the expanded boot program before splitting.
+    from ...rom import split
+    from . import loaded_code, runtime_zlib
+
+    taken = split.code_ranges(config)
+    loaded = loaded_code.find(workdir / image, bytes(expanded), taken, log=log)
+    if loaded.get('decoded_programs'):
+        result = runtime_zlib.add(config, workdir, image, rom, taken, loaded['decoded_programs'], log,
+                                  base_image=bytes(expanded), boot_ranges=boot_ranges)
+        if result:
+            return result
     return filename

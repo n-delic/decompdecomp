@@ -34,6 +34,26 @@ DEBUG_TYPES_FILE = "debug_types.h"
 HEADER_CHECK = "int decomp_header_check;"  # a source that needs nothing but the header to compile
 
 
+def _same_or_extended_analysis(project, image, digest):
+    """Keep verified old entries when a new analysis only appends programs."""
+    info = json.loads(project['config']).get('rom', {})
+    expected = info.get('analysis_sha1')
+    if expected == digest:
+        return True
+    name = info.get('file')
+    if not isinstance(name, str) or not isinstance(expected, str):
+        return False
+    root = Path(project['root']).resolve()
+    path = root / name
+    try:
+        if not path.resolve().is_relative_to(root) or path.is_symlink():
+            return False
+        old = path.read_bytes()
+    except (OSError, ValueError, RuntimeError):
+        return False
+    return bool(old) and hashlib.sha1(old).hexdigest() == expected.lower() and image.startswith(old)
+
+
 @contextmanager
 def _reimport_claim(net, slug, name, agent):
     """Release only the temporary claim made for this saved-source check."""
@@ -244,7 +264,7 @@ class ImportMixin:
 
         analysis_sha1 = hashlib.sha1(rom).hexdigest()
         retained_reimport_snapshot = None
-        if reimport is not None and json.loads(reimport['config']).get('rom', {}).get('analysis_sha1') == analysis_sha1:
+        if reimport is not None and _same_or_extended_analysis(reimport, rom, analysis_sha1):
             old_rows = self.project_store(reimport['id']).all(
                 'SELECT name,rom_offset,vram,size,target,unit FROM functions WHERE project_id=? ORDER BY id', reimport['id'])
             if console.preserve_reimport_entries(self, reimport, res, rom, old_rows, log):

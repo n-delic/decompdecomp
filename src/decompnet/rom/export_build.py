@@ -596,7 +596,13 @@ def build() -> bool:
             if hashlib.sha1(original).hexdigest() != cartridge["sha1"]:
                 raise ValueError("original cartridge checksum differs from the fixed export target")
             reference = original
-            if cartridge.get("verified_blocks"):
+            if rows := cartridge.get("runtime_zlib"):
+                from decompnet.consoles.n64.runtime_zlib import verify_analysis
+
+                if not verify_analysis(original, out, rows):
+                    fail("Rebuilt code differs from the original runtime compressed programs.")
+                out = original
+            elif cartridge.get("verified_blocks"):
                 from decompnet.consoles.n64.code import verify_unpacked_analysis
 
                 if not verify_unpacked_analysis(original, out):
@@ -613,12 +619,6 @@ def build() -> bool:
 
                 if not verify_analysis(original, out):
                     fail("Rebuilt code differs from the original compressed archive members.")
-                out = original
-            elif rows := cartridge.get("runtime_zlib"):
-                from decompnet.consoles.n64.runtime_zlib import verify_analysis
-
-                if not verify_analysis(original, out, rows):
-                    fail("Rebuilt code differs from the original runtime compressed programs.")
                 out = original
             else:
                 out = rebuild_cartridge(out, original, cartridge["blocks"])
