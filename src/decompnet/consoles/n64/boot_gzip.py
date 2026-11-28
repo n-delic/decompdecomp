@@ -210,6 +210,7 @@ def find(rom, boot_ranges):
     from . import (
         boot_brs,
         boot_byte_lz,
+        boot_chunked_bit,
         boot_compact_mio,
         boot_erz,
         boot_huffman,
@@ -224,7 +225,7 @@ def find(rom, boot_ranges):
             or boot_byte_lz.find(rom, boot_ranges)
             or boot_lzss.find(rom, boot_ranges) or boot_huffman.find(rom, boot_ranges) or boot_refpack.find(rom, boot_ranges)
             or boot_two_bit.find(rom, boot_ranges) or boot_rnc2.find(rom, boot_ranges) or boot_erz.find(rom, boot_ranges)
-            or boot_rnx.find(rom, boot_ranges))
+            or boot_rnx.find(rom, boot_ranges) or boot_chunked_bit.find(rom, boot_ranges))
 
 
 def verify_analysis(rom, expanded, boot_ranges):
@@ -265,7 +266,7 @@ def inline_tables(text):
 def add(config, workdir, image, rom, boot_ranges, log):
     if not (programs := find(rom, boot_ranges)):
         return None
-    from . import boot_brs, boot_byte_lz, boot_erz, boot_lzss, boot_rnc2, boot_rnx, boot_two_bit
+    from . import boot_brs, boot_byte_lz, boot_chunked_bit, boot_erz, boot_lzss, boot_rnc2, boot_rnx, boot_two_bit
     from .boot_mapping import extend_startup_descriptor, extend_startup_trap
 
     extend_startup_trap(config, rom, log)
@@ -279,6 +280,10 @@ def add(config, workdir, image, rom, boot_ranges, log):
     two_bit = boot_two_bit.find(rom, boot_ranges) or boot_rnc2.find(rom, boot_ranges) or boot_erz.find(rom, boot_ranges)
     byte_lz = boot_byte_lz.find(rom, boot_ranges)
     rnx = boot_rnx.find(rom, boot_ranges)
+    chunked_bit = boot_chunked_bit.find(rom, boot_ranges)
+    if chunked_bit:
+        # Splat can mistake the lower replacement address for a size.
+        boot_chunked_bit.drop_impossible_bss(segments)
     repeated = {vram for vram, _, _ in programs if sum(vram == other for other, _, _ in programs) > 1}
     # Distinct starting addresses can still overlap when one program extends
     # into another overlay's slot; all programs then need scoped symbols.
@@ -305,7 +310,9 @@ def add(config, workdir, image, rom, boot_ranges, log):
             text = text[8:]
         sections = boot_lzss.startup_sections(text, vram) if boot_lzss.find(rom, boot_ranges) else None
         two_bit_start = boot_two_bit.code_start(text) if two_bit and any(vram == p[0] for p in two_bit) else None
-        if rnx and any(vram == p[0] for p in rnx):
+        if chunked_bit and any(vram == p[0] for p in chunked_bit):
+            parts = [[start, 'data', f'{name}_startup_data'], [start + boot_chunked_bit.code_start(vram, text), 'c', name]]
+        elif rnx and any(vram == p[0] for p in rnx):
             parts = [[start, 'data', f'{name}_startup_data'], [start + boot_rnx.CODE_START, 'c', name]]
         elif byte_lz and any(vram == p[0] for p in byte_lz):
             parts = [[start, 'data', f'{name}_startup_data'], [start + 64, 'c', name]]
@@ -320,7 +327,8 @@ def add(config, workdir, image, rom, boot_ranges, log):
         for before, after in inline_tables(text):
             parts.extend([[start + before, 'rodata', f'{name}_table_{before:X}'],
                           [start + after, 'c', f'{name}_text_{after:X}']])
-        parts.append([start + len(text), 'data', name])
+        if data:
+            parts.append([start + len(text), 'data', name])
         segment = dict(name=name, type='code', start=start, vram=vram, subsegments=parts)
         if overlapping or replacing:
             segment.update(exclusive_ram_id='replaced_boot' if replacing else f'gzip_slot_{vram:08X}', symbol_name_format=f'$VRAM_{name}',
