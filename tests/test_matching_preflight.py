@@ -618,3 +618,21 @@ def test_an_addition_that_does_not_help_is_not_combined():
     net._judge_with = judge
     preflight.run(net, proj, fn)
     assert state['calls'] == [['-O2'], ['-O2', '-fno-strength-reduce'], ['-O2', '-fno-common']]
+
+
+def test_a_kept_unknown_symbol_verdict_is_judged_again_once_the_symbol_has_a_name():
+    net, proj, fn, state = setup()
+    names = {}
+    net.symbols = lambda pid: SimpleNamespace(resolve=names.get)
+    judged = net._judge_with
+    def judge(proj, fn, toolchain, flags, source):
+        if 'value' not in names:
+            state['calls'].append(flags)
+            return False, SimpleNamespace(score=50), '`value` is not a known symbol'
+        return judged(proj, fn, toolchain, flags, source)
+    net._judge_with = judge
+    assert preflight.run(net, proj, fn)['link']['symbols'] == ['value']
+    assert preflight.run(net, proj, fn)['link'] and len(state['calls']) == 1  # still unknown: kept
+    names['value'] = 0x80001000
+    result = preflight.run(net, proj, fn)
+    assert not result.get('link') and result['best']['exact'] and len(state['calls']) > 1
