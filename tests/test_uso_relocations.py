@@ -1500,7 +1500,7 @@ def test_reimport_binding_retry_returns_only_exact_result(monkeypatch):
                         lambda source, header, candidate, target, separate: (source, header + '\nmarker'))
     monkeypatch.setattr(reimport_bindings, '_macro_variant', lambda *args: None)
     fn = {'name': 'work', 'project_id': 1, 'unit': 'unit', 'meta': json.dumps({'uso': {'native': True, 'section': 1}})}
-    assert reimport_bindings.retry(FakeNet(True), {}, fn, 'source') == 'source\n\nmarker'
+    assert reimport_bindings.retry(FakeNet(True), {}, fn, 'source') == 'source\n\n#ifndef PORT\n\nmarker\n#endif\n'
     assert reimport_bindings.retry(FakeNet(False), {}, fn, 'source') is None
     class BrokenNet(FakeNet):
         def _compile(self, project, header, source, fn):
