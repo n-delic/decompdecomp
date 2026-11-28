@@ -223,6 +223,25 @@ def test_a_static_body_inherits_only_an_unambiguous_overlay_scope():
     assert inherited_scope(body, segments) == ''
 
 
+def test_runtime_bank_scope_requires_observation_and_a_gap_past_an_overlay():
+    from decompnet.consoles.n64.runtime_scoped import separate_runtime_scope
+    from decompnet.rom.split import Segment
+
+    segments = [Segment('main', 0x100, 0x200, 0x80000000),
+                Segment('overlay', 0x300, 0x380, 0x80000200, 'slot')]
+    config = {'segments': [{'type': 'code', 'start': 0x100, 'vram': 0x80000000, 'bss_size': 0x40},
+                           {'type': 'bin', 'start': 0x200}, [0x1000]]}
+    body = (0x500, 0x510, 0x80000300)
+    bank = [(0x500, 0x580, 0x80000300)]
+    assert separate_runtime_scope(body, segments, bank, config) == 'runtime_bank_7FFFFE00'
+    assert separate_runtime_scope(body, segments, [], config) == ''
+    assert separate_runtime_scope((0x500, 0x510, 0x80000210), segments,
+                                  [(0x500, 0x580, 0x80000210)], config) == ''
+    assert separate_runtime_scope((0x500, 0x510, 0x80000110), segments,
+                                  [(0x500, 0x580, 0x80000110)], config) == ''
+    assert separate_runtime_scope(body, segments[:1], bank, config) == ''
+
+
 def test_missing_emulator_is_reported_without_starting_a_game(tmp_path, monkeypatch):
     from decompnet.consoles.n64 import emulator
 
