@@ -1288,7 +1288,9 @@ def _cut_ok(cfg, body):
         return False
     subs = [s for s in seg.get('subsegments', []) if isinstance(s, list) and len(s) >= 2]
     containing = max((s for s in subs if s[0] <= lo), key=lambda s: s[0], default=None)
-    return (containing is not None and containing[1] in ('c', 'bin') and
+    # A called body can live after the boot jump in one handwritten assembly
+    # unit. The staged split still has to reproduce it and every existing body.
+    return (containing is not None and containing[1] in ('c', 'bin', 'hasm') and
             not any(lo < s[0] < hi and s[1] != containing[1] for s in subs))
 
 
