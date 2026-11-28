@@ -161,6 +161,8 @@
   running (`PORT_ENTRIES`, the project's `runtime-entries.txt`), Play says which no function
   starts, and the next import takes them as entries, opening a gap between two overlays
   under the mapping of the code before it (two more on that game).
+  Alignment-based gap mappings need a unique best offset and at least two calls not already explained by a
+  mapped bank; ties and calls that might target an existing overlay remain for review.
   A project that exists gains them without a reimport: Code coverage review's **Add missed
   functions** (`find_missed_functions`, the console's `missed_functions`) runs the same
   search on the project's own splat config and adds what it finds as open functions and

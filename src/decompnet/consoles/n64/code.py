@@ -311,20 +311,27 @@ def complete_gaps(rom, taken, found, declared=(), entries=(), log=print):
     for (s0,e0,v0),(s1,_,v1) in zip(spans,spans[1:]):
         if e0<s1 and v0-s0!=v1-s1 and s1-e0<=0x10000 and any(v0+e0-s0<=a<v0+s1-s0 for a in entries):
             banks.append((e0,s1,v0+e0-s0))
-    slack=aligned_gaps(rom,spans,check=check)
+    deferred = []
+    slack=aligned_gaps(rom,spans,check=check,on_deferred=lambda lo,hi: deferred.append((lo,hi)))
+    if deferred:
+        examples = ', '.join(f'ROM {lo:#x}–{hi:#x}' for lo, hi in deferred[:3])
+        log(f'Left {len(deferred)} gap{"s" if len(deferred) != 1 else ""} with ambiguous alignment for review ({examples}): '
+            'calls also fit another offset or an existing bank.')
     banks+=slack
     table=mapped_data(spans,declared,len(rom))+[dict(rom_start=a,rom_end=b,vram=v) for a,b,v in slack]
     return loaded_code(rom,list(found),sorted(banks),taken,log,table_ranges=table,
                        what='gaps between code on one mapping',entries=entries)
 
 
-def aligned_gaps(rom,spans,reach=0x100,*,check=lambda:None):
+def aligned_gaps(rom,spans,reach=0x100,*,check=lambda:None,on_deferred=lambda *_:None):
     """(rom_start, rom_end, vram) of each gap between two code ranges on different mappings whose first bytes the
     code before it places a few bytes later than its own mapping does: an overlay's next function starts on an
     alignment boundary (16 bytes), so the bytes after its last listed function sit that much further on. Counted
     only when known code calls at least two frames of the gap at that offset (a call is the evidence, as a gap's
     mapping is otherwise unknown): a racing game's overlay tail of five functions, 5.7 KB with its constants, stayed
     raw bytes because its calls land 0x10 past where the code before it ends."""
+    from bisect import bisect_right
+
     from ...arch.mips_references import references
 
     gaps=[(e0,s1,v0+e0-s0) for (s0,e0,v0),(s1,_,v1) in zip(spans,spans[1:])
@@ -334,15 +341,28 @@ def aligned_gaps(rom,spans,reach=0x100,*,check=lambda:None):
     for a,b,v in spans:
         check()
         targets.update(t for t,_,kind in references(rom,a,b,v) if kind=='call')
+    # A call already explained by another mapped bank cannot independently
+    # select an overlapping gap's placement: it may call that known bank.
+    mapped = sorted((v, v+b-a) for a, b, v in spans)
+    starts, ends = [], []
+    for start, end in mapped:
+        starts.append(start)
+        ends.append(max(end, ends[-1] if ends else end))
+    unowned = {t for t in targets if (i := bisect_right(starts, t)-1) < 0 or t >= ends[i]}
     out=[]
     for lo,hi,vram in gaps:
         check()
-        best=None
+        best, offsets, best_hits = 0, [], set()
         for d in range(0,reach,4):
             hits={t for t in targets if vram+d<=t<vram+d+hi-lo
                   and is_frame(int.from_bytes(rom[lo+t-vram-d:lo+t-vram-d+4],'big'))}
-            if len(hits)>=2 and (best is None or len(hits)>best[0]):best=(len(hits),d)
-        if best:out.append((lo,hi,vram+best[1]))
+            if len(hits)>=2:
+                if len(hits)>best:best,offsets,best_hits=len(hits),[d],hits
+                elif len(hits)==best:offsets.append(d)
+        if len(offsets)==1 and len(best_hits & unowned)>=2:
+            out.append((lo,hi,vram+offsets[0]))
+        elif offsets:
+            on_deferred(lo,hi)
     return out
 
 
