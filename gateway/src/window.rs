@@ -105,6 +105,8 @@ pub struct Config {
     pub head_limit: Duration,
     /// Direct read-only SQLite answers for high-frequency window GETs (window_db.rs).
     pub db: Option<crate::window_db::WindowDb>,
+    /// Direct static web UI file serving (window_static.rs).
+    pub static_files: Option<crate::window_static::WindowStatic>,
 }
 
 pub struct Window {
@@ -114,6 +116,7 @@ pub struct Window {
     port: u16,
     upstream_port: u16,
     pub proxied: AtomicU64,
+    pub static_read: AtomicU64,
     pub db_read: AtomicU64,
     pub read: AtomicU64,
     pub passed: AtomicU64,
@@ -144,6 +147,7 @@ impl Window {
             port,
             upstream_port,
             proxied: AtomicU64::new(0),
+            static_read: AtomicU64::new(0),
             db_read: AtomicU64::new(0),
             read: AtomicU64::new(0),
             passed: AtomicU64::new(0),
@@ -155,6 +159,7 @@ impl Window {
             "port": self.port,
             "reads": self.config.reads.iter().map(|r| r.path.clone()).collect::<Vec<_>>(),
             "proxied": self.proxied.load(Ordering::Relaxed),
+            "read_by_static": self.static_read.load(Ordering::Relaxed),
             "read_by_db": self.db_read.load(Ordering::Relaxed),
             "read_by_reader": self.read.load(Ordering::Relaxed),
             "passed_to_app": self.passed.load(Ordering::Relaxed),
@@ -197,6 +202,14 @@ impl Window {
         }
         let query = pairs(uri.query().unwrap_or(""));
         self.config.reads.iter().any(|r| r.matches(uri.path(), &query))
+    }
+
+    /// Direct static web UI file answer, or None: falls back to the reader/app.
+    async fn from_static(&self, method: &Method, uri: &Uri, headers: &HeaderMap) -> Option<Response> {
+        let static_files = self.config.static_files.clone()?;
+        let (method, uri, headers) = (method.clone(), uri.clone(), headers.clone());
+        let work = tokio::task::spawn_blocking(move || static_files.answer(&method, &uri, &headers));
+        tokio::time::timeout(self.config.reader_limit, work).await.ok()?.ok()?
     }
 
     /// Direct read-only SQLite answer, or None: falls back to the reader/app.
@@ -297,6 +310,10 @@ pub async fn handle(State(window): State<Arc<Window>>, request: Request) -> Resp
     };
     let headers = window.forwarded(&parts.headers, &host, &app_host);
     window.proxied.fetch_add(1, Ordering::Relaxed);
+    if let Some(answer) = window.from_static(&parts.method, &parts.uri, &parts.headers).await {
+        window.static_read.fetch_add(1, Ordering::Relaxed);
+        return answer;
+    }
     if let Some(answer) = window.from_db(&parts.method, &parts.uri, &parts.headers).await {
         window.db_read.fetch_add(1, Ordering::Relaxed);
         return answer;
@@ -324,6 +341,7 @@ mod tests {
                 reader_limit: Duration::from_secs(1),
                 head_limit: Duration::from_secs(1),
                 db: None,
+                static_files: None,
             },
             9000,
         )

@@ -40,6 +40,7 @@ mod rom_project;
 mod verifier;
 mod window;
 mod window_db;
+mod window_static;
 
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
@@ -92,6 +93,7 @@ struct Config {
     window_reads: Vec<window::Read>,
     window_reader_limit: Duration,
     window_db: Option<String>,
+    window_static: Option<String>,
     /// Tools the agent may leave behind (release_function): after `ack_deadline` the agent hears "accepted" and
     /// moves on while the call keeps running in the app. Kept in `journal` until the app answers, so a restart
     /// loses none; the agent's later calls to the app wait for it, so they see it done; the app's answer comes
@@ -123,6 +125,7 @@ impl Config {
             window_reads: Vec::new(),
             window_reader_limit: Duration::from_secs(10),
             window_db: None,
+            window_static: None,
             ack_tools: HashSet::new(),
             ack_deadline: Duration::from_secs(3),
             journal: None,
@@ -169,6 +172,7 @@ impl Config {
                 }
                 "--window-reader-limit" => config.window_reader_limit = seconds(value()?)?,
                 "--window-db" => config.window_db = Some(value()?),
+                "--window-static" => config.window_static = Some(value()?),
                 "--ack-tools" => {
                     config.ack_tools = value()?.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect()
                 }
@@ -1192,6 +1196,10 @@ async fn gateway_main(mut args: Vec<String>) {
         let db = window_db::WindowDb::from_config(
             config.window_db.as_deref(),
             config.state.as_deref(),
+            window_secret.clone(),
+        );
+        let static_files = window_static::WindowStatic::from_config(
+            config.window_static.as_deref(),
             window_secret,
         );
         let config = window::Config {
@@ -1201,6 +1209,7 @@ async fn gateway_main(mut args: Vec<String>) {
             reader_limit: config.window_reader_limit,
             head_limit: config.upstream_limit,
             db,
+            static_files,
         };
         let proxy = match window::Window::new(config, port) {
             Ok(proxy) => Arc::new(proxy),
