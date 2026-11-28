@@ -551,7 +551,7 @@ def linker_script(provides: dict[str, str], placed: list[tuple[int, int, str]], 
                 # A scoped overlay may define an automatic name locally in
                 # one object while another object refers to it. Its suffix
                 # identifies the bank; the first address is still the target.
-                base = re.sub(r'_(?:code|program)_[0-9A-Fa-f]{8}(?:_[0-9]+)?$', '', name)
+                base = re.sub(r'_(?:code|program)_[0-9A-Fa-f]{8}(?:_[0-9A-Fa-f]+)?$', '', name)
                 address = AUTO_NAME.fullmatch(base) or re.fullmatch(r"\.L([0-9A-Fa-f]{8})(?:_[\w]+)?", name)
                 if address:
                     auto_addresses[name] = int(address.group(1), 16)
