@@ -1424,8 +1424,8 @@ def test_reimport_macro_retry_separates_only_complete_placeholder_calls():
     from decompnet.consoles.n64.reimport_bindings import _macro_variant
 
     fn = {'name': 'work', 'target': bytes.fromhex('0c0000000c000000')}
-    source = 'int work(void) { return CALL(first)(1) + CALL(second)(2); } /* CALL(comment) */'
-    header = 'extern int D_80000000();\n#define CALL(f) D_80000000\n'
+    source = 'int work(void) { return FCALL(first)(1) + CALL(second)(2); } /* CALL(comment) */'
+    header = 'extern int D_80000000();\n#define CALL(f) D_80000000\n#define FCALL(f) D_80000000\n'
     info = {'section': 0x1234, 'relocs': [[0, 4, 2], [4, 4, 3]]}
     candidate = SimpleNamespace(relocs=[SimpleNamespace(offset=0, type=4, symbol='D_80000000'),
                                         SimpleNamespace(offset=4, type=4, symbol='D_80000000')])
