@@ -113,6 +113,26 @@ def pair_old_functions(rows, functions) -> dict:
     return paired
 
 
+def _preserve_moved_references(source, moved, symbols):
+    """Give saved C stable names for symbols whose new mapping changed their address."""
+    from ..function_names import rename_identifiers
+
+    replacements = {}
+    for name, address in moved.items():
+        if name not in source or rename_identifiers(source, {name: '__reimport_probe'}) == source:
+            continue
+        stem = f'reimport_ref_{address:08X}'
+        alias = stem
+        suffix = 1
+        while alias in symbols.by_name and symbols.by_name[alias].address != address:
+            alias = f'{stem}_{suffix}'
+            suffix += 1
+        if alias not in symbols.by_name:
+            symbols.add(Symbol(alias, address, 0, 'data'), alias=True, reindex=False)
+        replacements[name] = alias
+    return rename_identifiers(source, replacements) if replacements else source
+
+
 def _recreated_matches(net, pid, gone, compatible_analysis):
     """Keep and rejudge saved C if boundary repair recreated the exact entry."""
     if not compatible_analysis:
@@ -401,6 +421,7 @@ class ImportMixin:
                     arch=console.arch,big_endian=picked.big_endian,root=workdir,config=cfg,
                     existing=reimport["id"] if reimport is not None else None) as (db,pid):
                 same_analysis = False
+                moved_symbols = {}
                 if reimport is None:
                     old_functions, gone, old_names, old_types = {}, {}, [], {}
                 else:
@@ -458,6 +479,10 @@ class ImportMixin:
                             used_ids.add(old['id'])
                     paired = {o["id"] for o in old_functions.values()}
                     gone = {r["name"]: r for r in rows if r["id"] not in paired}
+                    if same_analysis:
+                        moved_symbols = {r['name']: r['address'] for r in db.execute(
+                            'SELECT name,address FROM symbols WHERE project_id=?', (pid,))
+                            if r['name'] in symbols.by_name and symbols.by_name[r['name']].address != r['address']}
                     # the names agents gave (functions and data), every one: matched C calls them by those names
                     old_names = [(r["address"], r["name"], r["size"], r["kind"]) for r in db.execute(
                         "SELECT name, address, size, kind FROM symbols WHERE project_id=? ORDER BY rowid", (pid,))
@@ -589,9 +614,21 @@ class ImportMixin:
                             "UPDATE functions SET size=?,n_insns=?,target=?,relocs=?,asm=?,unit=?,vram=?,rom_offset=?,meta=?,status=? "
                             "WHERE id=?",
                             (fn.size, n_insns, target.code, relocs, asm, unit, fn.vram, fn.rom, meta, status, old["id"]))
+                        source = old['matched_source'] if status == 'matched' else old['best_source'] if status == 'open' else None
+                        rebound = _preserve_moved_references(source, moved_symbols, symbols) if source else source
+                        if source and rebound != source:
+                            agent_id = old['matched_agent_id'] if status == 'matched' else old['best_agent_id']
+                            # Keep the original before rejudging; a stopped import must not lose saved C.
+                            db.execute('INSERT INTO notes(project_id,function_id,text,created_at) VALUES(?,?,?,?)',
+                                       (pid, old['id'], f"[{old['name']} before reimport: saved C]\n{source}", now))
+                            db.execute("UPDATE functions SET status='open',matched_source=NULL,matched_agent_id=NULL,"
+                                       "matched_at=NULL,best_source=?,best_agent_id=?,best_score=? WHERE id=?",
+                                       (rebound, agent_id, max(1, n_insns)*100, old['id']))
+                            rejudge.append((old['name'], rebound, agent_id))
+                            status = 'open'
                         if status != old["status"]:
                             db.execute("DELETE FROM claims WHERE function_id=?", (old["id"],))
-                        preserved += old["status"] == "matched" and bool(old["matched_source"])
+                        preserved += status == 'matched' and bool(old["matched_source"])
                     else:
                         source = agent_id = None
                         if (old is not None and (old['target'] == target.code
