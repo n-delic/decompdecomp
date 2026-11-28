@@ -524,3 +524,31 @@ def test_indexed_image_directory_triggers_bounded_observation(tmp_path, monkeypa
     result = runtime_textures.observe(b'image', rom, sha1(rom.read_bytes()).hexdigest())
     assert {asset['offset'] for asset in result} == {1, 100}
     assert calls[-1][0] == 8000 and calls[-1][1]['timeout'] == 120
+
+
+def test_edl_meshes_merge_between_runtime_captures(tmp_path, monkeypatch):
+    from decompassets.n64 import runtime_packed_graphics
+
+    rom = tmp_path / 'game.z64'
+    rom.write_bytes(bytes.fromhex('80371240') + b'original')
+    monkeypatch.setattr(runtime_textures.emulator, 'installed', lambda: tmp_path)
+
+    def run(path, vis, *, dumps, **kwargs):
+        for dump in dumps.values():
+            dump.write_bytes(b'game' if kwargs.get('inputs') else b'title')
+        return runtime_textures.emulator.Run(vis=vis)
+
+    def packed(image, snapshots, *, progress):
+        first = dict(name='Mesh 1', source=[1, 2, 3, 4], faces=[[0, 1, 2]], vertices=4, triangles=1)
+        second = dict(name='Mesh 2', source=[5, 6, 7, 8], faces=[[0, 1, 2]], vertices=4, triangles=1)
+        meshes = [first, second] if b'game' in snapshots else [first]
+        return [dict(offset=100, layout='runtime-edl-model', meshes=meshes,
+                     vertices=sum(m['vertices'] for m in meshes), triangles=sum(m['triangles'] for m in meshes))]
+
+    monkeypatch.setattr(runtime_textures.emulator, 'run', run)
+    monkeypatch.setattr(detector, 'regions', lambda image, snapshots: [dict(offset=1, size=1, layout='texture')])
+    monkeypatch.setattr(runtime_packed_graphics, 'regions', packed)
+    assets = runtime_textures.observe(b'image', rom, sha1(rom.read_bytes()).hexdigest())
+    model = next(asset for asset in assets if asset['layout'] == 'runtime-edl-model')
+    assert [mesh['source'] for mesh in model['meshes']] == [[1, 2, 3, 4], [5, 6, 7, 8]]
+    assert (model['vertices'], model['triangles']) == (8, 2)
