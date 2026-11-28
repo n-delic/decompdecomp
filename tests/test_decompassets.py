@@ -184,3 +184,22 @@ def test_chunked_indexed_image_reaches_console_preview():
     result = get("n64").asset_preview(packed, asset, {})
     assert result["media"] == "image"
     assert (result["details"]["width"], result["details"]["height"]) == (8, 8)
+
+
+def test_chunked_runtime_mesh_reaches_console_preview():
+    import struct
+
+    from decompnet.consoles import get
+
+    data = bytearray(0x200)
+    for i, point in enumerate(((0, 0, 0), (100, 0, 0), (0, 100, 0), (0, 0, 100))):
+        struct.pack_into(">3hH2h4B", data, 0x100+i*16, *point, 0, i, i, 20+i, 40+i, 60+i, 255)
+    for i, command in enumerate(((0x0400103f, 0x01000000), (0xb1000204, 0x00000406),
+                                 (0xb1000602, 0x00020604))):
+        struct.pack_into(">II", data, 0x20+i*8, *command)
+    chunks = [data[i:i+127] for i in range(0, len(data), 127)]
+    packed = b"12345" + b"".join(bytes([0x80 | len(chunk)]) + chunk for chunk in chunks) + b"\0"
+    asset = dict(layout="runtime-chunked-model", offset=0, size=len(packed), expanded=len(data),
+                 label="Local mesh", meshes=[dict(command=0x20, command_size=24, vertex=0x100)])
+    result = get("n64").asset_preview(packed, asset, {})
+    assert result["media"] == "model" and result["triangles"] == 4
