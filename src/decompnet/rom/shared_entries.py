@@ -4,7 +4,7 @@ from collections import Counter, defaultdict
 
 # These instructions have no control transfer or delay slot. More complex
 # prefixes remain visible to boundary review until they can be proven safe.
-_STRAIGHT = frozenset(('addiu', 'lui', 'lwc1', 'add.s', 'lw', 'sw', 'sll', 'addu', 'subu', 'sh', 'ori'))
+_STRAIGHT = frozenset(('addiu', 'lui', 'lwc1', 'add.s', 'lw', 'sw', 'sll', 'srl', 'addu', 'subu', 'sh', 'ori'))
 
 
 def _straight(line):

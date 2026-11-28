@@ -162,3 +162,14 @@ def test_long_straight_prefix_and_called_tail_keep_both_entries():
     assert intentional([prefix, tail, caller], console, segments)['prefix']['tail'] == 'tail'
     branch = function('prefix', 0x80001000, 0x100, [(0x10000000, 'beq'), *[(0, 'nop')]*5])
     assert not intentional([branch, tail, caller], console, segments)
+
+
+def test_right_shift_prefix_requires_independent_calls_to_both_entries():
+    console = SimpleNamespace(arch='mips', big_endian=True, boundary_reason=lambda code: None)
+    prefix = function('prefix', 0x80001000, 0x100, [(0x00170a82, 'srl')])
+    tail = function('tail', 0x80001004, 0x104, [(0x03e00008, 'jr'), (0, 'nop')])
+    caller = function('caller', 0x80002000, 0x200, [(0x0c000400, 'jal'), (0x0c000401, 'jal')])
+    segments = [Segment('one', 0x100, 0x200, 0x80001000)]
+    assert intentional([prefix, tail, caller], console, segments)['prefix']['tail'] == 'tail'
+    caller.lines.pop()
+    assert not intentional([prefix, tail, caller], console, segments)
