@@ -638,6 +638,19 @@ class ImportMixin:
                             source = old['matched_source'] if old['status'] == 'matched' else (
                                 old['best_source'] if same_analysis or old['vram'] != fn.vram else None)
                             if source:
+                                # Metadata can change while the body stays byte-identical. Keep the
+                                # source's private header for its required rejudge, as for unchanged targets.
+                                if (old['target'] == target.code and old['unit'] and
+                                        db.execute('SELECT 1 FROM context_versions WHERE project_id=? AND unit=? LIMIT 1',
+                                                   (pid, old['unit'])).fetchone()):
+                                    unit = old['unit']
+                                if (old['status'] == 'matched' and old['target'] == target.code
+                                        and old['vram'] == fn.vram and not previous_meta.get('uso')):
+                                    rebound = console.rebind_reimport_source(fn, source)
+                                    if rebound != source:
+                                        db.execute('INSERT INTO notes(project_id,function_id,text,created_at) VALUES(?,?,?,?)',
+                                                   (pid, old['id'], f"[{old['name']} before reimport: saved C]\n{source}", now))
+                                        source = rebound
                                 agent_id = old['matched_agent_id'] if old['status'] == 'matched' else old['best_agent_id']
                                 rejudge.append((old['name'], source, agent_id))
                         if not source and (saved := old['matched_source'] or old['best_source']):

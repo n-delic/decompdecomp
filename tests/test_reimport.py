@@ -487,6 +487,9 @@ def test_reimport_keeps_agents_names_and_judges_c_whose_references_were_read_ane
             "VALUES(?,?,?,?,?,?,?,?,?,?)",
             (pid, "race_update", 4, 1, bytes.fromhex("24020001"), "[]", "matched",
              "void race_update(void) { gRecords = 0; }", helper.id, 0x80000000)).lastrowid
+        db.execute("UPDATE functions SET unit='private_source' WHERE id=?", (fid,))
+        db.execute("INSERT INTO context_versions(project_id,version,header,message,created_at,unit) "
+                   "VALUES(?,1,'private types','source',1,'private_source')", (pid,))
         for name, address, size, kind in (("gRecords", 0x800C35A0, 0, "data"), ("gSlotState", 0x800C35A0, 0, "data"),
                                           ("gLapCount", 0x800D0000, 0, "bss"), ("gStreamState", 0x800C02AE, 0, "bss"),
                                           ("stream_state", 0x800C02AE, 0, "bss")):
@@ -548,8 +551,9 @@ def test_reimport_keeps_agents_names_and_judges_c_whose_references_were_read_ane
     assert "D_800C02AE" not in sizes
     assert names["gLapCount"] == 0x800D0000 and names["D_800CFFF0"] == 0x800CFFF0  # inside a sized block
     assert judged == [("claude-helper", "race_update", "void race_update(void) { gRecords = 0; }")]
-    row = net.store.one("SELECT status, best_source FROM functions WHERE id=?", fid)
+    row = net.store.one("SELECT status, best_source, unit FROM functions WHERE id=?", fid)
     assert row["status"] == "open" and row["best_source"] == "void race_update(void) { gRecords = 0; }"
+    assert row["unit"] == "private_source"
     assert any("0 of 1 still match" in m for m in messages)
 
 

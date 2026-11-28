@@ -1397,3 +1397,24 @@ def test_uso_desktop_and_shared_queue_use_rust(tmp_path, monkeypatch, toolchain)
         assert trace.read_text().splitlines() == ["False", "False", "True"]
     finally:
         pool.close()
+def test_native_reimport_rebinds_only_unambiguous_jal_references():
+    from types import SimpleNamespace
+
+    from decompnet.consoles.n64.uso_match import rebind_native_calls
+
+    def jal(address):
+        return SimpleNamespace(word=0x0C000000 | ((address >> 2) & 0x03FFFFFF))
+
+    fn = SimpleNamespace(name='function', vram=0x80001000,
+                         lines=[jal(0x80002000), jal(0x80003000)],
+                         uso={'native': True, 'section': 0x1234, 'relocs': [[0, 4, 3], [4, 4, 7]],
+                              'local_calls': [[0, 3, 0x2000]]})
+    source = 'void f(void) { D_80002000(); func_80003000(); } /* D_80002000 */'
+    assert rebind_native_calls(fn, source) == (
+        'void f(void) { uso_1234_sym_3_text_2000(); uso_1234_sym_7(); } /* D_80002000 */')
+    fn.lines[1] = jal(0x80002000)
+    assert rebind_native_calls(fn, source) == source
+    fn.uso['native'] = False
+    assert rebind_native_calls(fn, source) == source
+
+
