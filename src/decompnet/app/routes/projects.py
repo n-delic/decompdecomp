@@ -706,8 +706,10 @@ def register(app: App) -> None:
         return {"job":jobs.start('reviewed-code-recovery',lambda log:run(net,slug,data.get('changes'),log))}
 
     def g_code_audit(slug, request, data):
-        from ..code_audit_reviews import decorated, load
-        return decorated(load(net,net.project_row(slug)['id']))
+        from ..code_audit_reviews import page
+        try:number=int(request.query_params.get('page','0'))
+        except ValueError:raise NetworkError('Choose a valid code-audit page.')
+        return page(net,net.project_row(slug)['id'],number,request.query_params.get('show_reviewed')=='1')
 
     def p_code_audit_review(slug, request, data):
         from ..code_audit_reviews import review
