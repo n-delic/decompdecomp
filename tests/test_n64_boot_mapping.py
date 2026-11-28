@@ -254,3 +254,24 @@ def test_printable_word_after_boot_trap_precedes_called_frame(tmp_path, invalid)
     assert extend_startup_descriptor(path,rom,log=lambda _:None) == (invalid == 'none')
     entry, main, *_ = segments_from_config(path)
     assert entry.rom_end == main.rom_start == (0x1084 if invalid == 'none' else 0x1080)
+
+
+@pytest.mark.parametrize('case', ['valid', 'named_trap', 'pointer', 'branch', 'bad_table', 'bad_text'])
+def test_startup_trap_before_code_pointer_table(tmp_path, case):
+    from decompnet.consoles.n64.boot_mapping import extend_startup_trap, preserved_startup_trap
+
+    path, rom, _, _ = layout(tmp_path)
+    image = bytearray(rom);at=0x1080;vram=at+0x7ffff400
+    target = vram if case == 'named_trap' else vram+0x100
+    call = 0x0c000000 | ((target >> 2) & 0x3ffffff)
+    struct.pack_into('>4I', image, at-8, call, 0, 0x0001008d, 0)
+    entries = [vram+0x100, vram+0x104, vram+0x108, vram+0x10c]
+    if case == 'bad_table':entries[2] = 0x12345678
+    struct.pack_into('>4I', image, at+8, *entries)
+    image[at+24:at+37] = b'folder/file\0\0' if case != 'bad_text' else bytes(13)
+    if case == 'pointer':struct.pack_into('>I', image, 0x1010, vram+4)
+    if case == 'branch':struct.pack_into('>I', image, at+48, 0x08000000 | ((vram >> 2) & 0x3ffffff))
+    assert extend_startup_trap(path, image, log=lambda *_: None) == (case == 'valid')
+    if case == 'valid':
+        cfg = yaml.safe_load(path.read_text())
+        assert preserved_startup_trap(cfg, image, at, vram, 4)

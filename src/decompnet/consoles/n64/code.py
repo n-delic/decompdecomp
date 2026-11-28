@@ -732,7 +732,7 @@ def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_rep
     found = recover_scheduled_mapping_entries(rom, found, taken, log)
     found = bridge_loaded_prologues(rom, found, loaded.get('segments', ()), taken, log)
     recover(config, rom, found, log)
-    extend_startup_trap(config, rom, log)
+    extend_startup_trap(config, rom, log, found=found)
     extend_startup_descriptor(config, rom, log)
     extend_startup_data(config, rom, log)
     mark_boot_version(config, rom, log)
