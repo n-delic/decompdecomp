@@ -762,6 +762,25 @@ def test_multiword_alignment_between_a_return_and_an_aligned_frame(protect, fill
     assert [fn.rom for fn in result] == ([0,8,16] if protect else [0,16])
 
 
+@pytest.mark.parametrize('independent', [False, True])
+def test_audio_payload_pointer_does_not_protect_alignment(independent):
+    import struct
+
+    from decompassets.n64 import bolt
+
+    words = [0x03e00008, 0, 0x24087fff, 0x256b0001]+BODY
+    image, functions, segments = fixture(words, cuts=(0,8,16,len(words)*4))
+    address = (BASE+8).to_bytes(4, 'big')
+    sample = address+bytes(28)
+    bank = b''.join(struct.pack('>BBHII', 2, 4, 22050, len(sample), 0)+sample for _ in range(3))
+    header = b'BOLT'+bytes((1, 2, 3, 0, 4, 5, 100, 1))+bytes(4)
+    archive = (header+bolt.ENTRY.pack(8, 0, 0, 1, len(bank), 32, 0)
+               +bolt.ENTRY.pack(8, 0, 0, 25, len(bank), 48, 1)+bank)
+    image += archive+(address if independent else b'')
+    result = repair(functions, [], image, consoles.get('n64'), segments)
+    assert any(fn.rom == 8 for fn in result) == independent
+
+
 @pytest.mark.parametrize('protect', [False, True])
 def test_long_alignment_before_a_directly_called_entry(protect):
     call = 0x0c000000 | ((BASE+32) >> 2) & 0x3ffffff

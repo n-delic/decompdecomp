@@ -140,3 +140,31 @@ def test_framed_function_after_a_found_one_in_a_directory_bank_is_recovered():
     found = [(0x200,0x208,0x80100000)]
     grown = raw_slots.recover_gaps(bytes(image),slots,found,[(0,128,0x80000000)],lambda _: None)
     assert (0x208,0x220,0x80100008) in grown and (0x200,0x208,0x80100000) in grown
+
+
+def test_bolt_audio_payload_is_not_pointer_evidence():
+    import struct
+
+    from decompassets.n64 import bolt
+    from decompnet.consoles.n64.packed_pointers import audio_payloads
+    from decompnet.rom.automatic_boundaries import _discard_payload_pointers
+
+    address = 0x80001000
+    sample = address.to_bytes(4, 'big')+bytes(28)
+    bank = b''.join(struct.pack('>BBHII', 2, 4, 22050, len(sample), 0)+sample for _ in range(3))
+    header = b'BOLT'+bytes((1, 2, 3, 0, 4, 5, 100, 1))+bytes(4)
+    root = bolt.ENTRY.pack(8, 0, 0, 1, len(bank), 32, 0)
+    leaf = bolt.ENTRY.pack(8, 0, 0, 25, len(bank), 48, 1)
+    image = header+root+leaf+bank
+    spans = audio_payloads(image, [])
+    assert len(spans) == 3
+    assert _discard_payload_pointers({address}, image, 'big', spans) == set()
+    # A separate literal pointer still protects the entry.
+    with_pointer = image+address.to_bytes(4, 'big')
+    assert _discard_payload_pointers({address}, with_pointer, 'big', spans) == {address}
+    assert not audio_payloads(image[:-1], [])
+    from types import SimpleNamespace
+    code = SimpleNamespace(rom_start=spans[0][0], rom_end=spans[0][1])
+    assert len(audio_payloads(image, [code])) == 2
+    other_kind = header+root+bolt.ENTRY.pack(8, 0, 0, 18, len(bank), 48, 1)+bank
+    assert not audio_payloads(other_kind, [])
