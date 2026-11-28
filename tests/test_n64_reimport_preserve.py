@@ -1,5 +1,6 @@
 """A reimport must not lose safe existing functions that a new split missed."""
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -60,6 +61,36 @@ def test_preserve_does_not_restore_a_proven_data_range_as_code(tmp_path, monkeyp
     # An ordinary data label alone is weaker evidence: keep the old entry.
     result.data[0].boundary_proven = False
     assert reimport_preserve.preserve(None, None, result, image, [row], lambda *_: None) == 1
+
+
+@pytest.mark.parametrize('case',['valid','outside_call','outside_inner','old_padding','entered_padding','pointer',
+                                  'inner_pointer','changed','not_joined','live_tail'])
+def test_reimport_keeps_only_a_still_proven_join(case):
+    base = 0x80001000
+    raw = bytes.fromhex('10000001 00000000 03e00008 00000000')
+    image = bytearray(bytes(0x100)+raw+bytes(0x40))
+    head = split.function_from_bytes('head',raw[:8],0x100,base,'code')
+    tail = split.function_from_bytes('tail',raw[8:],0x108,base+8,'code')
+    functions = [head,tail]
+    if case in ('outside_call','outside_inner','old_padding','entered_padding'):
+        word = 0x0c000000 | (((base+8+(4 if case=='outside_inner' else 0))>>2)&0x3ffffff)
+        image[0x120:0x128] = word.to_bytes(4,'big')+bytes(4)
+        functions.append(split.function_from_bytes('caller',bytes(image[0x120:0x128]),0x120,base+0x20,'code'))
+    if case in ('pointer','inner_pointer'):image[0x140:0x144] = (base+8+(4 if case=='inner_pointer' else 0)).to_bytes(4,'big')
+    old = [dict(name='head',rom_offset=0x100,vram=base,size=16,target=raw,
+                meta=json.dumps({'boundary_decision':{'action':'join_previous' if case!='not_joined' else 'keep'}})),
+           dict(name='tail',rom_offset=0x108,vram=base+8,size=8,target=raw[8:] if case!='changed' else bytes(8),
+                gone_mark=None if case=='live_tail' else 1,meta=json.dumps({'boundary_absorbed_by':'head'}))]
+    if case in ('old_padding','entered_padding'):
+        old.append(dict(name='caller',rom_offset=0x120,vram=base+0x20,size=8,target=bytes(image[0x120:0x128]),
+                        gone_mark=1,meta=json.dumps({'boundary_classification':'padding',
+                                                     'boundary_decision':{'action':'trim_start'}})))
+    if case=='entered_padding':image[0x140:0x144]=(base+0x20).to_bytes(4,'big')
+    result = SimpleNamespace(functions=functions,data=[])
+    joined = case in ('valid','old_padding')
+    assert reimport_preserve._joined_bodies(result,bytes(image),old) == joined
+    assert any(fn.name=='tail' for fn in result.functions) != joined
+    assert result.retained_join_archives == ({'tail'} if joined else set())
 
 
 @pytest.mark.parametrize('case', ['partial', 'other_mapping', 'unproven'])

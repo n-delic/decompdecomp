@@ -271,7 +271,7 @@ class ImportMixin:
         compatible_analysis = reimport is not None and _same_or_extended_analysis(reimport, rom, analysis_sha1)
         if compatible_analysis:
             old_rows = self.project_store(reimport['id']).all(
-                'SELECT name,rom_offset,vram,size,target,unit FROM functions WHERE project_id=? ORDER BY id', reimport['id'])
+                'SELECT name,rom_offset,vram,size,target,unit,meta,gone_mark FROM functions WHERE project_id=? ORDER BY id', reimport['id'])
             if console.preserve_reimport_entries(self, reimport, res, rom, old_rows, log):
                 retained_reimport_snapshot = [tuple(row) for row in old_rows]
         if reimport is not None and console.recompiler is not None:
@@ -405,7 +405,7 @@ class ImportMixin:
                     old_functions, gone, old_names, old_types = {}, {}, [], {}
                 else:
                     if retained_reimport_snapshot is not None:
-                        current = db.execute('SELECT name,rom_offset,vram,size,target,unit FROM functions '
+                        current = db.execute('SELECT name,rom_offset,vram,size,target,unit,meta,gone_mark FROM functions '
                                              'WHERE project_id=? ORDER BY id', (pid,)).fetchall()
                         if [tuple(row) for row in current] != retained_reimport_snapshot:
                             raise NetworkError('The project entries changed during reimport. Retry with the current project.')
@@ -473,6 +473,9 @@ class ImportMixin:
                 shared_entries = intentional(res.functions, console, res.segments)
                 lost = []
                 for name, old in gone.items():
+                    if name in getattr(res, 'retained_join_archives', ()):
+                        # Keep the absorbed row and its ID for boundary history/undo.
+                        continue
                     for table in ("claims", "attempts", "twin_misses"):
                         db.execute(f"DELETE FROM {table} WHERE function_id=?", (old["id"],))
                     db.execute("UPDATE notes SET function_id=NULL, text=? || COALESCE(text, '') "
