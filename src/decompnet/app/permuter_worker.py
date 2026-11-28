@@ -416,7 +416,9 @@ def follow_symbol_edits(net) -> None:
     The worker has an engine of its own, and a rename in the app drops only the app's cache. The worker then judged
     the renamed saved C against the old names, so the Deep Permuter stopped with "Resolve the addresses of
     <the new name>" until the worker was replaced."""
-    read, seen = net.symbols, {}
+    read, seen = getattr(net, "symbols", None), {}
+    if read is None:  # an engine with no symbol table has none to refresh
+        return
 
     def symbols(project_id: int):
         store = net.project_store(project_id)
