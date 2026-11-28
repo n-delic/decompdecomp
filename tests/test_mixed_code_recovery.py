@@ -106,6 +106,28 @@ def test_refine_keeps_a_long_scheduled_prefix_with_its_frame(tmp_path):
     assert 0x40 in cuts and 0x90 in cuts and 0x74 not in cuts
 
 
+@pytest.mark.parametrize('reference', ['none', 'call', 'branch', 'pointer'])
+def test_refine_keeps_unreferenced_call_continuations_in_one_unit(tmp_path, reference):
+    path, console = project(tmp_path)
+    image = bytearray((tmp_path/'rom.bin').read_bytes())
+    call = 0x0c000000 | ((BASE+0x40) >> 2 & 0x3ffffff)
+    image[0x18:0x20] = packed([call, 0])
+    image[0x20:0x28] = packed([0x24040001, 0x24050002])
+    if reference == 'call':
+        image[0x10:0x14] = packed([0x0c000000 | ((BASE+0x20) >> 2 & 0x3ffffff)])
+    if reference == 'branch':
+        image[0x10:0x14] = packed([0x10000003])
+    if reference == 'pointer':
+        image[-4:] = packed([BASE+0x20])
+    (tmp_path/'rom.bin').write_bytes(image)
+    asm(tmp_path/'asm/nonmatchings/unit/caller.s', list(struct.unpack('>8I', image[:0x20])), 0)
+    asm(tmp_path/'asm/nonmatchings/unit/continuation.s', list(struct.unpack('>2I', image[0x20:0x28])), 0x20)
+    asm(tmp_path/'asm/nonmatchings/unit/dropped.s', list(struct.unpack(f'>{(len(image)-0x28)//4}I', image[0x28:])), 0x28, raw=True)
+    assert mixed_code.refine(path, tmp_path, 'rom.bin', console, log=lambda _: None)
+    cuts = [part[0] for part in yaml.safe_load(path.read_text())['segments'][0]['subsegments']]
+    assert (0x20 in cuts) == (reference != 'none')
+
+
 @pytest.mark.parametrize('console_id',['n64','ps','ps2','psp'])
 def test_only_called_unowned_text_gets_new_source_boundaries(tmp_path,console_id):
     console=get(console_id)

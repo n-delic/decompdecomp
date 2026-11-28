@@ -195,6 +195,21 @@ def refine(config, workdir, image, console, log=print, *, visited=None):
             accepted.append((offset,offset+size,row))
     # Competing called frames must not cut through each other.
     accepted=[a for a in accepted if not any(a is not b and a[0]<b[1] and b[0]<a[1] for b in accepted)]
+    # Splat can emit a call's continuation as a separate oversized target. If
+    # it has no independent reference, pinning both targets as source units
+    # would make the split permanent before boundary repair can inspect it.
+    continuations = set()
+    if console.arch == 'mips':
+        known_starts = {(fn.rom, fn.vram) for fn in known}
+        called = {offset for offset, _, _ in calls}
+        for fn in known:
+            end = fn.rom + fn.size
+            address = fn.vram + fn.size
+            if (len(fn.lines) >= 2 and fn.lines[-2].word >> 26 == 3
+                    and (end, address) in known_starts and end not in called
+                    and address not in transfers and 0 <= address < 0x100000000
+                    and address.to_bytes(4, 'big' if console.big_endian else 'little') not in rom):
+                continuations.add((end, address))
     changed=0
     anchored=set()
     for start,end,(_,_,segment,raw,sub) in accepted:
@@ -211,12 +226,14 @@ def refine(config, workdir, image, console, log=print, *, visited=None):
                     if not isinstance(part,list) or len(part)<2 or part[1]!='c':continue
                     limit=next((s[0] for s in raw['subsegments'][i+1:] if isinstance(s,list) and s),segment.rom_end)
                     if part[0]<=fn.rom<fn.rom+fn.size<=limit:
-                        cuts.add(fn.rom)
+                        if (fn.rom, fn.vram) not in continuations:
+                            cuts.add(fn.rom)
                         end = fn.rom+fn.size
                         # A new source unit beginning with a NOP can turn padding or a delay slot
                         # into a spurious one-word function. Preserve a separately known entry.
-                        if (rom[end:end+4] != bytes(4) or any(other.rom == end for other in known)
-                                or any(offset == end for offset, _, _ in calls)):
+                        if ((end, fn.vram+fn.size) not in continuations
+                                and (rom[end:end+4] != bytes(4) or any(other.rom == end for other in known)
+                                     or any(offset == end for offset, _, _ in calls))):
                             cuts.add(end)
                         break
         for at in sorted(cuts):
