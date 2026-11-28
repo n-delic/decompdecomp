@@ -14,6 +14,24 @@ from decompnet.network import NetworkError
 from decompnet.rom import Picked, split
 
 
+def test_reimport_preserves_moved_symbol_bindings_in_saved_c():
+    from decompnet.app.engine.importing import _preserve_moved_references
+    from decompnet.rom.symbols import Symbol, SymbolTable
+
+    symbols = SymbolTable()
+    symbols.add(Symbol('old_func', 0x80002000, 8, 'func'))
+    symbols.add(Symbol('reimport_ref_80001000', 0x80003000, 4, 'data'))
+    source = 'extern int old_func; /* old_func */\nint f(void) { return old_func; }\n'
+    result = _preserve_moved_references(source, {'old_func': 0x80001000}, symbols)
+    assert result == ('extern int reimport_ref_80001000_1; /* old_func */\n'
+                      'int f(void) { return reimport_ref_80001000_1; }\n')
+    assert symbols.by_name['reimport_ref_80001000_1'].address == 0x80001000
+    assert symbols.by_name['old_func'].address == 0x80002000
+    before = set(symbols.by_name)
+    assert _preserve_moved_references('/* old_func */ "old_func"', {'old_func': 0x80001000}, symbols) == '/* old_func */ "old_func"'
+    assert set(symbols.by_name) == before
+
+
 def test_simultaneous_reimports_recheck_only_their_own_saved_sources(monkeypatch):
     from decompnet.app.engine.importing import ImportMixin
 
@@ -400,6 +418,53 @@ def test_reimport_pairs_saved_matches_by_overlay_and_address(tmp_path, monkeypat
         row = net.store.one('SELECT * FROM functions WHERE id=?', fid)
         assert row['name'] == name and row['target'] == body and row['status'] == 'matched'
     assert len(net.store.all('SELECT * FROM functions WHERE project_id=?', pid)) == 2
+
+
+@pytest.mark.parametrize('saved_status', ['matched', 'open'])
+def test_reimport_rejudges_saved_c_when_a_referenced_symbol_moves(tmp_path, monkeypatch, saved_status):
+    import hashlib
+
+    from decompnet import consoles
+
+    root = tmp_path/'game'
+    root.mkdir()
+    image = bytes.fromhex('2402000124020002') + bytes(8)
+    cfg = {'kind': 'rom', 'platform': 'n64', 'big_endian': True,
+           'compiler': {'toolchain': 'gcc-2.7.2-kmc', 'flags': ['-O2']},
+           'rom': {'file': 'rom.z64', 'sha1': 'same', 'analysis_sha1': hashlib.sha1(image).hexdigest()},
+           'segments': []}
+    net = RomNetwork(tmp_path/'app.db', tmp_path)
+    source = 'extern int moved; int keep(void) { return moved; }'
+    with net.store.tx() as db:
+        pid = db.execute('INSERT INTO projects(slug,name,root,arch,config) VALUES(?,?,?,?,?)',
+                         ('game', 'Game', str(root), 'mips', json.dumps(cfg))).lastrowid
+        for name, addr, offset, word, text in [('keep', 0x80000000, 0, image[:4], source),
+                                                ('moved', 0x80001000, 4, image[4:8], 'int moved(void) { return 2; }')]:
+            status = saved_status if name == 'keep' else 'matched'
+            db.execute('INSERT INTO functions(project_id,name,unit,vram,rom_offset,size,n_insns,target,relocs,status,matched_source,best_source) '
+                       'VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
+                       (pid, name, 'unit', addr, offset, 4, 1, word, '[]', status,
+                        text if status == 'matched' else None, text if status == 'open' else None))
+            db.execute('INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)',
+                       (pid, name, addr, 4, 'func'))
+    def replacement(work, *args, **kwargs):
+        (work/'splat.yaml').write_text('segments: []\n')
+        functions = [split.RomFunction('keep', 0x80000000, 0, 'unit',
+                     [split.AsmLine(0, 0x80000000, 0x24020001, 'addiu', 'v0, zero, 1')], work/'keep.s'),
+                     split.RomFunction('new_moved', 0x80002000, 4, 'unit',
+                     [split.AsmLine(4, 0x80002000, 0x24020002, 'addiu', 'v0, zero, 2')], work/'moved.s')]
+        return split.SplitResult(functions, [], [], {}, work/'splat.yaml', 'KMC', '', image='rom.z64')
+    monkeypatch.setattr(split, 'split_rom', replacement)
+    picked = Picked('n64', image, 'rom.z64', {'title': 'Game', 'size': len(image), 'sha1': 'same',
+                    'game_code': 'DEMO', 'region': 'Test', 'compiler_guess': 'KMC'}, True)
+    queued = []
+    net.import_split(consoles.get('n64'), picked, reimport_slug='game', rejudge_out=queued, log=lambda *_: None)
+    row = net.store.one('SELECT * FROM functions WHERE project_id=? AND name=?', pid, 'keep')
+    assert row['status'] == 'open' and row['matched_source'] is None
+    assert row['best_source'] == 'extern int reimport_ref_80001000; int keep(void) { return reimport_ref_80001000; }'
+    assert ('keep', row['best_source'], None) in queued
+    assert net.store.one('SELECT address FROM symbols WHERE project_id=? AND name=?', pid, 'reimport_ref_80001000')['address'] == 0x80001000
+    assert source in net.store.one('SELECT text FROM notes WHERE function_id=?', row['id'])['text']
 
 
 def test_reimport_keeps_agents_names_and_judges_c_whose_references_were_read_anew(tmp_path, monkeypatch):
