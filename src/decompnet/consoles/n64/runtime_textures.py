@@ -78,6 +78,16 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
                     known = {tuple(item['preview_settings'].items()) for item in previous}
                     previous.extend(item for item in asset['textures']
                                     if tuple(item['preview_settings'].items()) not in known)
+                elif key in merged and asset.get('layout') == 'runtime-zip-model':
+                    previous = merged[key]['meshes']
+                    known = {(item['vertex_offset'], item['commands']) for item in previous}
+                    for item in asset['meshes']:
+                        marker = item['vertex_offset'], item['commands']
+                        if marker not in known and len(previous) < 512:
+                            previous.append(dict(item, name=f'Mesh {len(previous)+1}'))
+                            known.add(marker)
+                    merged[key]['vertices'] = sum(item['vertices'] for item in previous)
+                    merged[key]['triangles'] = sum(item['triangles'] for item in previous)
                 else:
                     merged[key] = asset
             # The idle and scripted runs may see the same texture. Preserve
