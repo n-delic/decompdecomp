@@ -398,11 +398,7 @@ class GuiMixin:
             if store is self.store:
                 rows.append(row)
             else:
-                rows.append(store.read_cache.get(
-                    ('project-summary', row['id']),
-                    store.read_version(),
-                    lambda s=store, pid=row['id']: s.one(query + ' WHERE p.id=?', pid),
-                ))
+                rows.append(store.one(query + ' WHERE p.id=?', row['id']))
         if any(row is None for row in rows):
             raise RuntimeError('A project database is missing its summary; reopen the project.')
         local.rows = {row['slug']:dict(row) for row in rows}

@@ -957,15 +957,20 @@ def test_gui_summaries_history_and_shared_labels_use_selected_files(scoped, tmp_
     net.rooms = {};net.autopilots = {}
     net.summary = GuiMixin.summary.__get__(net)
     net.summary_batch = GuiMixin.summary_batch.__get__(net)
+    with net.summary_batch():
+        assert net.summary('first')['matched'] == 0
+        assert net.summary('first')['last_activity'] is None
     with stores[1].tx() as db:
         db.execute("UPDATE projects SET name='Changed locally'")
         db.execute("UPDATE functions SET status='matched',matched_agent_id=1,matched_at=123")
         db.execute('INSERT INTO attempts(function_id,agent_id,score,created_at) VALUES(10,1,0,123)')
+        db.execute("INSERT INTO events(project_id,kind,created_at) VALUES(1,'match',123)")
     with net.store.tx() as db:db.execute("UPDATE agents SET name='current shared name' WHERE id=1")
     with net.summary_batch():
         first, second = net.summary('first'), net.summary('second')
     assert first['title'] == 'Changed locally' and first['matched'] == 1
-    assert second['matched'] == 0
+    assert first['last_activity'] == 123
+    assert second['matched'] == 0 and second['last_activity'] is None
     assert history(stores[1], net._function('same_name', 'first'), net=net)['scores'][0]['agent'] == 'current shared name'
     assert label(net, [{'agent_id':1}], {'agent':'agent_id'}) == [{'agent':'current shared name'}]
     assert cross_project_ids(net, net._project('first')) == {10}
