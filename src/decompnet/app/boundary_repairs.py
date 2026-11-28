@@ -714,6 +714,17 @@ def _safe(net, proj, console, plan, calls, context=None):
         if plan['action']!='delay_slot' and not any(piece['target'] or b''):return None
         first=int.from_bytes((piece['target'] or b'')[:4],order)
         if len(piece['target'] or b'')>4 and first&0xFFFF8000==0x27BD8000:return None  # addiu $sp,$sp,-N
+        joint = piece['vram']-head['vram']
+        if (plan['action']=='join_previous' and joint >= 8
+                and int.from_bytes(plan['raw'][joint-8:joint-4],order)==0x03e00008):
+            # A return and its delay slot do not fall through. Only a direct
+            # branch around that return can establish that the later piece is
+            # still part of this body; otherwise it may be data or an entry.
+            from ..arch.mips_references import references
+
+            if not any(kind == 'branch' and piece['vram'] <= target < piece['vram']+len(piece['target'] or b'')
+                       for target,_,kind in references(plan['raw'],0,joint,head['vram'],big_endian=proj['big_endian'])):
+                return None
         # The code before the joint ends with a call and its delay slot: a call that never returns, so what
         # follows is likely its own function, unless it is plainly this function's ending.
         before=plan['raw'][piece['vram']-head['vram']-8:piece['vram']-head['vram']-4]
