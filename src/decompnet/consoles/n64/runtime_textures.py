@@ -10,7 +10,7 @@ VIS = (1200, 2400, 4000, 5000)
 
 def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _: None, status=None):
     """Return assets backed by captured RAM and unique bytes in the analysis image."""
-    from decompassets.n64 import runtime_audio, runtime_packed_graphics, runtime_textures
+    from decompassets.n64 import runtime_audio, runtime_packed_graphics, runtime_ptr_audio, runtime_textures
 
     status = status if status is not None else {}
     status['state'] = 'unavailable'
@@ -26,10 +26,14 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
                 status['state'] = 'unavailable'
                 return []
             stream.seek(0)
-            digest = hashlib.file_digest(stream, 'sha1').hexdigest()
+            original = stream.read()
+            digest = hashlib.sha1(original).hexdigest()
         if digest not in {value.lower() for value in hashes if isinstance(value, str)}:
             log('Runtime texture observation skipped: the original game no longer matches its recorded hash.')
             return []
+        # Runtime libmus sample pointers name cartridge offsets. A transformed
+        # analysis image is safe only when its original prefix is unchanged.
+        raw_samples = len(image) >= len(original) and image[:len(original)] == original
         log('Observing texture loads in the reversing emulator; the game uses an isolated save folder.')
         progress(dict(phase='Observing runtime textures', done=0, total=1))
         with tempfile.TemporaryDirectory(prefix='decomp-runtime-textures-') as folder:
@@ -38,7 +42,7 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
             snapshots = [path.read_bytes() for path in dumps.values() if path.is_file()]
             direct = runtime_textures.regions(image, snapshots)
             packed = runtime_packed_graphics.regions(image, snapshots, progress=progress)
-            sounds = runtime_audio.regions(image, snapshots)
+            sounds = runtime_audio.regions(image, snapshots) + (runtime_ptr_audio.regions(image, snapshots) if raw_samples else [])
             if not run.timed_out:
                 log('Observing title and gameplay textures with scripted input.')
                 for path in dumps.values():
@@ -48,7 +52,7 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
                 snapshots = [path.read_bytes() for path in dumps.values() if path.is_file()]
                 direct += runtime_textures.regions(image, snapshots)
                 packed += runtime_packed_graphics.regions(image, snapshots, progress=progress)
-                sounds += runtime_audio.regions(image, snapshots)
+                sounds += runtime_audio.regions(image, snapshots) + (runtime_ptr_audio.regions(image, snapshots) if raw_samples else [])
             # Some games display a memory-expansion warning using the base RAM
             # rather than stalling before video. A successful retrace alone does
             # not show that their title or gameplay ran. Retry without changing
@@ -65,7 +69,7 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
                         snapshots = [path.read_bytes() for path in dumps.values() if path.is_file()]
                         direct += runtime_textures.regions(image, snapshots)
                         packed += runtime_packed_graphics.regions(image, snapshots, progress=progress)
-                        sounds += runtime_audio.regions(image, snapshots)
+                        sounds += runtime_audio.regions(image, snapshots) + (runtime_ptr_audio.regions(image, snapshots) if raw_samples else [])
                         if expanded.timed_out:
                             expansion_failed = True
                             log('Expanded-memory observation timed out; completed snapshots are still included.')
@@ -112,9 +116,10 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
             # ambiguous and must not be promoted to playable samples.
             bases = {}
             for asset in sounds:
-                bases.setdefault(asset['bank_offset'], set()).add(asset['table_offset'])
-            audio = {(asset['bank_offset'], asset['offset'], asset['size']): asset for asset in sounds
-                     if len(bases[asset['bank_offset']]) == 1}
+                key = asset['bank_offset'], asset.get('layout')
+                bases.setdefault(key, set()).add(asset['table_offset'])
+            audio = {(asset['bank_offset'], asset.get('layout'), asset['offset'], asset['size']): asset for asset in sounds
+                     if len(bases[asset['bank_offset'], asset.get('layout')]) == 1}
             assets = list(unique.values()) + list(merged.values()) + list(audio.values())
         if run.timed_out:
             log('Runtime observation timed out; any completed snapshots are still included.')
