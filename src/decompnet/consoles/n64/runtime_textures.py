@@ -106,7 +106,7 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
                 key = (asset.get('offset'), asset.get('size'), asset.get('layout'),
                        asset.get('width'), asset.get('height'), asset.get('format'),
                        asset.get('palette_offset'), asset.get('palette_little_endian'), asset.get('palette'),
-                       asset.get('palette_format'))
+                       asset.get('palette_format'), asset.get('odd_row_swap'))
                 unique[key] = asset
             # A bank may appear in several runs. Conflicting observed bases are
             # ambiguous and must not be promoted to playable samples.
