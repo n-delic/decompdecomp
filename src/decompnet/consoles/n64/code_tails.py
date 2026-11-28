@@ -50,6 +50,46 @@ def _called_leaf_tail(rom, start, end, vram, entry, limit, called):
     return None
 
 
+def bridge_called_frame(rom, segments, taken=(), *, called=()):
+    """Join a called frame whose body and epilogue straddle a missed code gap."""
+    from ... import consoles
+    from ...arch.mips_code_recovery import called_extent
+
+    console = consoles.get('n64')
+    ordered = sorted(segments)
+    result = []
+    index = 0
+    while index < len(ordered):
+        left = ordered[index]
+        if index+1 == len(ordered):
+            result.append(left)
+            break
+        right = ordered[index+1]
+        start, end, vram = left
+        next_start, next_end, next_vram = right
+        entry = end-4
+        address = vram+entry-start
+        gap = next_start-end
+        if (not 0 < gap <= MAX_TAIL or entry < start or address not in called
+                or next_vram-next_start != vram-start
+                or any(a < next_start and end < b for a, b, _ in taken)):
+            result.append(left);index += 1;continue
+        size = called_extent(rom, entry, next_end, address, big_endian=True,
+                             cpu=console.cpu_variant, asm_check=console.asm_reason)
+        stop = entry+(size or 0)
+        limit = address+(size or 0)
+        if (not size or not next_start < stop <= next_end
+                or any(address < target < limit for target in called)
+                or any(a < stop and entry < b for a,b,v in (*taken, *ordered)
+                       if (a,b,v) not in (left,right))
+                or any(v < limit and address < v+b-a for a,b,v in (*taken,*ordered)
+                       if (a,b,v) not in (left,right))):
+            result.append(left);index += 1;continue
+        result.append((start,next_end,vram))
+        index += 2
+    return result
+
+
 def complete(rom, segments, taken=(), *, called=(), allow_inferred_overlap=False):
     import rabbitizer
 

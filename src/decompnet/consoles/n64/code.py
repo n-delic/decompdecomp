@@ -700,12 +700,17 @@ def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_rep
                                              changed=runtime | banks | {start for start,_,_ in overlaps})
     # Corrected addresses can expose a called prologue whose frame lies beyond
     # the scanner's original alignment tail.
+    from .code_tails import bridge_called_frame
     from .code_tails import complete as complete_tails
     called = set()
     for start,end,entry in (*taken, *found):
         words = struct.unpack_from(f'>{(end-start)//4}I', rom, start)
         called.update(jal_targets(words, entry))
     found = complete_tails(rom, found, taken, called=called)
+    bridged = bridge_called_frame(rom, found, taken, called=called)
+    if len(bridged) < len(found):
+        log(f'Recovered {len(found)-len(bridged)} called code bodies across gaps in their mapping.')
+    found = bridged
     # A complete framed tail can overlap a different inferred ROM bank at the
     # same runtime address. Keep both only when exclusive scopes can hold them.
     expanded = complete_tails(rom, found, taken, called=called, allow_inferred_overlap=True)
