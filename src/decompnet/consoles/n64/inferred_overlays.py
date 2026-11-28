@@ -216,7 +216,24 @@ def runtime_mappings(image, found, ranges, taken=()):
                     offsets.append(0)
             actual = len(calls & {address+offset for offset in offsets})
             previous = len(calls & {old+offset for offset in offsets})
+            # A KSEG0 placement beyond the N64's maximum RDRAM cannot be the
+            # execution address. Two independently closed internal callees
+            # corroborate the unique RAM-observed alternative in that case.
+            unreachable = 0x80800000 <= old < 0x81000000 and previous == 0 and actual >= 2
+            if unreachable:
+                from ...arch.mips_code_recovery import called_extent, leaf_extent
+
+                closed = 0
+                for target in calls & {address + offset for offset in offsets}:
+                    at = start + target - address
+                    if (called_extent(image, at, end, target, cpu='vr4300')
+                            or leaf_extent(image, at, end, target, cpu='vr4300')):
+                        closed += 1
+                        if closed == 2:
+                            break
+                unreachable = closed >= 2
             if address != old and (actual >= 3 and actual > previous or
+                                   unreachable or
                                    _runtime_continuation(image,start,end,address,old,result,changed,ranges)):
                 parts.append((start,end,address))
                 corrected.add(start)
