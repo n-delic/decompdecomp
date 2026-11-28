@@ -9,6 +9,22 @@ from elftools.elf.elffile import ELFFile
 
 from decompnet.elfobj import _function_symbols
 from decompnet.rom import export_entry
+
+
+def test_verified_reader_ignores_empty_code_segments_but_rejects_invalid_ranges(tmp_path):
+    image = b'abcdefgh'
+    (tmp_path/'game.bin').write_bytes(image)
+    manifest = {'image': 'game.bin', 'sha1': hashlib.sha1(image).hexdigest(), 'segments': [
+        {'kind': 'code', 'start': 0, 'end': 8, 'vram': 0x80001000},
+        {'kind': 'code', 'start': 4, 'end': 4, 'vram': 0x80002000},
+    ]}
+    _, read = export_entry.verified_image_reader(tmp_path, manifest)
+    assert read(0x80001000, 4) == b'abcd'
+    assert read(0x80002000, 1) is None
+    manifest['segments'][1]['start'] = 9
+    manifest['segments'][1]['end'] = 9
+    with pytest.raises(ValueError, match='mapping exceeds'):
+        export_entry.verified_image_reader(tmp_path, manifest)
 from decompnet.rom.link import LinkResult
 from tests.mips_elf_fixture import linked_object
 
