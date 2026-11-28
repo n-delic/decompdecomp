@@ -578,6 +578,25 @@ def test_segment_prefix_with_saved_register_switch_is_recovered_as_data(case):
         assert not data
 
 
+@pytest.mark.parametrize('case',['valid','entry','bad_prefix','bad_target'])
+def test_constant_prefix_before_validated_switch_is_data(case):
+    start = BASE+24
+    prefix = [0x30000001 if case=='bad_prefix' else 0x30000000,0,0,0,
+              start+44, BASE+0x300 if case=='bad_target' else start+52]
+    call = 0x0c000000 | (((BASE+0x200)>>2)&0x3ffffff)
+    code = [0x3c158000,0x26b51010,call,0,0x2c620002,0x10400007,0x00031080,
+            0x00551021,0x8c420000,0x00400008,0,0x03e00008,0,0x03e00008,0]
+    image,functions,segments = fixture(prefix+code,cuts=(0,24,84))
+    symbols = [f'entry = 0x{BASE:08X}; // type:func'] if case=='entry' else ()
+    data=[]
+    result=repair(functions,data,image,consoles.get('n64'),segments,symbols=symbols)
+    if case=='valid':
+        assert [(fn.rom,fn.size) for fn in result]==[(24,60)]
+        assert [(row.rom,row.size,row.kind) for row in data]==[(0,16,'data'),(16,8,'jtbl')]
+    else:
+        assert result==functions
+
+
 @pytest.mark.parametrize('protected',[False,True])
 def test_alignment_word_decoding_as_conditional_link_does_not_cut_a_leaf(protected):
     words=[0x8c820000,0x03e00008,0,0x04330002,0x24840001,0x24820001,0x03e00008,0]

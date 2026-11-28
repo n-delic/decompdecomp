@@ -1313,7 +1313,7 @@ def assembly_extent(image, start, end, vram, console, order, *, allow_cache=Fals
 
 
 def recover_segment_switch_data(functions, data, image, order, tables, protected, references, log):
-    """Recover a segment prefix with a printable string tail and a proven switch table."""
+    """Recover a segment prefix whose data precedes a proven switch table."""
     from ..arch.mips_indirect import jump_table
     from .split import DataSymbol
 
@@ -1328,11 +1328,13 @@ def recover_segment_switch_data(functions, data, image, order, tables, protected
         if index<len(entries) and entries[index]<fn.vram+fn.size:
             continue
         raw = image[fn.rom:fn.rom+fn.size]
-        if not re.match(rb'[ -~]{4,60}\x00', raw):
+        string_prefix = bool(re.match(rb'[ -~]{4,60}\x00', raw))
+        constant_prefix = raw[:16] == (0x30000000).to_bytes(4, order) + bytes(12)
+        if not (string_prefix or constant_prefix):
             continue
         offsets = {offset for offset,_ in references.get(fn.vram,())}
         for consumer in functions:
-            if not any(consumer.rom<=offset<consumer.rom+consumer.size for offset in offsets):
+            if not constant_prefix and not any(consumer.rom<=offset<consumer.rom+consumer.size for offset in offsets):
                 continue
             for line in consumer.lines:
                 if line.word==JR_RA or line.word&0xfc1fffff!=8:
@@ -1342,8 +1344,9 @@ def recover_segment_switch_data(functions, data, image, order, tables, protected
                 if not table or table['state']!='validated':
                     continue
                 start = table['rom_offset']-fn.rom
-                if (not 0<start<fn.size or start+table['entry_count']*4!=fn.size
-                        or not re.fullmatch(rb'[ -~]{4,60}\x00+', raw[:start])):
+                prefix_ok = (string_prefix and re.fullmatch(rb'[ -~]{4,60}\x00+', raw[:start])
+                             or constant_prefix and start == 16)
+                if not (0<start<fn.size and start+table['entry_count']*4==fn.size and prefix_ok):
                     continue
                 data.append(DataSymbol(fn.name,fn.vram,fn.rom,start,'data'))
                 data.append(DataSymbol(f"jtbl_{table['table_address']:08X}",table['table_address'],
