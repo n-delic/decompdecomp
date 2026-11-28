@@ -207,10 +207,19 @@ def find(rom, boot_ranges):
     pointer = _pointer_find(rom, boot_ranges)
     if pointer:
         return pointer
-    from . import boot_brs, boot_compact_mio, boot_lzss, boot_raw_deflate, boot_refpack, boot_rnc2, boot_two_bit
+    from . import (
+        boot_brs,
+        boot_compact_mio,
+        boot_erz,
+        boot_lzss,
+        boot_raw_deflate,
+        boot_refpack,
+        boot_rnc2,
+        boot_two_bit,
+    )
     return (boot_compact_mio.find(rom, boot_ranges) or boot_raw_deflate.find(rom, boot_ranges) or boot_brs.find(rom, boot_ranges)
             or boot_lzss.find(rom, boot_ranges) or boot_refpack.find(rom, boot_ranges)
-            or boot_two_bit.find(rom, boot_ranges) or boot_rnc2.find(rom, boot_ranges))
+            or boot_two_bit.find(rom, boot_ranges) or boot_rnc2.find(rom, boot_ranges) or boot_erz.find(rom, boot_ranges))
 
 
 def verify_analysis(rom, expanded, boot_ranges):
@@ -251,7 +260,7 @@ def inline_tables(text):
 def add(config, workdir, image, rom, boot_ranges, log):
     if not (programs := find(rom, boot_ranges)):
         return None
-    from . import boot_brs, boot_lzss, boot_rnc2, boot_two_bit
+    from . import boot_brs, boot_erz, boot_lzss, boot_rnc2, boot_two_bit
     from .boot_mapping import extend_startup_descriptor, extend_startup_trap
 
     extend_startup_trap(config, rom, log)
@@ -262,7 +271,7 @@ def add(config, workdir, image, rom, boot_ranges, log):
     segments = cfg['segments']
     segments.pop()
     expanded = bytearray(rom)
-    two_bit = boot_two_bit.find(rom, boot_ranges) or boot_rnc2.find(rom, boot_ranges)
+    two_bit = boot_two_bit.find(rom, boot_ranges) or boot_rnc2.find(rom, boot_ranges) or boot_erz.find(rom, boot_ranges)
     repeated = {vram for vram, _, _ in programs if sum(vram == other for other, _, _ in programs) > 1}
     # Distinct starting addresses can still overlap when one program extends
     # into another overlay's slot; all programs then need scoped symbols.
