@@ -47,6 +47,12 @@ def _payload(rom, row):
         if decoded and decoded[1] == row['size'] and len(decoded[0]) == row.get('expanded'):
             return decoded[0]
         return None
+    if row.get('codec') == 'table_ring':
+        from .runtime_table_ring import decode
+        decoded = decode(memoryview(rom)[row['offset']:row['offset']+row['size']])
+        if decoded and decoded[1] == row['size'] and len(decoded[0]) == row.get('expanded'):
+            return decoded[0]
+        return None
     if row.get('codec') == 'mio0':
         from .runtime_mio import unpack
         decoded = unpack(rom[:row['offset']+row['size']], row['offset'])
@@ -189,6 +195,7 @@ def add(config, workdir, image, rom, taken, rows, log, *, base_image=None, boot_
     expanded = bytearray(base)
     expanded.extend(bytes(-len(expanded)%16+16))
     programs = []
+    trap_tables = {}
     for row in rows:
         payload = _payload(rom, row)
         if not payload:
@@ -207,17 +214,46 @@ def add(config, workdir, image, rom, taken, rows, log, *, base_image=None, boot_
             return None
         last = max(hi for _,hi,_ in found)
         last = _contiguous_tail(expanded, last, end, row['vram']+last-start)
+        if row.get('codec') == 'table_ring':
+            from .loaded_code import _called_trap_table
+            calls = [start + address - row['vram'] for address in row['calls']]
+            if table := _called_trap_table(expanded, start, end, calls):
+                lo, hi = table
+                trap_tables[start] = (lo, hi, row['vram'] + lo - start)
+                last = max(last, hi)
         text_end = min(end, (last+15)&~15)
         programs.append((row,start,text_start,text_end,end))
     cfg = yaml.safe_load(config.read_text(encoding='utf-8'))
     segments = [segment for segment in cfg['segments'] if not isinstance(segment,list) or len(segment) != 1]
+    # Splat treats the whole span between its lowest and highest global segments as
+    # occupied, including holes. Keep resident low memory distinct when an observed
+    # overlay lives in such a hole; its segments are not mutually exclusive with the bank.
+    from ...rom import split
+    existing = split.segments_from_config(config)
+    for row, start, _, _, end in programs:
+        if row.get('codec') != 'table_ring':
+            continue
+        lo, hi = row['vram'], row['vram'] + end - start
+        below = [s for s in existing if not s.exclusive_ram_id and s.vram + s.rom_end-s.rom_start <= lo]
+        above = [s for s in existing if not s.exclusive_ram_id and s.vram >= hi]
+        if below and above:
+            low_names = {s.name for s in below}
+            for segment in segments:
+                if isinstance(segment, dict) and segment.get('name') in low_names:
+                    segment['exclusive_ram_id'] = 'runtime_resident_low'
     segments.append(dict(type='bin',start=len(base)))
     for index,(row,start,text_start,text_end,end) in enumerate(programs):
         name = f'runtime_program_{index:04d}'
         parts = ([[start,'bin',name+'_prefix']] if text_start > start else []) + [[text_start,'c',name]]
         if text_end < end:
             parts.append([text_end,'data',name])
-        segments.append(dict(name=name,type='code',start=start,vram=row['vram'],subsegments=parts))
+        segment = dict(name=name,type='code',start=start,vram=row['vram'],subsegments=parts)
+        if any(other is not row and row['vram'] < other['vram'] + other_end - other_start
+               and other['vram'] < row['vram'] + end - start
+               for other,other_start,_,_,other_end in programs):
+            segment.update(exclusive_ram_id='runtime_program_banks', symbol_name_format=f'$VRAM_{name}',
+                           symbol_name_format_no_rom=f'$VRAM_{name}')
+        segments.append(segment)
     expanded.extend(bytes(-len(expanded)%16))
     segments.append([len(expanded)])
     filename = f'{Path(image).stem}.runtime{Path(image).suffix}'
@@ -226,6 +262,18 @@ def add(config, workdir, image, rom, taken, rows, log, *, base_image=None, boot_
     cfg['sha1'] = hashlib.sha1(expanded).hexdigest()
     cfg['segments'] = segments
     config.write_text(yaml.safe_dump(cfg,sort_keys=False),encoding='utf-8')
+    if trap_tables:
+        symbol_path = workdir/'symbol_addrs.txt'
+        text = symbol_path.read_text(encoding='utf-8') if symbol_path.exists() else ''
+        for index,(row,start,_,_,_) in enumerate(programs):
+            if start not in trap_tables:
+                continue
+            lo, hi, vram = trap_tables[start]
+            name = f'runtime_program_{index:04d}'
+            for offset in range(0, hi-lo, 8):
+                text += (f'\n{name}_trap_{offset:04X} = 0x{vram+offset:X}; // '
+                         f'type:func size:0x8 rom:0x{lo+offset:X} segment:{name}')
+        symbol_path.write_text(text.rstrip()+'\n', encoding='utf-8')
     (workdir/MANIFEST).write_text(json.dumps(rows),encoding='utf-8')
     coverage = workdir/'analysis-coverage.json'
     try:
