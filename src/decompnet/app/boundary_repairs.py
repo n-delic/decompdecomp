@@ -472,7 +472,7 @@ def apply(net, slug, name, action, revision, image_hash, end=None, note='', log=
         return result
 
 
-def _commit(net, proj, plan, name, action, revision, image_hash, note, automatic=False):
+def _commit(net, proj, plan, name, action, revision, image_hash, note, automatic=False, preferred_entries=None):
     """Save one previewed decision with its undo record; matches were reverified by the caller. `automatic`: an
     entry fix the importer applied (entry_fixes), labelled so in Repair history and never applied again once undone."""
     rows=plan['pieces'];head=rows[0];old={str(p['id']):_pack(p) for p in rows}
@@ -520,22 +520,31 @@ def _commit(net, proj, plan, name, action, revision, image_hash, note, automatic
                     cuts=[('entry' if entry else 'tail',plan['end'],offset,head['size']-offset)]
                 for kind,at,piece_offset,piece_size in cuts:
                     tailname={'entry':'func_','padding':'pad_','tail':'boundary_tail_'}[kind]+format(at,'08X')
+                    tailraw=head['target'][piece_offset:piece_offset+piece_size]
+                    preferred=(preferred_entries or {}).get((head['rom_offset']+piece_offset,at,piece_size,tailraw)) if kind=='entry' else None
+                    existing_symbol=None;use_preferred=False
+                    if preferred:
+                        existing_symbol=db.execute('SELECT address,size,kind FROM symbols WHERE project_id=? AND name=?',(proj['id'],preferred)).fetchone()
+                        occupied=db.execute('SELECT 1 FROM functions WHERE project_id=? AND name=?',(proj['id'],preferred)).fetchone()
+                        if not occupied and (not existing_symbol or (existing_symbol['address'],existing_symbol['size'],existing_symbol['kind'])==(at,piece_size,'func')):
+                            tailname=preferred;use_preferred=True
+                        else:existing_symbol=None
                     taken=lambda candidate:(db.execute('SELECT 1 FROM functions WHERE project_id=? AND name=?',(proj['id'],candidate)).fetchone()
                                             or db.execute('SELECT 1 FROM symbols WHERE project_id=? AND name=?',(proj['id'],candidate)).fetchone())
-                    if taken(tailname):tailname+='_'+format(time.time_ns(),'x')
+                    if not use_preferred and taken(tailname):tailname+='_'+format(time.time_ns(),'x')
                     tailmeta=json.dumps({'boundary_split_from':head['name'],'boundary_decision':meta['boundary_decision']} if kind=='entry' else
                                         {'boundary_split_from':head['name'],'boundary_decision':meta['boundary_decision'],'gone':True,
                                          'boundary_classification':'padding'} if kind=='padding' else
                                         {'boundary_tail_review':'Retained tail from a reviewed boundary adjustment; confirm its entry point before agent work.'})
-                    tailraw=head['target'][piece_offset:piece_offset+piece_size]
                     tailtarget,tailasm,tailcount=_rebuilt(net,proj,tailname,at,head['rom_offset']+piece_offset,head['unit'],tailraw,carried)
                     fid=db.execute("INSERT INTO functions(project_id,name,vram,rom_offset,size,n_insns,target,relocs,asm,unit,meta) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                         (proj['id'],tailname,at,head['rom_offset']+piece_offset,len(tailraw),tailcount,tailtarget.code,json.dumps(tailtarget.to_json()),tailasm,head['unit'],tailmeta)).lastrowid
                     created.append(fid)
                     if kind=='entry':
                         # A real entry is a function symbol, so references to it read by name like any other.
-                        db.execute('INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)',(proj['id'],tailname,at,len(tailraw),'func'))
-                        created_symbols.append(tailname)
+                        if not existing_symbol:
+                            db.execute('INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)',(proj['id'],tailname,at,len(tailraw),'func'))
+                            created_symbols.append(tailname)
         after={str(p['id']):_pack(dict(db.execute('SELECT * FROM functions WHERE id=?',(p['id'],)).fetchone())) for p in rows}
         for fid in created:after[str(fid)]=_pack(dict(db.execute('SELECT * FROM functions WHERE id=?',(fid,)).fetchone()))
         history={'evidence':note[:4000],'function':name,'action':action,'time':time.time(),'before':old,'after':after,'created':created,'symbols':symbols,
@@ -917,7 +926,7 @@ def entry_findings(net, proj, *, layout=None, mapped=None):
     return found
 
 
-def apply_entry_fixes(net, slug, log=print):
+def apply_entry_fixes(net, slug, log=print, *, preferred_entries=None):
     """Apply every entry fix the bytes settle (entry_fixes 'auto'), one undoable decision each, labelled automatic in
     Repair history; leave the rest as suggestions. Runs at import (before anything is drafted) and on Check again.
     Matched functions are never changed (the preview refuses them), and the few matches that refer into a changed
@@ -930,7 +939,7 @@ def apply_entry_fixes(net, slug, log=print):
     if proj['arch']!='mips' or not net.is_rom(proj) or not entry_fixes_enabled(net,proj):return {'fixed':[],'suggested':0}
     if slug in net.rooms or net._link(slug) is not None:return {'fixed':[],'suggested':0}  # the host's project decides
     try:
-        return _apply_entry_fixes(net,slug,proj,log)
+        return _apply_entry_fixes(net,slug,proj,log,preferred_entries=preferred_entries)
     finally:
         progress=getattr(net,'progress',None)
         if progress is not None:progress.sync(slug,force=True)
@@ -942,7 +951,7 @@ def _undo_key(fix):
     return (fix.vram,fix.at if fix.kind in ('trim_start','split_end') else None)
 
 
-def _apply_entry_fixes(net, slug, proj, log):
+def _apply_entry_fixes(net, slug, proj, log, *, preferred_entries=None):
     cancel=getattr(log,'check_cancel',lambda:None);progress=getattr(log,'progress',lambda value:None)
     try:mapped=_image(net,proj)
     except NetworkError:return {'fixed':[],'suggested':0}
@@ -976,7 +985,7 @@ def _apply_entry_fixes(net, slug, proj, log):
                 with _lookups(net):
                     if net._function(fix.name,slug)['gone_mark'] is not None:continue
                     plan=preview(net,slug,fix.name,action,fix.at if action in ('trim_start','split_end') else None)
-                    result=_commit(net,proj,plan,fix.name,action,plan['revision'],plan['image'],note,automatic=True)
+                    result=_commit(net,proj,plan,fix.name,action,plan['revision'],plan['image'],note,automatic=True,preferred_entries=preferred_entries)
             except NetworkError as error:
                 # Claimed meanwhile or the layout moved: it stays a suggestion, tried again next time.
                 failed.add(fix.name);log(f'{fix.name}: left for review ({error})');continue

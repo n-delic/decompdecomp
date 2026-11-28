@@ -90,25 +90,32 @@ def pair_old_functions(rows, functions) -> dict:
 
 
 def _recreated_matches(net, pid, gone, same_analysis):
-    """Rejudge saved C if boundary repair recreated the same previously matched entry."""
+    """Keep and rejudge saved C if boundary repair recreated the exact entry."""
     if not same_analysis:
         return []
     store = net.project_store(pid)
-    old_matches = [old for old in gone.values()
-                   if old['status'] == 'matched' and old['matched_source'] and old['rom_offset'] is not None]
-    if not old_matches:
+    saved = [old for old in gone.values() if old['rom_offset'] is not None and
+             (old['status'] == 'matched' and old['matched_source'] or old['status'] == 'open' and old['best_source'])]
+    if not saved:
         return []
-    rows = store.all('SELECT name,rom_offset,vram,size,target,status FROM functions '
+    rows = store.all('SELECT id,name,rom_offset,vram,size,target,status FROM functions '
                      'WHERE project_id=? AND name IN (SELECT value FROM json_each(?))',
-                     pid, json.dumps([old['name'] for old in old_matches]))
+                     pid, json.dumps([old['name'] for old in saved]))
     by_name = {row['name']: row for row in rows}
     result = []
-    for old in old_matches:
+    for old in saved:
         row = by_name.get(old['name'])
         if (row is not None and row['status'] != 'matched'
                 and (row['rom_offset'], row['vram'], row['size'], row['target']) ==
                     (old['rom_offset'], old['vram'], old['size'], old['target'])):
-            result.append((old['name'], old['matched_source'], old['matched_agent_id']))
+            source=old['matched_source'] if old['status']=='matched' else old['best_source']
+            agent=old['matched_agent_id'] if old['status']=='matched' else old['best_agent_id']
+            # Keep it on the recreated row before the judge runs, so cancellation
+            # or an unavailable compiler cannot strand the source only in notes.
+            with store.tx() as db:
+                db.execute('UPDATE functions SET best_source=?,best_agent_id=?,best_score=MAX(1,COALESCE(n_insns,1))*100 '
+                           'WHERE id=? AND status=\'open\' AND best_source IS NULL',(source,agent,row['id']))
+            result.append((old['name'],source,agent))
     return result
 
 
@@ -641,14 +648,23 @@ class ImportMixin:
         # on an extent no C can match (boundary_repairs.apply_entry_fixes; each fix undoable in Review boundaries).
         from ..boundary_repairs import apply_entry_fixes
         try:
-            apply_entry_fixes(self, slug, log)
+            if reimport is not None and same_analysis:
+                identities=[(r['rom_offset'],r['vram'],r['size'],r['target']) for r in gone.values()
+                            if r['rom_offset'] is not None and r['vram'] is not None and r['target']]
+                counts=Counter(identities)
+                preferred={(r['rom_offset'],r['vram'],r['size'],r['target']):r['name'] for r in gone.values()
+                           if r['rom_offset'] is not None and r['vram'] is not None and r['target']
+                           and counts[(r['rom_offset'],r['vram'],r['size'],r['target'])]==1}
+                apply_entry_fixes(self, slug, log, preferred_entries=preferred)
+            else:
+                apply_entry_fixes(self, slug, log)
         except NetworkError as e:
             log(f"function boundaries were not fixed automatically: {e}")
         if reimport is not None:
             recovered = _recreated_matches(self, pid, gone, same_analysis)
             if recovered:
                 rejudge.extend(recovered)
-                log(f'{len(recovered)} previously matched entries returned after boundary repair; their saved C will be checked again.')
+                log(f'{len(recovered)} saved entries returned after boundary repair; their C will be checked again.')
         # Automatic boundary fixes invalidate earlier shared-entry evidence.
         # Reprove it against the final stored split before a helper can claim it.
         from ..boundary_review import refresh_shared_entries

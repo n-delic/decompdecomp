@@ -576,6 +576,22 @@ def test_reimport_rechecks_saved_c_for_exact_entry_recreated_after_boundary_repa
     assert saved['status'] == 'open' and saved['best_source'] == old['matched_source']
 
 
+def test_reimport_keeps_a_recreated_open_entrys_best_attempt_before_recheck(tmp_path):
+    from decompnet.app.engine.importing import _recreated_matches
+
+    net=RomNetwork(tmp_path/'app.db',tmp_path)
+    with net.store.tx() as db:
+        pid=db.execute('INSERT INTO projects(slug,name,root,arch,config) VALUES(?,?,?,?,?)',
+                       ('game','Game',str(tmp_path),'mips','{}')).lastrowid
+        db.execute("INSERT INTO functions(project_id,name,vram,rom_offset,size,n_insns,target,relocs,status) VALUES(?,?,?,?,?,?,?,?,?)",
+                   (pid,'returned',0x80001000,0x1000,8,2,b'\0'*8,'[]','open'))
+    old={'name':'returned','vram':0x80001000,'rom_offset':0x1000,'size':8,'target':b'\0'*8,
+         'status':'open','best_source':'int returned(void) { return 0; }','best_agent_id':None}
+    assert _recreated_matches(net,pid,{'returned':old},True)==[('returned',old['best_source'],None)]
+    row=net.project_store(pid).one('SELECT status,best_source,best_score FROM functions WHERE project_id=?',pid)
+    assert row['status']=='open' and row['best_source']==old['best_source'] and row['best_score']==200
+
+
 def test_reimport_queues_a_match_recreated_by_boundary_repair(tmp_path, monkeypatch):
     import hashlib
 
@@ -611,7 +627,7 @@ def test_reimport_queues_a_match_recreated_by_boundary_repair(tmp_path, monkeypa
         fn = split.RomFunction('new',0x80001000,0,'code',[line],work/'new.s')
         return split.SplitResult([fn],[],[split.Segment('code',0,16,0x80001000)],{},work/'splat.yaml','KMC','',image='rom.z64')
 
-    def repair(network, slug, log):
+    def repair(network, slug, log, **kwargs):
         with network.project_store(pid).tx() as db:
             db.execute('INSERT INTO functions(project_id,name,vram,rom_offset,size,n_insns,target,relocs,status) '
                        'VALUES(?,?,?,?,?,?,?,?,?)',(pid,'returned',0x80001008,8,4,1,bytes(4),'[]','open'))
