@@ -324,6 +324,19 @@ def test_export_moves_data_boundary_past_known_function_tail():
     assert _export_segments(config, [{'vram': 0x80000010, 'size': 8}])['segments'] == config['segments']
 
 
+def test_export_removes_source_cuts_inside_a_matched_function():
+    from decompnet.rom.export import _export_segments
+
+    config = {'segments':[{'type':'code','start':0x100,'vram':0x80000000,
+                           'subsegments':[[0x100,'c','first'],[0x104,'c','inside'],[0x120,'c','next']]}, [0x140]]}
+    matched = {'name':'first','vram':0x80000000,'rom_offset':0x100,'size':0x20,'status':'matched'}
+    result = _export_segments(config, [matched])
+    assert result['segments'][0]['subsegments'] == [[0x100,'c','first'],[0x120,'c','next']]
+    assert len(config['segments'][0]['subsegments']) == 3
+    other = {'name':'inside','vram':0x80000004,'rom_offset':0x104,'size':4,'status':'open'}
+    assert _export_segments(config, [matched, other])['segments'][0]['subsegments'] == config['segments'][0]['subsegments']
+
+
 def test_export_split_uses_its_generated_symbol_file():
     from decompnet.rom.export import _export_segments
 
@@ -757,6 +770,28 @@ def test_nonmatching_data_block_is_not_an_entry_function():
     assert _starts_with_data_label('nonmatching func_80001000\n\ndlabel func_80001000\n.word 1\n', 'func_80001000')
     assert not _starts_with_data_label('nonmatching func_80001000\n\nglabel func_80001000\njr $ra\n', 'func_80001000')
     assert not _starts_with_data_label('dlabel other\n', 'func_80001000')
+
+
+def test_export_resplits_a_known_entry_swallowed_by_splat(tmp_path):
+    from decompnet.rom.export import _resplit_unemitted
+
+    asm = tmp_path/'asm/nonmatchings/bank'
+    asm.mkdir(parents=True)
+    (asm/'first.s').write_text('glabel first\n/* 0 80001000 03E00008 */ jr $ra\n'
+                               'alabel second\n/* 8 80001008 03E00008 */ jr $ra\n')
+    image = bytes.fromhex('03e00008 00000000 03e00008 00000000')
+    rows = [dict(name='first',vram=0x80001000,rom_offset=0,size=8,target=image[:8]),
+            dict(name='second',vram=0x80001008,rom_offset=8,size=8,target=image[8:])]
+    config = {'segments':[dict(name='bank',type='code',start=0,vram=0x80001000,
+                               subsegments=[[0,'c','bank']]), [len(image)]]}
+    cuts, present = _resplit_unemitted(config,tmp_path,rows,image)
+    assert cuts == ['second']
+    assert (0x80001000,0) in present
+    assert config['segments'][0]['subsegments'] == [[0,'c','bank'], [8,'c','bank_export_8']]
+    assert not _resplit_unemitted(config,tmp_path,rows,image)[0]
+    config['segments'][0]['subsegments'].pop()
+    rows[0]['size'] = 12  # shared or overlapping entries need boundary review
+    assert not _resplit_unemitted(config,tmp_path,rows,image)[0]
 
 
 def test_nonmatching_data_uses_the_assembly_preamble(tmp_path):
