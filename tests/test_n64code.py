@@ -36,6 +36,45 @@ def test_a_segment_loaded_later_is_found_at_its_address():
     assert found == [(0x100000, 0x100000 + len(extra), 0x80300000)]
 
 
+def test_independent_unpacked_blocks_are_placed_without_the_synthetic_gap():
+    from decompnet.consoles.n64.code import _within_sources
+
+    rom=bytearray(0x18000)
+    main=_code(0x80000400,64,calls_into=0x80300000)
+    first=_code(0x80300000,120);second=_code(0x80400000,120)
+    rom[0x1000:0x1000+len(main)]=main
+    rom[0x12000:0x12000+len(first)]=first
+    rom[0x16000:0x16000+len(second)]=second
+    sources=[(0,0x10000),(0x12000,0x12000+len(first)),(0x16000,0x16000+len(second))]
+    found=find_segments(bytes(rom),[(0x1000,0x1000+len(main),0x80000400)],source_ranges=sources,log=lambda _:None)
+    assert found==[(0x12000,0x12000+len(first),0x80300000),(0x16000,0x16000+len(second),0x80400000)]
+    # Later heuristics can also extend a candidate: clip the padding without changing either surviving mapping.
+    crossing=[(0x12000,0x16000+len(second),0x80300000)]
+    assert _within_sources(crossing,sources)==[(0x12000,0x12000+len(first),0x80300000),
+                                                (0x16000,0x16000+len(second),0x80304000)]
+
+
+def test_import_places_raw_boundaries_between_independently_unpacked_blocks(tmp_path,monkeypatch):
+    import yaml
+
+    from decompnet.consoles.n64 import code, loaded_code
+
+    config={'name':'synthetic','options':{'platform':'n64','basename':'synthetic','base_path':str(tmp_path),
+            'target_path':'rom.z64','compiler':'GCC'},'segments':[
+                {'name':'main','type':'code','start':0x1000,'vram':0x80000400,'subsegments':[[0x1000,'asm']]},
+                [0x2000]]}
+    path=tmp_path/'synthetic.yaml';path.write_text(yaml.safe_dump(config,sort_keys=False))
+    (tmp_path/'rom.z64').write_bytes(bytes(0x2000))
+    monkeypatch.setattr(code,'unpack_code',lambda _: [(0x1100,bytes(0x100)),(0x1200,bytes(0x100))])
+    monkeypatch.setattr(code,'find_segments',lambda *a,**kw:[(0x4000,0x6200,0x80300000)])
+    monkeypatch.setattr(loaded_code,'find',lambda *a,**kw:{'segments':[],'overlap_segments':[],'moved_ranges':[]})
+    monkeypatch.setattr(code,'complete_gaps',lambda _rom,_taken,found,*a,**kw:found)
+    code.add_segments(path,tmp_path,'rom.z64',log=lambda *_:None)
+    segments=yaml.safe_load(path.read_text())['segments']
+    assert any(isinstance(s,dict) and s.get('type')=='bin' and s.get('start')==0x4100 for s in segments)
+    assert any(isinstance(s,dict) and s.get('type')=='code' and s.get('start')==0x6100 for s in segments)
+
+
 def test_a_segment_starts_where_its_code_does_not_at_its_first_frame():
     """On an N64 game the code after the main segment began with two functions that make no stack frame, and the
     third loaded a value before making its frame: found at that frame, the segment lost two functions and the first
@@ -127,14 +166,14 @@ def test_discovered_code_preserves_the_original_explicit_bss_extent(tmp_path, mo
     options.initialize(changed, [path])
     main = initialize_segments(changed["segments"])[0]
     bss = next(s for s in main.subsegments if s.type == "bss")
-    assert (main.rom_end, main.vram_end) == (0x200, 0x80001480)
+    assert (main.rom_end, main.vram_end) == (0x1000, 0x80001480)
     assert (bss.vram_start, bss.vram_end) == (0x80001400, 0x80001480)
     exported = _segments(changed)[0]
     assert exported["bss_size"] == 0x80
-    assert changed["segments"][0]["bss_size"] == 0xE80  # export does not mutate splat's parent extent
+    assert changed["segments"][0]["bss_size"] == 0x80  # the recovered code stays within its original parent
     # Repeating discovery must not grow the BSS a second time.
     code.add_segments(path, tmp_path, "rom.z64", log=lambda _: None)
-    assert yaml.safe_load(path.read_text())["segments"][0]["bss_size"] == 0xE80
+    assert yaml.safe_load(path.read_text())["segments"][0]["bss_size"] == 0x80
 
 
 def test_a_function_longer_than_the_quiet_stretch_joins_its_neighbours():

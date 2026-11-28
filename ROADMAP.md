@@ -122,6 +122,11 @@
 - Done: N64 imports recover boot programs stored in loader-referenced ERZ pages, checking each
   page's RNC checksum and the loader's destination and call. Exports verify the linked program
   against the decoded pages before retaining the original cartridge encoding.
+- Done: N64 imports scan separately decompressed code blocks independently and leave the
+  artificial padding between them as raw bytes, so inferred code ranges do not join different blocks.
+  A uniquely supported linked address is recovered when at least eight independently called bodies
+  close on that mapping; a fragment without its own closed target retains its prior placement.
+  Planned: review blocks whose mappings are ambiguous or exceed the bounded evidence search.
 - Done: N64 imports recover a whole gap between two code segments that share a mapping
   when the game's data stores the gap's start as a pointer and the gap is one balanced
   frame (a racing game's command handlers, 3.5 and 8 KB, called only through a table).
