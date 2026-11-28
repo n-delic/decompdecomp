@@ -2,7 +2,7 @@
 import copy
 
 
-def restore_cut_banks(config):
+def restore_cut_banks(config, *, restored=None):
     """Rejoin redundant fragments that cut a scoped bank before its own children.
 
     Old split configurations can contain top-level discoveries inside a code bank,
@@ -49,9 +49,65 @@ def restore_cut_banks(config):
                     and len(subs) == 1 and isinstance(subs[0], list) and len(subs[0]) >= 2
                     and subs[0][0] == fragment['start'] and subs[0][1] == 'c')
         if fragments and all(redundant(fragment) for fragment in fragments):
+            if restored is not None:
+                restored.append((bank['start'], next_start, start(segments[end_index])))
             del segments[index + 1:end_index]
         index += 1
     return result
+
+
+def restore_matched_entries(config, functions, restored):
+    """Keep saved entries visible in the portion of a rejoined bank Splat missed."""
+    for bank_start, tail_start, bank_end in restored:
+        bank = next(s for s in config['segments'] if isinstance(s, dict) and s.get('start') == bank_start)
+        subs = bank.get('subsegments', [])
+        originals = [list(s) for s in subs if isinstance(s, list) and len(s) >= 2 and isinstance(s[0], int)]
+        for fn in functions:
+            row = dict(fn)
+            lo, size, vram = row.get('rom_offset'), row.get('size'), row.get('vram')
+            if (row.get('status') != 'matched' or type(lo) is not int or type(size) is not int
+                    or type(vram) is not int or size <= 0 or not tail_start <= lo < lo + size <= bank_end
+                    or bank['vram'] + lo - bank_start != vram):
+                continue
+            hi = lo + size
+            current = [s for s in subs if isinstance(s, list) and len(s) >= 2 and isinstance(s[0], int)]
+            source = max((s for s in current if s[0] <= lo), key=lambda s: s[0], default=None)
+            original = max((s for s in originals if s[0] <= lo), key=lambda s: s[0], default=None)
+            if (source is None or original is None or source[1] not in ('c', 'bin', 'hasm')
+                    or any(lo < s[0] < hi and s[1] != source[1] for s in current)):
+                continue
+            parent = max((s for s in originals if s[0] <= lo and s[1] == 'c' and len(s) > 2),
+                         key=lambda s: s[0], default=None)
+            for at in (lo, hi):
+                if at == bank_end:
+                    continue
+                previous = next((s for s in current if s[0] == at), None)
+                if previous is not None and not (at == lo and previous[1] == 'bin'):
+                    continue
+                prefix = str(parent[2] if parent else bank.get('name', 'code'))
+                directory, _, basename = prefix.rpartition('/')
+                stem = f'{basename[:180]}_{at:06X}'
+                name = f'{directory}/{stem}' if directory else stem
+                used = {s[2] for s in subs if isinstance(s, list) and len(s) > 2}
+                suffix = 1
+                while name in used:
+                    name = f'{directory}/{stem}_{suffix}' if directory else f'{stem}_{suffix}'
+                    suffix += 1
+                kind = 'c' if at == lo else original[1]
+                if previous is None:
+                    subs.append([at, kind, name])
+                else:
+                    previous[1:] = [kind, name]
+            def offset(sub, bank_start=bank_start, bank=bank):
+                if isinstance(sub, list) and sub:
+                    return sub[0]
+                if isinstance(sub, dict):
+                    if isinstance(sub.get('start'), int):
+                        return sub['start']
+                    if isinstance(sub.get('vram'), int):
+                        return bank_start + sub['vram'] - bank['vram']
+                return float('inf')
+            subs.sort(key=offset)
 
 
 def extend_config(config, functions):
