@@ -22,6 +22,7 @@ mod native;
 mod rom_judge;
 mod desktop_judge;
 mod entry_fixes;
+mod scoring;
 mod twins_prints;
 mod mips_link;
 mod mips_elf;
@@ -1088,6 +1089,9 @@ fn main() {
     }
     if args.as_slice() == ["twins-prints"] {
         std::process::exit(twins_prints::serve());
+    }
+    if args.as_slice() == ["scoring-diff"] {
+        std::process::exit(scoring::serve());
     }
     gateway_main(args);
 }
