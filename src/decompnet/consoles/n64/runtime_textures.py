@@ -65,6 +65,7 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
             # Some boot menus default to retrying an unavailable save device.
             # A second, bounded input path selects the next option before trying
             # the usual title buttons. It uses the same isolated save as above.
+            pak_inputs = ''
             if not run.timed_out and not direct and not any(a.get('textures') for a in packed):
                 log('No textures were observed; trying an alternate menu selection.')
                 for path in dumps.values():
@@ -109,6 +110,7 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
                     path.unlink(missing_ok=True)
                 inputs = '120:B,128:,240:B,248:,360:B,368:,' + ','.join(
                     f'{vi}:START,{vi+8}:,{vi+60}:A,{vi+68}:' for vi in range(600, VIS[-1], 120))
+                pak_inputs = inputs
                 run = emulator.run(rom, VIS[-1], inputs=inputs, dumps=dumps,
                                    timeout=120, expansion_pak=expansion)
                 snapshots = [path.read_bytes() for path in dumps.values() if path.is_file()]
@@ -225,16 +227,17 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
             # palette: the game may reuse its memory before the next snapshot.
             from decompassets.n64 import (
                 runtime_deflate_ci8,
+                runtime_lsb_lz,
                 runtime_lzw_textures,
                 runtime_variable_lz,
                 runtime_variable_lz_models,
             )
             frame_assets = []
-            recognizers = [module for module in (runtime_lzw_textures, runtime_deflate_ci8, runtime_variable_lz, runtime_variable_lz_models)
+            recognizers = [module for module in (runtime_lzw_textures, runtime_deflate_ci8, runtime_lsb_lz, runtime_variable_lz, runtime_variable_lz_models)
                            if module.has_resources(image, check)]
             if recognizers and not run.timed_out:
                 log('Checking submitted graphics frames for compressed textures.')
-                for inputs in ('', loaded_code.inputs(VIS[-1])):
+                for inputs in ('', loaded_code.inputs(VIS[-1]), *([pak_inputs] if pak_inputs else [])):
                     frames = {n: Path(folder)/f'lzw-{n}.ram' for n in (500, 1000, 1400, 1800, 2200)}
                     for path in frames.values():
                         path.unlink(missing_ok=True)
