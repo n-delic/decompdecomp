@@ -34,6 +34,17 @@ def fixture(order='big'):
     return image,[dict(rom_start=0x1100,rom_end=0x1108,vram=0x80001100)]
 
 
+@pytest.mark.parametrize('order', ['big', 'little'])
+def test_switch_guard_allows_float_subtraction_in_delay_slot(order):
+    image, ranges = fixture(order)
+    image[0x1008:0x100c] = (0x460c3001).to_bytes(4, order)
+    result = jump_table(image, 0x1000, 0x103c, 0x80001000, 0x101c, order, ranges)
+    assert result['state'] == 'validated' and result['entry_count'] == 2
+    assert extent(image, 0x1000, 0x103c, 0x80001000, order, table_ranges=ranges)['flow_closed']
+    image[0x1008:0x100c] = (0x44031000).to_bytes(4, order)  # mfc1 overwrites the index
+    assert jump_table(image, 0x1000, 0x103c, 0x80001000, 0x101c, order, ranges) is None
+
+
 def test_callback_candidate_matching_checks_for_cancellation(monkeypatch):
     from decompnet.arch import mips_indirect
 

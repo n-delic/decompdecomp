@@ -192,8 +192,8 @@ def _guard_slot(word, index, condition):
             # A scheduled load may fill the same gap if it preserves both
             # registers used by the bounds check and table index.
             or word >> 26 == 35 and (word >> 16) & 31 not in (index, condition)
-            # FP multiply and move cannot change either general-purpose guard register.
-            or word & 0xffe0003f in (0x46000002, 0x46000006))
+            # These FP operations cannot change either general-purpose guard register.
+            or word & 0xffe0003f in (0x46000001, 0x46000002, 0x46000006))
 
 
 def _prescaled_guard(image, start, end, at, order, vram):
