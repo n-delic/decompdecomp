@@ -130,7 +130,11 @@ def complete(image, segments, banks, taken=(), log=print, *, table_ranges=(), wh
         pending={at:body for at,body in bodies.items() if at not in accepted}
         while pending:
             progress=False
-            for at,body in list(pending.items()):
+            # A called entry can precede a stack frame whose own calls would
+            # otherwise make that interior frame look independently viable.
+            # Give direct entries first choice; independent interior calls
+            # still reject the enclosing body above.
+            for at,body in sorted(pending.items(), key=lambda item: (item[1][2] not in calls, item[0])):
                 a,b,v=body;mapping=v-a
                 if independent(a,b,v):continue
                 anchored=v in entries or linked_frame(a,b,v) or any(base-start==mapping and

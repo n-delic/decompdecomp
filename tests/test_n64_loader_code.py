@@ -24,6 +24,13 @@ def test_direct_leaf_and_adjacent_quiet_frame_are_found_in_entire_bank():
     assert complete(image,[],banks,taken)==[(0x4000,0x4010,BASE),(0x4010,0x4028,BASE+16)]
 
 
+def test_called_prefix_wins_over_an_unreferenced_inner_frame():
+    frame = [0x27bdffe8, 0xafbf0014, jal(BASE+0x80), 0, 0x8fbf0014, 0x03e00008, 0x27bd0018]
+    words = [0x24020001, 0x24030002] + frame + [0]*(32-9) + LEAF
+    image, taken, banks = setup(words, [BASE])
+    assert (0x4000, 0x4024, BASE) in complete(image, [], banks, taken)
+
+
 def test_directly_called_trapping_stack_frame_is_recovered_as_a_complete_body():
     # ADDI, unlike ADDIU, traps on overflow; it is real assembly rather than a C frame.
     body=[0x23bdfff8,0xafbf0000,0x8fbf0000,0x03e00008,0x23bd0008]
