@@ -217,12 +217,14 @@ def find(rom, boot_ranges):
         boot_raw_deflate,
         boot_refpack,
         boot_rnc2,
+        boot_rnx,
         boot_two_bit,
     )
     return (boot_compact_mio.find(rom, boot_ranges) or boot_raw_deflate.find(rom, boot_ranges) or boot_brs.find(rom, boot_ranges)
             or boot_byte_lz.find(rom, boot_ranges)
             or boot_lzss.find(rom, boot_ranges) or boot_huffman.find(rom, boot_ranges) or boot_refpack.find(rom, boot_ranges)
-            or boot_two_bit.find(rom, boot_ranges) or boot_rnc2.find(rom, boot_ranges) or boot_erz.find(rom, boot_ranges))
+            or boot_two_bit.find(rom, boot_ranges) or boot_rnc2.find(rom, boot_ranges) or boot_erz.find(rom, boot_ranges)
+            or boot_rnx.find(rom, boot_ranges))
 
 
 def verify_analysis(rom, expanded, boot_ranges):
@@ -263,7 +265,7 @@ def inline_tables(text):
 def add(config, workdir, image, rom, boot_ranges, log):
     if not (programs := find(rom, boot_ranges)):
         return None
-    from . import boot_brs, boot_byte_lz, boot_erz, boot_lzss, boot_rnc2, boot_two_bit
+    from . import boot_brs, boot_byte_lz, boot_erz, boot_lzss, boot_rnc2, boot_rnx, boot_two_bit
     from .boot_mapping import extend_startup_descriptor, extend_startup_trap
 
     extend_startup_trap(config, rom, log)
@@ -276,6 +278,7 @@ def add(config, workdir, image, rom, boot_ranges, log):
     expanded = bytearray(rom)
     two_bit = boot_two_bit.find(rom, boot_ranges) or boot_rnc2.find(rom, boot_ranges) or boot_erz.find(rom, boot_ranges)
     byte_lz = boot_byte_lz.find(rom, boot_ranges)
+    rnx = boot_rnx.find(rom, boot_ranges)
     repeated = {vram for vram, _, _ in programs if sum(vram == other for other, _, _ in programs) > 1}
     # Distinct starting addresses can still overlap when one program extends
     # into another overlay's slot; all programs then need scoped symbols.
@@ -302,7 +305,9 @@ def add(config, workdir, image, rom, boot_ranges, log):
             text = text[8:]
         sections = boot_lzss.startup_sections(text, vram) if boot_lzss.find(rom, boot_ranges) else None
         two_bit_start = boot_two_bit.code_start(text) if two_bit and any(vram == p[0] for p in two_bit) else None
-        if byte_lz and any(vram == p[0] for p in byte_lz):
+        if rnx and any(vram == p[0] for p in rnx):
+            parts = [[start, 'data', f'{name}_startup_data'], [start + boot_rnx.CODE_START, 'c', name]]
+        elif byte_lz and any(vram == p[0] for p in byte_lz):
             parts = [[start, 'data', f'{name}_startup_data'], [start + 64, 'c', name]]
         elif two_bit_start:
             parts = [[start, 'data', f'{name}_startup_data'], [start + two_bit_start, 'c', name]]
