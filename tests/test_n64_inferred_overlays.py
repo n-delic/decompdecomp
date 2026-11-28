@@ -325,3 +325,13 @@ def test_extend_tail_wrapper_requires_separated_entry_and_mapped_tail():
     assert inferred_overlays.extend_tail_wrapper(image, bank, []) == bank
     struct.pack_into('>I', image, 0x30, 0x10000001)
     assert inferred_overlays.extend_tail_wrapper(image, bank, target) == bank
+
+
+def test_single_inferred_bank_scopes_resident_bss():
+    config = {'segments': [
+        {'type': 'code', 'name': 'main', 'start': 0x1000, 'vram': 0x80000400, 'bss_size': 0x1000},
+        {'type': 'code', 'name': 'bank', 'start': 0x2000, 'vram': 0x80001800},
+        [0x2800],
+    ]}
+    assert inferred_overlays.apply_scopes(config, [(0x2000, 0x2800, 0x80001800)], {0x2000})
+    assert config['segments'][0]['exclusive_ram_id'] == config['segments'][1]['exclusive_ram_id']

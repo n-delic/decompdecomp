@@ -812,7 +812,7 @@ def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_rep
                     coverage.write_text(json.dumps(list(dict.fromkeys([*notes, message]))), encoding='utf-8')
             else:
                 log('Kept the original code mappings: relocation-backed fragments conflict with resident code.')
-    if overlaps:
+    if scoped:
         import copy
         unscoped_cfg = copy.deepcopy(cfg)
     insert_segments(config, cfg, found, len(rom))
@@ -826,8 +826,7 @@ def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_rep
             split._add_symbols(workdir / 'symbol_addrs.txt', symbols)
     if scoped:
         cfg = yaml.safe_load(config.read_text(encoding='utf-8'))
-        inferred_overlays.scope(cfg, found, scoped)
-        if overlaps and not inferred_overlays.scope_resident_bss(cfg):
+        if not inferred_overlays.apply_scopes(cfg, found, scoped):
             log('Kept the original code mappings: the observed overlays conflict with resident code scopes.')
             insert_segments(config, unscoped_cfg, before_mapping, len(rom))
         else:
