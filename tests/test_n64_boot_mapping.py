@@ -109,6 +109,30 @@ def test_startup_break_belongs_to_the_boot_stub_before_a_called_helper(tmp_path,
     assert main.vram == boundary+0x7ffff400
 
 
+@pytest.mark.parametrize('case', ['valid', 'named_trap', 'pointer', 'branch', 'other_helper', 'bad_target'])
+def test_startup_trap_before_cp0_helper_preserves_its_entry(tmp_path, case):
+    from decompnet.consoles.n64.boot_mapping import extend_startup_trap, preserved_startup_trap
+
+    path, rom, _, _ = layout(tmp_path)
+    image = bytearray(rom)
+    at = 0x1080
+    vram = at+0x7ffff400
+    target = vram if case=='named_trap' else vram+0x38 if case!='bad_target' else vram+0x200
+    call = 0x0c000000 | ((target >> 2) & 0x3ffffff)
+    struct.pack_into('>4I', image, at-8, call, 0, 0x0001008d, 0)
+    struct.pack_into('>4I', image, at+8, 0x40849000, 0x40809800,
+                     0x03e00008 if case!='other_helper' else 0x03e00009, 0)
+    if case=='pointer':struct.pack_into('>I', image, 0x1010, vram+4)
+    if case=='branch':struct.pack_into('>I', image, at+28, 0x08000000 | ((vram >> 2) & 0x3ffffff))
+    assert extend_startup_trap(path, image, log=lambda *_:None) == (case=='valid')
+    main = segments_from_config(path)[1]
+    assert main.rom_start == at+(8 if case=='valid' else 0)
+    if case=='valid':
+        cfg = yaml.safe_load(path.read_text())
+        assert preserved_startup_trap(cfg,image,at,vram,4)
+        assert not preserved_startup_trap(cfg,image,at,vram,8)
+
+
 @pytest.mark.parametrize('referenced', [False, True])
 def test_boot_data_terminator_precedes_a_called_aligned_frame(tmp_path, referenced):
     from decompnet.consoles.n64.boot_mapping import extend_startup_data

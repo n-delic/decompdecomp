@@ -611,6 +611,9 @@ def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_rep
     )
 
     if result := overlays.add(config, workdir, image, log):
+        from .boot_mapping import extend_startup_trap
+
+        extend_startup_trap(config, (workdir / result).read_bytes(), log)
         return result
 
     original = image
