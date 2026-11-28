@@ -131,8 +131,8 @@
 - Done: N64 imports recover audited byte-run and backreference programs when the loader,
   mappings and complete decoded images agree, including a program observed at two addresses;
   exports check the decoded bytes against the cartridge.
-- Done: N64 imports recover an audited chunked bitstream boot program, preserving its data prefix
-  and checking the decoded bytes when exporting. Other loader variants need separate evidence.
+- Done: N64 imports recover audited chunked bitstream boot programs and runtime-confirmed overlapping banks,
+  preserving data prefixes and checking decoded bytes when exporting. Other loader variants need separate evidence.
 - Done: N64 imports recover boot programs stored in loader-referenced ERZ pages, checking each
   page's RNC checksum and the loader's destination and call. Exports verify the linked program
   against the decoded pages before retaining the original cartridge encoding.
