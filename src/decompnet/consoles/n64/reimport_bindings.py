@@ -208,6 +208,77 @@ def _split_direct_data(fn, source, header, candidate):
     return '#ifdef PORT\n' + port + '\n#else\n' + rom + '\n#endif\n' + source
 
 
+def _grouped_data(fn, source, header, candidate):
+    """Separate distinct marked aliases before probing their loader relocations."""
+    span = csource.find(source, fn['name'])
+    if span is None:
+        return None
+    clean = csource._blank(source)
+    pattern = r'\bXDATA\s*\(\s*([A-Za-z_]\w*)\s*,\s*[A-Za-z_]\w*\s*,\s*(?:0[xX][0-9a-fA-F]+|[0-9]+)\s*\)'
+    matches = list(re.finditer(pattern, clean[span[0]:span[1]]))
+    tokens = sorted({m.group(1) for m in matches})
+    low = [r for r in candidate.relocs if r.type == 6 and r.symbol == 'D_00000000']
+    if len(tokens) < 2 or len(low) < len(tokens):
+        return None
+    definitions = csource._blank(header + '\n' + source)
+    for token in tokens:
+        if token == 'D_00000000':
+            continue
+        pattern = r'(?m)^\s*#\s*define\s+' + re.escape(token) + r'\s+([^\n]*)$'
+        values = re.findall(pattern, definitions)
+        if not values or any(value.strip() != 'D_00000000' for value in values):
+            return None
+        if re.search(r'(?m)^\s*#\s*undef\s+' + re.escape(token) + r'\b', definitions):
+            return None
+    declaration = re.search(r'(?m)^[ \t]*extern[ \t]+[^;{}#\n]+\bD_00000000[ \t]*;', csource._blank(header))
+    if declaration is None:
+        return None
+    prototype = header[declaration.start():declaration.end()]
+    names = {token: f'decomp_overlay_group_ref_{index}' for index, token in enumerate(tokens, 1)}
+    wrappers = []
+    for index, match in enumerate(matches, 1):
+        name = f'decomp_overlay_group_site_{index}'
+        if re.search(r'\b' + re.escape(name) + r'\b', definitions):
+            return None
+        start, end = span[0] + match.start(), span[0] + match.end()
+        a, b = span[0] + match.start(1), span[0] + match.end(1)
+        wrappers.append((start, end, name, source[start:end], source[start:a] + names[match.group(1)] + source[b:end]))
+    if any(re.search(r'\b' + re.escape(name) + r'\b', definitions) for name in names.values()):
+        return None
+    for start, end, name, _, _ in reversed(wrappers):
+        source = source[:start] + name + source[end:]
+    declarations = [rename_identifiers(prototype, {'D_00000000': name}) for name in names.values()]
+    port = '\n'.join(f'#define {name} {original}' for _, _, name, original, _ in wrappers)
+    rom = '\n'.join(f'#define {name} {changed}' for _, _, name, _, changed in wrappers)
+    return '\n'.join(declarations) + '\n#ifdef PORT\n' + port + '\n#else\n' + rom + '\n#endif\n' + source
+
+
+def _probe_grouped(net, project, fn, source, header, candidate, target, info):
+        grouped = _grouped_data(fn, source, header, candidate)
+        if grouped:
+            built = net._compile(project, header, grouped, fn)
+            if not built.ok:
+                return None
+            separated, _, _ = net._evaluate(fn, project, built.obj)
+            bound = overlay_donor_aliases.explicit_symbol_bindings(
+                grouped, header, separated, target, net.console(project).separate_overlay_reference)
+            if not bound or not bound[1].startswith(header):
+                return None
+            extra = '\n#ifndef PORT\n' + bound[1][len(header):] + '\n#endif\n'
+            variants = [grouped + '\n' + extra]
+            macro = _macro_variant(fn, grouped, header, separated, info, extra)
+            variants.extend(variant for variant in (macro,) if variant)
+            for prefer_decl in (True, False):
+                direct = _direct_variant(fn, grouped, header, separated, target, extra, prefer_decl=prefer_decl)
+                if direct and direct not in variants:
+                    variants.append(direct)
+            for variant in variants:
+                built = net._compile(project, header, variant, fn)
+                if built.ok and net._evaluate(fn, project, built.obj)[1] is True:
+                    return variant
+    return None
+
+
 def retry(net, project, fn, source):
     """Return a rewritten saved source only after its complete module-aware judge passes."""
     try:
@@ -248,6 +319,9 @@ def retry(net, project, fn, source):
             built = net._compile(project, header, variant, fn)
             if built.ok and net._evaluate(fn, project, built.obj)[1] is True:
                 return variant
+        grouped = _probe_grouped(net, project, fn, source, header, candidate, target, info)
+        if grouped:
+            return grouped
         split = _split_direct_data(fn, source, header, candidate)
         if split:
             built = net._compile(project, header, split, fn)

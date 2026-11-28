@@ -1518,6 +1518,23 @@ def test_reimport_separates_data_uses_only_outside_macros():
     assert _split_direct_data(fn, source, header, candidate) is None
 
 
+def test_reimport_groups_repeated_data_aliases_and_preserves_port_expressions():
+    from types import SimpleNamespace
+
+    from decompnet.consoles.n64.reimport_bindings import _grouped_data
+
+    fn = {'name': 'work'}
+    source = 'int work(void) { return XDATA(first, a, 0) + XDATA(first, a, 0) + XDATA(second, b, 0); }'
+    header = 'extern int D_00000000;\n#define first D_00000000\n#define second D_00000000\n'
+    candidate = SimpleNamespace(relocs=[SimpleNamespace(type=6, symbol='D_00000000') for _ in range(3)])
+    result = _grouped_data(fn, source, header, candidate)
+    assert '#define decomp_overlay_group_site_1 XDATA(first, a, 0)' in result
+    assert '#define decomp_overlay_group_site_2 XDATA(decomp_overlay_group_ref_1, a, 0)' in result
+    assert '#define decomp_overlay_group_site_3 XDATA(decomp_overlay_group_ref_2, b, 0)' in result
+    assert _grouped_data(fn, source, header.replace('#define first D_00000000', '#define first other'),
+                         candidate) is None
+
+
 def test_reimport_binding_retry_returns_only_exact_result(monkeypatch):
     import json
     from types import SimpleNamespace
