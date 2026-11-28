@@ -91,8 +91,25 @@ def add(config, workdir, rom, resident, records, log):
             parts = pieces
         remaining.extend((lo, hi, base + lo-start) for lo, hi in parts)
     cfg = yaml.safe_load(config.read_text(encoding='utf-8'))
+    original_code = [s for s in cfg.get('segments', []) if isinstance(s, dict) and s.get('type') == 'code']
+    original_starts = {s.get('start') for s in original_code}
     insert_segments(config, cfg, remaining, len(rom))
     segments = {s['start']: s for s in cfg['segments'] if isinstance(s, dict)}
+    # Splat treats the convex hull of all unscoped code as global. A small
+    # independently inferred range above the overlay slots can therefore make
+    # every declared bank appear to overlap global RAM, even when the actual
+    # resident code ends below the slots. Keep that range in its own scope.
+    overlay_start = min(bank.base for bank in records)
+    overlay_end = max(bank.bss_end for bank in records)
+    has_lower_global = any(isinstance(s.get('vram'), int) and s['vram'] < overlay_start
+                           and not s.get('exclusive_ram_id') for s in original_code)
+    if has_lower_global:
+        for start, _, base in remaining:
+            segment = segments.get(start)
+            if (base >= overlay_end and start not in original_starts and segment
+                    and segment.get('type') == 'code' and segment.get('vram') == base
+                    and not segment.get('exclusive_ram_id')):
+                segment['exclusive_ram_id'] = f'sectioned_extra_{base:08X}'
     for index, bank in enumerate(records):
         name = f'sectioned_overlay_{index:02d}'
         data = bank.start + bank.text_end-bank.base
