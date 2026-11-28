@@ -242,3 +242,16 @@ def test_unentered_invalid_jump_before_closed_frame_is_data():
     struct.pack_into('>I', image, 16, 0x0a7d2044)
     struct.pack_into('>I', image, 28, 0)
     assert not list(inline_data._unentered_invalid_jump_prefixes(bytes(image), ranges))
+
+
+def test_verified_table_at_segment_start_is_not_code(tmp_path, monkeypatch):
+    table = bytes(8) + b'pointer!' + bytes(16)
+    monkeypatch.setattr(inline_data, '_TABLES', ((table[:16].hex(), len(table), hashlib.sha256(table).hexdigest()),))
+    image = table + bytes.fromhex('27bdffe803e0000827bd0018')
+    config = tmp_path / 'game.yaml'
+    config.write_text(yaml.safe_dump(dict(segments=[
+        dict(type='code', start=0, vram=0x80000000, subsegments=[[0, 'c', 'bank']]), [len(image)],
+    ])))
+    inline_data.apply(config, image, lambda _: None)
+    assert code_ranges(config) == [(len(table), len(image), 0x80000000 + len(table))]
+    assert (0, len(table)) not in list(inline_data.spans(table[:-1] + b'?' + image[len(table):]))
