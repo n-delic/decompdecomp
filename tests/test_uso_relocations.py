@@ -1457,7 +1457,10 @@ def test_reimport_data_retry_requires_a_site_for_each_placeholder_relocation():
     target = SimpleNamespace(relocs=[SimpleNamespace(offset=4, type=6, symbol='uso_1_sym_2', addend=0),
                                      SimpleNamespace(offset=12, type=6, symbol='uso_1_sym_3', addend=0)])
     result = _data_variant(fn, source, header, candidate, target)
-    assert 'XDATA(uso_1_sym_2, a, 0)' in result and 'XDATA(uso_1_sym_3, b, 0)' in result
+    assert '#define decomp_overlay_data_1 XDATA(first, a, 0)' in result
+    assert '#define decomp_overlay_data_1 XDATA(uso_1_sym_2, a, 0)' in result
+    assert '#define decomp_overlay_data_2 XDATA(second, b, 0)' in result
+    assert '#define decomp_overlay_data_2 XDATA(uso_1_sym_3, b, 0)' in result
     assert _data_variant(fn, source, header.replace('#define first D_00000000', '#define first other'),
                          candidate, target) is None
     target.relocs[1].addend = 4

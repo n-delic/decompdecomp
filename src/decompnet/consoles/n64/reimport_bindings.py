@@ -60,7 +60,7 @@ def _data_variant(fn, source, header, candidate, target):
     if span is None:
         return None
     clean = csource._blank(source)
-    pattern = r'\bXDATA\s*\(\s*([A-Za-z_]\w*)\s*,'
+    pattern = r'\bXDATA\s*\(\s*([A-Za-z_]\w*)\s*,\s*[A-Za-z_]\w*\s*,\s*(?:0[xX][0-9a-fA-F]+|[0-9]+)\s*\)'
     sites = list(re.finditer(pattern, clean[span[0]:span[1]]))
     definitions = csource._blank(header + '\n' + source)
     for site in sites:
@@ -73,7 +73,7 @@ def _data_variant(fn, source, header, candidate, target):
             return None
         if re.search(r'(?m)^\s*#\s*undef\s+' + re.escape(token) + r'\b', definitions):
             return None
-    sites = [(span[0] + m.start(1), span[0] + m.end(1)) for m in sites]
+    sites = [(span[0] + m.start(), span[0] + m.end(), span[0] + m.start(1), span[0] + m.end(1)) for m in sites]
     low = sorted((r for r in candidate.relocs if r.type == 6 and r.symbol == 'D_00000000'),
                  key=lambda r: r.offset)
     if not sites or len(sites) != len(low):
@@ -89,10 +89,20 @@ def _data_variant(fn, source, header, candidate, target):
         return None
     prototype = header[declaration.start():declaration.end()]
     bindings = [r.symbol for r in wanted]
-    for (start, end), binding in reversed(list(zip(sites, bindings))):
-        source = source[:start] + binding + source[end:]
+    wrappers = []
+    for index, ((start, end, token_start, token_end), binding) in enumerate(zip(sites, bindings), 1):
+        name = f'decomp_overlay_data_{index}'
+        if re.search(r'\b' + re.escape(name) + r'\b', definitions):
+            return None
+        original = source[start:end]
+        rewritten = source[start:token_start] + binding + source[token_end:end]
+        wrappers.append((name, original, rewritten))
+    for (start, end, _, _), (name, _, _) in reversed(list(zip(sites, wrappers))):
+        source = source[:start] + name + source[end:]
     declarations = [rename_identifiers(prototype, {'D_00000000': binding}) for binding in sorted(set(bindings))]
-    return '\n'.join(declarations) + '\n' + source
+    port = '\n'.join(f'#define {name} {original}' for name, original, _ in wrappers)
+    rom = '\n'.join(f'#define {name} {rewritten}' for name, _, rewritten in wrappers)
+    return '\n'.join(declarations) + '\n#ifdef PORT\n' + port + '\n#else\n' + rom + '\n#endif\n' + source
 
 
 def retry(net, project, fn, source):
