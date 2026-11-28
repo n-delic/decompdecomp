@@ -1544,7 +1544,7 @@ def test_undefined_branch_in_link_delay_does_not_cut_another_body(case):
     assert head.size == (32 if case == 'invalid delay' else 12)
 
 
-@pytest.mark.parametrize('case', ['valid', 'wrong_slot', 'missing_restore', 'entered_gap', 'entered_tail', 'gap_data', 'terminal_jump', 'tail_jump', 'out_of_frame'])
+@pytest.mark.parametrize('case', ['valid', 'wrong_slot', 'missing_restore', 'entered_gap', 'entered_tail', 'gap_data', 'terminal_jump', 'terminal_break', 'tail_jump', 'out_of_frame'])
 def test_saved_stack_body_retains_independently_entered_restore(case):
     from decompnet.rom.automatic_boundaries import saved_stack_shared_tail
 
@@ -1556,6 +1556,7 @@ def test_saved_stack_body_retains_independently_entered_restore(case):
             0, 0x0040e821, *loads, 0x03e00008, 0x27bd0040]
     if case == 'missing_restore':tail[4] ^= 4
     if case == 'terminal_jump':head[-2] = 0x08000400
+    if case == 'terminal_break':head[-1] = 0x0000000d
     if case == 'tail_jump':tail[5] = 0x08000400
     if case == 'out_of_frame':
         head[1] = (head[1] & ~0xffff) | 0x40

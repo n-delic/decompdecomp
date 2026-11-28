@@ -1058,7 +1058,9 @@ def saved_stack_shared_tail(head, tail, image, order, segments, entered, data):
     if (before[0] >> 16 != 0x27bd or not before[0] & 0x8000 or not 8 <= frame <= 0x1000
             or frame % 8 or after[-2:] != [JR_RA, 0x27bd0000 | frame]
             or JR_RA in before or not any(w >> 26 == 0 and w & 63 == 9 for w in before)
-            or _has_delay_slot(before[-1]) or any(_has_delay_slot(w) for w in after[:-2])
+            or _has_delay_slot(before[-1]) or before[-1] == 0x42000018
+            or before[-1] >> 26 == 0 and before[-1] & 63 in (12, 13)
+            or any(_has_delay_slot(w) for w in after[:-2])
             or before[-2] >> 26 == 2 or before[-2] >> 26 == 0 and before[-2] & 63 == 8):
         return False
     # The same saved register and stack offset must be restored, including
