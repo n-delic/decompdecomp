@@ -315,12 +315,44 @@ def _unentered_invalid_jump_prefixes(image, ranges):
     for start in candidates.values():yield start, start+4
 
 
+def unentered_rsp_markers(image, ranges):
+    """An unentered no-op follows a closed epilogue immediately before RSP text."""
+    from ...arch.mips_references import references
+    from .rsp_prefix import graphics_spans
+
+    candidates = {}
+    for start, _ in graphics_spans(image):
+        at = start-4
+        if at < 8 or image[at-8:at-4] != bytes.fromhex('03e00008'):
+            continue
+        delay, word = struct.unpack_from('>2I', image, at-4)
+        if (delay >> 16 != 0x27bd or not 0 < delay & 0xffff <= 0x400
+                or word >> 26 or (word >> 21) & 31 or (word >> 11) & 31 or word & 63 not in (0, 2, 3, 56, 58, 59, 60, 62, 63)):
+            continue
+        owners = [(lo, hi, base) for lo, hi, base in ranges if lo <= at < hi]
+        if len(owners) != 1:
+            continue
+        lo, _, base = owners[0]
+        address = base+at-lo
+        if (sum(v <= address < v+hi-lo for lo,hi,v in ranges) != 1
+                or address.to_bytes(4, 'big') in image):
+            continue
+        candidates[address] = at
+    if not candidates:
+        return
+    for lo, hi, base in ranges:
+        for target, _, _ in references(image, lo, min(hi, len(image)), base):
+            candidates.pop(target, None)
+    for at in candidates.values():
+        yield at, at+4
+
+
 def apply(config, image, log=print):
     """Split mapped text subsegments at verified inline data boundaries."""
     code = split.code_ranges(config)
     regions = sorted([*spans(image), *_startup_padding(image, code), *_stack_padding(image, code),
                       *_leading_code_pointer_tables(image, code), *_unentered_call_words(image, code),
-                      *_unentered_invalid_jump_prefixes(image, code)])
+                      *_unentered_invalid_jump_prefixes(image, code), *unentered_rsp_markers(image, code)])
     if not regions:
         return
     ranges = {start: end for start, end, _ in code}

@@ -1,7 +1,9 @@
 """Proven literal spans split text while retaining every original byte."""
 
 import hashlib
+import struct
 
+import pytest
 import yaml
 
 from decompnet.consoles.n64 import inline_data
@@ -255,3 +257,19 @@ def test_verified_table_at_segment_start_is_not_code(tmp_path, monkeypatch):
     inline_data.apply(config, image, lambda _: None)
     assert code_ranges(config) == [(len(table), len(image), 0x80000000 + len(table))]
     assert (0, len(table)) not in list(inline_data.spans(table[:-1] + b'?' + image[len(table):]))
+
+
+@pytest.mark.parametrize('case', ['valid', 'pointer', 'branch', 'not_noop', 'reserved', 'not_epilogue', 'alias'])
+def test_unentered_noop_before_graphics_bootstrap(monkeypatch, case):
+    from decompnet.consoles.n64 import inline_data, rsp_prefix
+
+    image = bytearray(0x200)
+    at, base = 0x7c, 0x80001000
+    struct.pack_into('>3I', image, at-8, 0x03e00008,
+                     0x27bd0058 if case != 'not_epilogue' else 0, 0x24020001 if case == 'not_noop' else 0x0021027b if case == 'reserved' else 0x0001027b)
+    if case == 'pointer':struct.pack_into('>I', image, 0x20, base+at)
+    if case == 'branch':struct.pack_into('>I', image, 0x20, 0x08000000 | (((base+at)>>2)&0x3ffffff))
+    ranges = [(0, len(image), base)]
+    if case == 'alias':ranges.append((0, len(image), base+0x1000))
+    monkeypatch.setattr(rsp_prefix, 'graphics_spans', lambda _: [(at+4, at+0x80)])
+    assert list(inline_data.unentered_rsp_markers(image, ranges)) == ([(at, at+4)] if case == 'valid' else [])
