@@ -28,10 +28,21 @@ def test_observed_overlapping_bank_requires_multiple_correlated_calls():
 
 def test_existing_rom_mapping_and_unchanged_runtime_are_not_reassigned():
     rom, ram, known = fixture()
-    assert not regions(rom, [ram], known + [(0x1100, 0x1400, 0x80200100)])
+    moved = set()
+    assert not regions(rom, [ram], known + [(0x1100, 0x1400, 0x80200100)], moved=moved)
+    assert moved and all(lo <= 0x1100 < 0x1314 <= hi and base-lo == 0x800ff000
+                         for lo, hi, base in moved)
+    # Fewer than three independently observed targets are not mapping evidence.
+    ram[0x101820:0x101830] = bytes(16)
+    moved.clear()
+    assert not regions(rom, [ram], known + [(0x1100, 0x1400, 0x80200100)], moved=moved)
+    assert not moved
+    ram[0x101820:0x101830] = rom[0x2820:0x2830]
     for offset in (0x100, 0x200, 0x300):
         ram[0x100000+offset:0x100000+offset+32] = rom[0x5000+offset-0x100:0x5000+offset-0x100+32]
-    assert not regions(rom, [ram], known)
+    moved.clear()
+    assert not regions(rom, [ram], known, moved=moved)
+    assert not moved
 
 
 def test_longer_observation_requires_many_cross_bank_interior_calls():
