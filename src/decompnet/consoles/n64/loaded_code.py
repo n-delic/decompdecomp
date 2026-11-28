@@ -26,7 +26,7 @@ from pathlib import Path
 from ...arch.mips import JR_RA, is_frame, jal_targets
 
 VIS = 1200  # 20 seconds of the game (PAL 24): about two seconds to run
-DUMPS = (60, 300, 600, 900, 1200)
+DUMPS = (30, 60, 90, 300, 600, 900, 1200)  # Some boot-loaded code is gone before the first menu snapshot.
 CHUNK = 128  # the RAM a function starts with, found once in the ROM, ties RAM to ROM
 RAM = (0x80000400, 0x80800000)
 _TRAP_JUMP = b'\x00\x00\x00\x08'  # jr $zero: a game's exception-dispatched call table

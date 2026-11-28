@@ -8,6 +8,7 @@
 - uso.py / uso_match.py: bounded USO text and relocations, matching and cartridge reconstruction.
 - loader_code.py: full-bank closed-body recovery with CPU call, callback and adjacency evidence.
 - runtime_scoped.py: called code corroborated in RAM despite an overlapping overlay address.
+- runtime_data.py: independently called code observed at a new mapping inside an unowned data tail.
 - reimport_preserve.py: stage existing byte-verified entries omitted by a replacement split.
 - loader_mapping.py: bank mappings corroborated by constant arguments to independent loader helpers.
 - stack_dma.py: stack-argument PI transfers that prove data mapped alongside independently placed code.
