@@ -356,6 +356,10 @@ class Console:
         """Recognise a word whose native container gives it a data role."""
         return False
 
+    def import_nonpointer_ranges(self, image, segments):
+        """Return proven payload ranges that cannot contain function pointers."""
+        return ()
+
     def split_game(self, workdir: Path, picked: Picked, *, symbols: list[str] | None = None, log=print):
         """ROM mode: split the program into functions and data (splat, rom/split.py); a console whose games another
         splitter finds overrides this."""

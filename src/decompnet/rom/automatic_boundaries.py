@@ -277,6 +277,27 @@ def _scan_image_and_references(functions, image, console, starts, slots, store_t
     return _scan_image_and_references_python(functions, image, console, starts, slots, store_tails, shared, names)
 
 
+def _discard_payload_pointers(pointers, image, order, ranges):
+    """Keep an address if any aligned occurrence lies outside proven payloads."""
+    if not ranges or not pointers:
+        return pointers
+    candidates = set()
+    for lo, hi in ranges:
+        for offset in range((lo+3)&~3, hi-3, 4):
+            value = int.from_bytes(image[offset:offset+4],order)
+            if value in pointers:
+                candidates.add(value)
+    for value in candidates:
+        word, start = value.to_bytes(4,order), 0
+        while (offset := image.find(word,start)) >= 0:
+            start = offset+1
+            if offset % 4 == 0 and not any(lo <= offset and offset+4 <= hi for lo,hi in ranges):
+                break
+        else:
+            pointers.discard(value)
+    return pointers
+
+
 def repair(functions, data, image, console, segments, *, symbols=(), log=print, inline_data=()):
     """Keep all original instructions while joining/splitting strictly validated bodies."""
     if console.arch!='mips':return functions
@@ -320,6 +341,7 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
     pointers, references, direct_calls, transfer_targets, reference_bodies = _scan_image_and_references(
         functions, image, console, starts, slots, store_tails, shared, names,
     )
+    pointers = _discard_payload_pointers(pointers, image, order, console.import_nonpointer_ranges(image,segments))
     named_or_pointed = explicit | pointers
     for dest,offset,segment in shared:
         references[dest].discard((offset,segment))

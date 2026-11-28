@@ -6,6 +6,24 @@ from decompassets import formats
 from decompassets.n64.display_lists import _vertex_count
 
 
+def audio_payloads(image, segments):
+    """Only encoded samples bounded by both a BOLT audio member and a stream chain."""
+    from decompassets.n64 import bolt, stream_ima
+
+    members = [m for _, rows in bolt.archives(image, lambda: None) for m in rows
+               if m.kind == 25 and m.stored]
+    if not members:
+        return ()
+    ranges = []
+    for bank in stream_ima.regions(image):
+        for sample in bank['samples']:
+            lo, hi = sample['offset'], sample['offset']+sample['size']
+            if (any(m.offset <= lo and hi <= m.offset+m.expanded for m in members)
+                    and not any(s.rom_start < hi and lo < s.rom_end for s in segments)):
+                ranges.append((lo,hi))
+    return ranges
+
+
 def is_data(image, offset):
     # A G_VTX address followed by the rest of its vertex batch and a triangle.
     if offset >= 12 and offset % 8 == 4 and offset+28 <= len(image):
