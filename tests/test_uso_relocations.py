@@ -1492,6 +1492,27 @@ def test_reimport_direct_retry_separates_each_placeholder_and_preserves_port_cal
     assert _direct_variant(fn, source, header, candidate, target, '') is None
 
 
+def test_reimport_separates_data_uses_only_outside_macros():
+    from types import SimpleNamespace
+
+    from decompnet.consoles.n64.reimport_bindings import _split_direct_data
+
+    fn = {'name': 'work'}
+    source = 'int work(void) { return D_00000000 + D_00000000; }'
+    header = 'extern int D_00000000;\n#define STRINGIFY(x) #x\n'
+    candidate = SimpleNamespace(relocs=[SimpleNamespace(type=6, symbol='D_00000000'),
+                                        SimpleNamespace(type=6, symbol='D_00000000')])
+    result = _split_direct_data(fn, source, header, candidate)
+    assert '#define decomp_overlay_data_ref_1 D_00000000' in result
+    assert 'extern int decomp_overlay_data_ref_2;' in result
+    assert 'return decomp_overlay_data_ref_1 + decomp_overlay_data_ref_2;' in result
+    call_source = source.replace('D_00000000 + D_00000000', 'D_80000000(D_00000000, D_00000000)')
+    assert _split_direct_data(fn, call_source, header, candidate) is not None
+    assert _split_direct_data(fn, source.replace('D_00000000;', 'STRINGIFY(D_00000000);'), header, candidate) is None
+    candidate.relocs.pop()
+    assert _split_direct_data(fn, source, header, candidate) is None
+
+
 def test_reimport_binding_retry_returns_only_exact_result(monkeypatch):
     import json
     from types import SimpleNamespace
