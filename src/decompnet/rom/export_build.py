@@ -436,13 +436,18 @@ def segment_addresses() -> dict[str, int]:
     match the image; the final whole-image comparison remains mandatory.
     """
     from elftools.elf.elffile import ELFFile
+    from elftools.elf.relocation import RelocationSection
 
     from decompnet.arch.mips_source_symbols import bindings
+    from decompnet.candidate_work import scope
     from decompnet.elfobj import _function_symbols
 
     suffixes = ('ROM_START', 'ROM_END', 'VRAM', 'VRAM_END', 'BSS_START', 'BSS_END', 'BSS_SIZE')
     names = {f"{seg['name']}_{suffix}" for seg in B['segments'] for suffix in suffixes}
     addresses = {name: value for name, value in B['symbols'].items() if name in names}
+    unresolved = names - addresses.keys()
+    if not unresolved:
+        return addresses
     image = (ROOT / B['image']).read_bytes()
     evidence = {}
     for seg in B['segments']:
@@ -452,17 +457,37 @@ def segment_addresses() -> dict[str, int]:
             path = ROOT / piece['obj']
             with path.open('rb') as stream:
                 elf = ELFFile(stream)
+                # Only relocations against undefined segment names can supply evidence.
+                # Large assembly objects often contain thousands of unrelated functions.
+                relevant = {}
+                for section in elf.iter_sections():
+                    if not isinstance(section, RelocationSection):
+                        continue
+                    symbols = elf.get_section(section['sh_link'])
+                    offsets = relevant.setdefault(section['sh_info'], [])
+                    for relocation in section.iter_relocations():
+                        symbol = symbols.get_symbol(relocation['r_info_sym'])
+                        if symbol['st_shndx'] == 'SHN_UNDEF' and symbol.name in unresolved:
+                            offsets.append(relocation['r_offset'])
+                for offsets in relevant.values():
+                    offsets.sort()
+                if not any(relevant.values()):
+                    continue
                 spans = {name: span for name, span in _function_symbols(elf).items()
                          if elf.get_section(span[0]).name == '.text'}
             obj = path.read_bytes() if spans else b''
-            for name, (_, start, size) in spans.items():
-                vram = piece['vram'] + start
-                offset = seg['start'] + vram - seg['vram']
-                target = image[offset:offset + size] if offset >= 0 else b''
-                for found in bindings(obj, name, target, vram,
-                                      lambda symbol: None if symbol in names and symbol not in addresses else 0,
-                                      ignore_pc16=True):
-                    evidence.setdefault(found['name'], set()).add(found['address'])
+            with scope():
+                for name, (section, start, size) in spans.items():
+                    offsets = relevant.get(section, ())
+                    at = bisect_left(offsets, start)
+                    if at == len(offsets) or offsets[at] >= start + size:
+                        continue
+                    vram = piece['vram'] + start
+                    offset = seg['start'] + vram - seg['vram']
+                    target = image[offset:offset + size] if offset >= 0 else b''
+                    for found in bindings(obj, name, target, vram,
+                                          lambda symbol: None if symbol in unresolved else 0, ignore_pc16=True):
+                        evidence.setdefault(found['name'], set()).add(found['address'])
     for name, values in evidence.items():
         if len(values) != 1:
             fail(f'Conflicting original startup addresses for {name}; review the segment layout.')
