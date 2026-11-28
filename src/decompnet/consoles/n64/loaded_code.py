@@ -287,7 +287,7 @@ def find(rom_path: Path, rom: bytes, taken, found=(), *, log=print, stop=lambda:
     if moved:
         log(f"{len(moved)} places the split puts at another address than the game runs them: " + ", ".join(
             f"ROM {m['rom']:#x} at {m['split']:#x}, run at {m['runs_at']:#x}" for m in moved[:4]))
-    from . import runtime_mio_chunks, runtime_zlib
+    from . import runtime_mio, runtime_mio_chunks, runtime_zlib
     programs = runtime_zlib.find(rom, dumps, decoded, known+added, check=check)
     from . import runtime_refpack
     occupied_programs = [(0, len(runtime_zlib._payload(rom, row)), row['vram']) for row in programs]
@@ -297,6 +297,9 @@ def find(rom_path: Path, rom: bytes, taken, found=(), *, log=print, stop=lambda:
                                      known+added+occupied_programs, check=check)
     occupied_programs = [(0, len(runtime_zlib._payload(rom, row)), row['vram']) for row in programs]
     programs += runtime_mio_chunks.find(rom, dumps, decoded, known+added+occupied_programs, check=check)
+    occupied_programs = [(0, len(runtime_zlib._payload(rom, row)), row['vram']) for row in programs]
+    programs += runtime_mio.find(Path(rom_path).read_bytes(), dumps, decoded,
+                                 known+added+occupied_programs, check=check)
     overlaps = runtime_overlays.regions(rom, dumps+late_dumps, known+added,
                                        check=getattr(log, 'check_cancel', lambda: None), moved=moved_ranges)
     if overlaps:
