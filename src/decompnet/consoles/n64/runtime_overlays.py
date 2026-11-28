@@ -41,11 +41,12 @@ def ambiguous(rom, known, *, check=lambda: None):
                         continue
                     pop = 0x27bd0000 | ((-first) & 0xffff)
                     if any(int.from_bytes(rom[end:end+4], 'big') == 0x03e00008
-                           and int.from_bytes(rom[end+4:end+8], 'big') == pop
+                           and (int.from_bytes(rom[end+4:end+8], 'big') == pop
+                                or int.from_bytes(rom[end-4:end], 'big') == pop)
                            for end in range(at, min(hi-8, at+512), 4)):
                         found.add(target)
                         break
-                if len(found) >= 8:
+                if len(found) >= 2:
                     return True
     return False
 
@@ -61,6 +62,8 @@ def regions(rom, dumps, known, *, check=lambda: None, moved=None):
     groups = defaultdict(list)
     for dump in dumps:
         checked = set()
+        verified_calls = []
+        candidates = []
         for start, end, base in known:
             if not 0 <= start < end <= len(rom) or (start | end) % 4:
                 continue
@@ -77,19 +80,33 @@ def regions(rom, dumps, known, *, check=lambda: None, moved=None):
                         or at+16 > len(dump) or destination+128 > len(dump)
                         or dump[at:at+16] != rom[offset:offset+16]):
                     continue
+                verified_calls.append((target, offset))
                 mapped = [(a,b,v) for a,b,v in known if v <= target < v+b-a]
-                if not mapped or any(dump[destination:destination+32] == rom[a+target-v:a+target-v+32]
+                if mapped and any(dump[destination:destination+32] == rom[a+target-v:a+target-v+32]
                                      for a,b,v in mapped):
                     continue
                 found = _region(rom, dump, target)
                 if not found:
                     continue
                 lo, hi, vram = found
+                if not mapped and not any(vram < v+b-a and v < vram+hi-lo and v-a != vram-lo
+                                          for a,b,v in known):
+                    continue
+                candidates.append((lo, hi, vram))
                 # Resident code may call an overlay that replaces another bank
                 # at the same RAM address. The caller and target are both
                 # byte-verified in this snapshot; distinct calls corroborate it.
                 checked.add(target)
                 groups[vram-lo].append((lo, hi, target, offset))
+        # A verified contiguous bank may start before the already mapped part
+        # of a slot. Calls into its frameless interior still corroborate the
+        # mapping if their callers and target bytes match this same snapshot.
+        for lo, hi, vram in set(candidates):
+            delta = vram-lo
+            for target, offset in verified_calls:
+                at = target-delta
+                if (lo <= at and at+128 <= hi and rom[at:at+128] == dump[(target & 0x1fffffff):(target & 0x1fffffff)+128]):
+                    groups[delta].append((lo, hi, target, offset))
     result = []
     for delta, observations in groups.items():
         if len({target for _,_,target,_ in observations}) < 3:

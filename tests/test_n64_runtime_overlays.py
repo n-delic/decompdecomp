@@ -45,7 +45,7 @@ def test_existing_rom_mapping_and_unchanged_runtime_are_not_reassigned():
     assert not moved
 
 
-def test_longer_observation_requires_many_cross_bank_interior_calls():
+def test_longer_observation_requires_two_cross_bank_interior_calls():
     from decompnet.consoles.n64.runtime_overlays import ambiguous
 
     rom = bytearray(0x6000)
@@ -57,7 +57,8 @@ def test_longer_observation_requires_many_cross_bank_interior_calls():
         struct.pack_into('>I', rom, 0x4000+index*4, 0x0c000000 | (target >> 2 & 0x3ffffff))
     known = [(0x1000, 0x1800, 0x80100000), (0x4000, 0x4100, 0x80200000)]
     assert ambiguous(rom, known)
-    struct.pack_into('>I', rom, 0x401c, 0)
+    for index in range(1, 8):
+        struct.pack_into('>I', rom, 0x4000+index*4, 0)
     assert not ambiguous(rom, known)
 
 
@@ -75,3 +76,36 @@ def test_resident_callers_can_prove_an_overlapping_runtime_bank():
     # Missing a verified caller leaves fewer than three independent targets.
     ram[0x200020:0x200030] = bytes(16)
     assert not regions(rom, [ram], known)
+
+
+def test_calls_before_mapped_slot_corroborate_a_contiguous_observed_bank():
+    rom, ram, known = fixture()
+    # Two called addresses lie before the known bank's partial slot; one is
+    # inside it. The middle call is frameless and has no nearby return, but
+    # its complete bytes belong to the independently observed contiguous bank.
+    known = [known[0], (0x5000, 0x6000, 0x80100280)]
+    rom[0x1200:0x1280] = bytes(0x80)
+    ram[0x100200:0x100280] = bytes(0x80)
+    assert regions(rom, [ram], known) == [(0x1100, 0x1314, 0x80100100)]
+    # An unverified caller cannot provide the third independent call.
+    ram[0x101810:0x101820] = bytes(16)
+    assert not regions(rom, [ram], known)
+
+
+def test_unmapped_observation_must_overlap_a_known_runtime_bank():
+    rom, ram, known = fixture()
+    known = [known[0]]
+    assert not regions(rom, [ram], known)
+
+
+def test_longer_observation_accepts_stack_restore_before_return():
+    from decompnet.consoles.n64.runtime_overlays import ambiguous
+
+    rom = bytearray(0x6000)
+    for index in range(2):
+        at = 0x1000+index*0x40
+        struct.pack_into('>7I', rom, at, 0x27bdffd8, 0xafbf001c, 0x24020001,
+                         0x8fbf001c, 0x27bd0028, 0x03e00008, 0)
+        target = 0x80100000+index*0x40+8
+        struct.pack_into('>I', rom, 0x4000+index*4, 0x0c000000 | (target >> 2 & 0x3ffffff))
+    assert ambiguous(rom, [(0x1000, 0x1800, 0x80100000), (0x4000, 0x4100, 0x80200000)])

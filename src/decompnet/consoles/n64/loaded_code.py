@@ -217,6 +217,17 @@ def find(rom_path: Path, rom: bytes, taken, found=(), *, log=print, stop=lambda:
                                     dumps={v: Path(tmp) / f"late-{v}.bin" for v in (3000, 4500, 6000)},
                                     timeout=300, stop=stop, expansion_pak=expansion)
                 late_dumps = [p.read_bytes() for _, p in sorted(late.dumps.items()) if p.is_file()]
+                if not runtime_overlays.regions(rom, dumps+late_dumps, known, check=check):
+                    # Some games load another slot only after navigating several
+                    # menus. This run supplies evidence only; it cannot move or
+                    # split code without the independent caller checks below.
+                    log('Checking later menu states for overlapping code banks.')
+                    script = '400:START,408:,700:A,708:,1100:START,1108:,1600:A,1608:,' + ','.join(
+                        f'{v}:{"START" if (v//800)%2 else "A"},{v+8}:' for v in range(2400, 13600, 800))
+                    more = emulator.run(Path(rom_path), 16000, inputs=script,
+                                        dumps={v: Path(tmp) / f'menu-{v}.bin' for v in (8000, 12000, 16000)},
+                                        timeout=300, stop=stop, expansion_pak=expansion)
+                    late_dumps += [p.read_bytes() for _, p in sorted(more.dumps.items()) if p.is_file()]
             except emulator.EmulatorError as error:
                 log(f'Later code-bank observation was unavailable: {error}')
     if inspect_dumps is not None:
@@ -279,6 +290,20 @@ def find(rom_path: Path, rom: bytes, taken, found=(), *, log=print, stop=lambda:
             called |= new
             todo |= new - seen
     added.sort()
+    # A first observation can itself discover the bank containing suspicious
+    # calls. Only then is there enough evidence to justify a later menu run.
+    if not late_dumps and runtime_overlays.ambiguous(rom, known+added, check=check):
+        log('Checking later menu states for overlapping code banks.')
+        script = '400:START,408:,700:A,708:,1100:START,1108:,1600:A,1608:,' + ','.join(
+            f'{v}:{"START" if (v//800)%2 else "A"},{v+8}:' for v in range(2400, 13600, 800))
+        try:
+            with tempfile.TemporaryDirectory(prefix='decomp-late-banks-') as tmp:
+                more = emulator.run(Path(rom_path), 16000, inputs=script,
+                                    dumps={v: Path(tmp) / f'menu-{v}.bin' for v in (8000, 12000, 16000)},
+                                    timeout=300, stop=stop, expansion_pak=expansion)
+                late_dumps = [p.read_bytes() for _, p in sorted(more.dumps.items()) if p.is_file()]
+        except emulator.EmulatorError as error:
+            log(f'Later code-bank observation was unavailable: {error}')
     kib = sum(e - s for s, e, _ in added) // 1024
     if added:
         log(f"found {len(added)} more code segment{'s' if len(added) != 1 else ''} by running the game ({kib} KiB)")
