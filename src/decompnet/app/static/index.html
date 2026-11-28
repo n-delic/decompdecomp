@@ -43,14 +43,17 @@
     <p class="nav-label">Projects<span id="navCount" role="status"></span></p>
     <div class="nav-controls" id="navControls" hidden>
       <input class="nav-filter" id="navFilter" type="search" placeholder="Filter projects" aria-label="Filter projects" autocomplete="off">
-      <select id="navSort" aria-label="Sort projects">
-        <option value="az">A–Z</option>
-        <option value="za">Z–A</option>
-        <option value="newest">Newest</option>
-        <option value="oldest">Oldest</option>
-        <option value="progress-desc">Progress ↓</option>
-        <option value="progress-asc">Progress ↑</option>
-      </select>
+      <div class="nav-sort ghost icon">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1 3h8v1.5H1zm0 4h6v1.5H1zm0 4h4v1.5H1zm10-8h1.5v8.2l2-2 1.1 1.1-3.9 3.9-3.9-3.9 1.1-1.1 2.1 2.1z"/></svg>
+        <select id="navSort" aria-label="Sort projects">
+          <option value="az">A–Z</option>
+          <option value="za">Z–A</option>
+          <option value="newest">Newest</option>
+          <option value="oldest">Oldest</option>
+          <option value="progress-desc">Progress ↓</option>
+          <option value="progress-asc">Progress ↑</option>
+        </select>
+      </div>
     </div>
     <div class="nav-projects" id="navProjects"><p class="nav-empty">None yet: drop in a game.</p></div>
   </div>
