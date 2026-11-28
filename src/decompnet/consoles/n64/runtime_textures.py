@@ -78,11 +78,14 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
                     known = {tuple(item['preview_settings'].items()) for item in previous}
                     previous.extend(item for item in asset['textures']
                                     if tuple(item['preview_settings'].items()) not in known)
-                elif key in merged and asset.get('layout') == 'runtime-zip-model':
+                elif key in merged and asset.get('layout') in ('runtime-zip-model', 'runtime-deflate-model'):
                     previous = merged[key]['meshes']
-                    known = {(item['vertex_offset'], item['commands']) for item in previous}
+                    def identity(item, layout=asset['layout']):
+                        return ((item['vertex_offset'], item['commands']) if layout == 'runtime-zip-model'
+                                else (item['offset'], item['size']))
+                    known = {identity(item) for item in previous}
                     for item in asset['meshes']:
-                        marker = item['vertex_offset'], item['commands']
+                        marker = identity(item)
                         if marker not in known and len(previous) < 512:
                             previous.append(dict(item, name=f'Mesh {len(previous)+1}'))
                             known.add(marker)
