@@ -47,3 +47,32 @@ def test_window_limit_is_preserved_across_input_pages():
     stream = first + pages + bits('0' + '1' + f'{1:016b}')
     expected = 31 * 127 + 122 + 32 * 16 * 127 + 3
     assert boot_chunked_bits.decode(stream, expected) == b'A' * expected
+
+
+def test_overlapping_programs_keep_their_own_text_boundaries():
+    first, second = boot_chunked_bits.EXTRA_PROGRAMS[:2]
+    assert first[4] == second[4]
+    assert boot_chunked_bits.code_start(first[4], bytes(first[6])) == first[5]
+    assert boot_chunked_bits.code_start(second[4], bytes(second[6])) == second[5]
+
+
+def test_impossible_bss_is_dropped_without_changing_valid_segments():
+    segments = [{'type': 'code', 'bss_size': 0x80000400}, {'type': 'code', 'bss_size': 0x1000}, [0x100]]
+    boot_chunked_bits.drop_impossible_bss(segments)
+    assert segments == [{'type': 'code'}, {'type': 'code', 'bss_size': 0x1000}, [0x100]]
+
+
+def test_extra_program_requires_its_descriptor_and_full_digest(monkeypatch):
+    rom = bytearray(0x1800)
+    monkeypatch.setattr(boot_chunked_bits, '_LOADER', hashlib.sha256(rom[0x1000:0x16e0]).hexdigest())
+    struct.pack_into('>I', rom, 0x16e8, 0xb0001740)
+    struct.pack_into('>6I', rom, 0x1740, 0x54, 0x2000, 0x80000006, 0x5a, 0x2000, 0x80000006)
+    data = bytes(80) + bytes.fromhex('27bdffe803e0000827bd0018') * 400 + bytes(0x2000-80-4800)
+    digest = hashlib.sha256(data).hexdigest()
+    monkeypatch.setattr(boot_chunked_bits, '_PRIMARY', digest)
+    monkeypatch.setattr(boot_chunked_bits, 'EXTRA_PROGRAMS', ((1, 0x5a, 0x2000, 6, 0x80090000, 80, 4880, digest),))
+    monkeypatch.setattr(boot_chunked_bits, 'decode', lambda source, expected: data)
+    ranges = [(0x1000, 0x16e0, 0x80200400)]
+    assert len(boot_chunked_bits.find(rom, ranges)) == 2
+    rom[0x1753] ^= 1
+    assert len(boot_chunked_bits.find(rom, ranges)) == 1
