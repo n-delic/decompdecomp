@@ -254,8 +254,8 @@ def test_expansion_retry_after_a_video_warning_screen(tmp_path, monkeypatch):
     monkeypatch.setattr(runtime_packed_graphics, 'regions', lambda image, snapshots, *, progress:
                         [dict(offset=100, layout='model')])
     assets = runtime_textures.observe(b'image', rom, sha1(rom.read_bytes()).hexdigest())
-    assert [c.get('expansion_pak', False) for c in calls] == [False, False, True, True]
-    assert calls[1]['inputs'] and calls[3]['inputs']
+    assert [c.get('expansion_pak', False) for c in calls] == [False, False, False, True, True]
+    assert calls[1]['inputs'] and calls[2]['inputs'].startswith('400:DOWN') and calls[4]['inputs']
     assert {a['offset'] for a in assets} == {100, 200}
 
 
@@ -395,3 +395,27 @@ def test_distinct_runtime_audio_formats_do_not_conflict(tmp_path, monkeypatch):
     assert {a['layout'] for a in result if a.get('kind') == 'audio'} == {'b1', 'libmus'}
     changed = runtime_textures.observe(b'changed', rom, sha1(rom.read_bytes()).hexdigest())
     assert {a['layout'] for a in changed if a.get('kind') == 'audio'} == {'b1'}
+
+
+def test_alternate_menu_selection_exposes_textures_without_an_expansion_retry(tmp_path, monkeypatch):
+    from decompassets.n64 import runtime_packed_graphics
+
+    rom = tmp_path / 'game.z64'
+    rom.write_bytes(bytes.fromhex('80371240') + b'original')
+    monkeypatch.setattr(runtime_textures.emulator, 'installed', lambda: tmp_path)
+    calls = []
+
+    def run(path, vis, *, dumps, **kwargs):
+        calls.append(kwargs)
+        for dump in dumps.values():
+            dump.write_bytes(b'alternate' if kwargs.get('inputs', '').startswith('400:DOWN') else b'prompt')
+        return runtime_textures.emulator.Run(vis=vis)
+
+    monkeypatch.setattr(runtime_textures.emulator, 'run', run)
+    monkeypatch.setattr(detector, 'regions', lambda image, snapshots:
+                        [dict(offset=100, size=16, layout='texture')] if b'alternate' in snapshots else [])
+    monkeypatch.setattr(runtime_packed_graphics, 'regions', lambda *args, **kwargs: [])
+    result = runtime_textures.observe(b'image', rom, sha1(rom.read_bytes()).hexdigest())
+    assert [asset['offset'] for asset in result] == [100]
+    assert len(calls) == 3 and calls[-1]['inputs'].startswith('400:DOWN')
+    assert not any(call.get('expansion_pak') for call in calls)

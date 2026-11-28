@@ -53,6 +53,21 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
                 direct += runtime_textures.regions(image, snapshots)
                 packed += runtime_packed_graphics.regions(image, snapshots, progress=progress)
                 sounds += runtime_audio.regions(image, snapshots) + (runtime_ptr_audio.regions(image, snapshots) if raw_samples else [])
+            # Some boot menus default to retrying an unavailable save device.
+            # A second, bounded input path selects the next option before trying
+            # the usual title buttons. It uses the same isolated save as above.
+            if not run.timed_out and not direct and not any(a.get('textures') for a in packed):
+                log('No textures were observed; trying an alternate menu selection.')
+                for path in dumps.values():
+                    path.unlink(missing_ok=True)
+                inputs = '400:DOWN,408:,430:A,438:,' + ','.join(
+                    f'{vi}:START,{vi+8}:,{vi+60}:A,{vi+68}:' for vi in range(600, VIS[-1], 120))
+                run = emulator.run(rom, VIS[-1], inputs=inputs, dumps=dumps,
+                                   timeout=120, expansion_pak=expansion)
+                snapshots = [path.read_bytes() for path in dumps.values() if path.is_file()]
+                direct += runtime_textures.regions(image, snapshots)
+                packed += runtime_packed_graphics.regions(image, snapshots, progress=progress)
+                sounds += runtime_audio.regions(image, snapshots) + (runtime_ptr_audio.regions(image, snapshots) if raw_samples else [])
             # Some games display a memory-expansion warning using the base RAM
             # rather than stalling before video. A successful retrace alone does
             # not show that their title or gameplay ran. Retry without changing
