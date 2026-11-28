@@ -308,13 +308,69 @@ def _read_function_symbols(elf) -> dict[str, tuple[int, int, int]]:
     return {**metadata_functions(elf),**out}
 
 
+def _rust_elf_extract(action: str, data: bytes, *, name: str = "", masks: dict[str, list[int]] | None = None) -> dict | None:
+    """Run `decomp-mcp-gateway elf-extract` when available; return None on missing binary, fallback, or error."""
+    import json
+    import subprocess
+
+    from .app import mcp_gateway
+
+    exe = mcp_gateway.program()
+    if exe is None:
+        return None
+    payload: dict = {"action": action, "data_hex": data.hex()}
+    if name:
+        payload["name"] = name
+    if masks is not None:
+        payload["masks"] = masks
+    try:
+        proc = subprocess.run(
+            [str(exe), "elf-extract"],
+            input=json.dumps(payload),
+            text=True,
+            capture_output=True,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        raw = json.loads(proc.stdout)
+    except ValueError:
+        return None
+    if not isinstance(raw, dict) or raw.get("fallback"):
+        return None
+    return raw
+
+
 def list_functions(data: bytes) -> list[str]:
+    rust = _rust_elf_extract("list_functions", data)
+    if rust is not None and isinstance(rust.get("functions"), list):
+        return [str(n) for n in rust["functions"]]
     return list(_function_symbols(candidate_elf(data, ELFFile)))
 
 
 def extract_function(data: bytes, name: str) -> FunctionObj | None:
     """One function of an object file: its code, its relocations (with what each refers to) and the processor; None
     when the object has no function of that name."""
+    masks: dict[str, list[int]] = {}
+    if len(data) >= 20 and data[:4] == b"\x7fELF" and data[5] in (1, 2):
+        machine = int.from_bytes(data[18:20], "big" if data[5] == 2 else "little")
+        arch_key = {62: "x86_64", 3: "x86", 8: "mips", 20: "ppc", 21: "ppc64", 40: "arm"}.get(machine)
+        if arch_key:
+            masks = {str(rtype): [d, ln, m] for (a, rtype), (d, ln, m) in MASKS_BY_ARCH.items() if a == arch_key}
+    rust = _rust_elf_extract("extract_function", data, name=name, masks=masks)
+    if rust is not None:
+        if not rust.get("found"):
+            return None
+        return FunctionObj(
+            name=name,
+            arch=str(rust["arch"]),
+            big_endian=bool(rust["big_endian"]),
+            code=bytes.fromhex(str(rust["code_hex"])),
+            relocs=[Reloc(int(o), int(t), str(s), int(a)) for o, t, s, a in rust["relocs"]],
+        )
     elf = candidate_elf(data, ELFFile)
     arch, big_endian = _arch_of(elf)
     found = _function_symbols(elf).get(name)
