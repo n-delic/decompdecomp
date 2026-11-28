@@ -245,6 +245,25 @@ def test_many_recovered_bodies_do_not_accumulate_source_unit_suffixes():
     assert 'bank_001100' in names and 'bank_0023B0' in names
 
 
+def test_recovered_boot_body_keeps_surrounding_handwritten_assembly():
+    from decompnet.consoles.n64.code import _cut_inside
+
+    cfg = {'segments': [{'name': 'entry', 'type': 'code', 'start': 0x1000, 'vram': 0x80000400,
+                         'subsegments': [[0x1000, 'hasm']]}, [0x1050]]}
+    assert _cut_inside(cfg, [(0x100c, 0x103c, 0x8000040c)])
+    assert [(s[0], s[1]) for s in cfg['segments'][0]['subsegments']] == [
+        (0x1000, 'hasm'), (0x100c, 'c'), (0x103c, 'hasm')]
+
+
+def test_boot_body_with_the_wrong_mapping_is_not_split():
+    from decompnet.consoles.n64.code import _cut_inside
+
+    cfg = {'segments': [{'name': 'entry', 'type': 'code', 'start': 0x1000, 'vram': 0x80000400,
+                         'subsegments': [[0x1000, 'hasm']]}, [0x1050]]}
+    assert not _cut_inside(cfg, [(0x100c, 0x103c, 0x8001040c)])
+    assert cfg['segments'][0]['subsegments'] == [[0x1000, 'hasm']]
+
+
 @pytest.mark.parametrize('raw', [[0x1020, 'bin', 'raw'], [0x1020, 'bin']])
 @pytest.mark.parametrize('start', [0x1020, 0x1030])
 def test_raw_child_recovery_keeps_the_parent_and_surrounding_data(tmp_path, monkeypatch, raw, start):

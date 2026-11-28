@@ -112,6 +112,9 @@
   Byte-matched emulator RAM ranges refine smaller inferred banks when their local calls corroborate the mapping.
   A contiguous observed bank can carry that mapping into a neighbouring fragment when two closed entries
   there are called by the independently verified predecessor and no call supports its former placement.
+- Done: the N64 missed-function search can recover a verified body inside a handwritten boot
+  assembly unit while keeping the surrounding assembly. Planned: apply the same verified
+  recovery automatically during the initial import.
 - Done: N64 imports map audited inline data spans separately from executable text when their
   full surrounding fingerprints match. This prevents constants and alignment words from cutting
   otherwise closed function bodies.
