@@ -37,10 +37,21 @@ def _macro_variant(fn, source, header, candidate, info, extra):
     local = {(at, index): offset for at, index, offset in info.get('local_calls', ())}
     bindings = [local_alias(info['section'], index, local[(at, index)]) if (at, index) in local
                 else alias(info['section'], index) for at, index in sorted(relocs)]
-    for (start, end), binding in reversed(list(zip(calls, bindings))):
-        source = source[:start] + binding + source[end:]
+    # The port build gives these call macros their original symbolic callees.
+    # Keep each original expression there while the ROM build uses its binding.
+    names = []
+    preprocessor = csource._blank(header + '\n' + source)
+    for index, ((start, end), binding) in enumerate(zip(calls, bindings), 1):
+        name = f'decomp_overlay_call_{index}'
+        if re.search(r'\b' + re.escape(name) + r'\b', preprocessor):
+            return None
+        names.append((name, source[start:end], binding))
+    for (start, end), (name, _, _) in reversed(list(zip(calls, names))):
+        source = source[:start] + name + source[end:]
     declarations = [rename_identifiers(prototype, {'D_80000000': binding}) for binding in sorted(set(bindings))]
-    return '\n'.join(declarations) + '\n' + source + '\n' + extra
+    port = '\n'.join(f'#define {name} {original}' for name, original, _ in names)
+    rom = '\n'.join(f'#define {name} {binding}' for name, _, binding in names)
+    return '\n'.join(declarations) + '\n#ifdef PORT\n' + port + '\n#else\n' + rom + '\n#endif\n' + source + '\n' + extra
 
 
 def retry(net, project, fn, source):

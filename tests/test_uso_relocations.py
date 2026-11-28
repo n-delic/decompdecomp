@@ -1431,7 +1431,13 @@ def test_reimport_macro_retry_separates_only_complete_placeholder_calls():
                                         SimpleNamespace(offset=4, type=4, symbol='D_80000000'),
                                         SimpleNamespace(offset=8, type=4, symbol='D_80000000')])
     result = _macro_variant(fn, source, header, candidate, info, '')
-    assert 'uso_1234_sym_2(1)' in result and 'uso_1234_sym_3(2)' in result and 'uso_1234_sym_4(3)' in result
+    assert '#define decomp_overlay_call_1 FCALL(first)' in result
+    assert '#define decomp_overlay_call_2 CALL(second)' in result
+    assert '#define decomp_overlay_call_3 D_80000000' in result
+    assert '#define decomp_overlay_call_1 uso_1234_sym_2' in result
+    assert '#define decomp_overlay_call_2 uso_1234_sym_3' in result
+    assert '#define decomp_overlay_call_3 uso_1234_sym_4' in result
+    assert 'decomp_overlay_call_1(1)' in result and 'decomp_overlay_call_3(3)' in result
     assert '/* CALL(comment) */' in result
     assert _macro_variant(fn, source, header, candidate, info | {'relocs': [[0, 4, 2]]}, '') is None
     candidate.relocs[1].symbol = 'other'
