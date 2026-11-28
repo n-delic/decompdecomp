@@ -276,6 +276,10 @@ def add(config, workdir, image, rom, boot_ranges, log):
         boot_lzss.extend_boot(config, rom, log)
     cfg = yaml.safe_load(config.read_text(encoding='utf-8'))
     segments = cfg['segments']
+    if boot_chunked_bits.repair_variant_entry(segments, rom):
+        log('Kept the original boot helper together across the initial split.')
+    if boot_chunked_bits.repair_variant_relocations(workdir / 'reloc_addrs.txt', rom):
+        log('Removed two false stack-frame relocations from the boot loader.')
     segments.pop()
     expanded = bytearray(rom)
     two_bit = boot_two_bit.find(rom, boot_ranges) or boot_rnc2.find(rom, boot_ranges) or boot_erz.find(rom, boot_ranges)
@@ -312,7 +316,13 @@ def add(config, workdir, image, rom, boot_ranges, log):
         sections = boot_lzss.startup_sections(text, vram) if boot_lzss.find(rom, boot_ranges) else None
         two_bit_start = boot_two_bit.code_start(text) if two_bit and any(vram == p[0] for p in two_bit) else None
         if chunked_bits and any(vram == p[0] and len(text) == len(p[1]) for p in chunked_bits):
-            parts = [[start, 'data', f'{name}_startup_data'], [start + boot_chunked_bits.code_start(vram, text), 'c', name]]
+            sections = boot_chunked_bits.variant_sections(text)
+            if sections:
+                code, data_start, code_resume = sections
+                parts = [[start, 'data', f'{name}_startup_data'], [start + code, 'hasm'],
+                         [start + data_start, 'data', f'{name}_early_data'], [start + code_resume, 'c', name]]
+            else:
+                parts = [[start, 'data', f'{name}_startup_data'], [start + boot_chunked_bits.code_start(vram, text), 'c', name]]
         elif rnx and any(vram == p[0] for p in rnx):
             parts = [[start, 'data', f'{name}_startup_data'], [start + boot_rnx.CODE_START, 'c', name]]
         elif byte_lz and any(vram == p[0] for p in byte_lz):
