@@ -163,7 +163,8 @@ def objects() -> tuple[list[tuple[str, str, str]], dict[str, str], list[tuple[in
     linker script line names among all the objects it was given, ran for 40 minutes without finishing."""
     out, provides, placed = [], {}, []
     for a in B["assembly"]:
-        out.append(("asm", a["src"], a["obj"]))
+        source = wrap(a['obj'].removesuffix('.o'), [a['src']]) if a.get('wrap') else a['src']
+        out.append(("asm", source, a["obj"]))
     for d in B.get("data", []):  # the game's data from its C (placed as pieces of its segment)
         out.append(("c", d["src"], d["obj"]))
     runs: dict[str, tuple[list[dict], int | None]] = {}  # splat file -> (its current run of assembly, where it ends)
