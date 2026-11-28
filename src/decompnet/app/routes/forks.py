@@ -212,6 +212,41 @@ def register(app: App) -> None:
             return res
         return JSONResponse({"job": await app.control(lambda: jobs.start("fork-setup", work))})
 
+    @mcp.custom_route("/api/fork/rom-reference", methods=["POST"])
+    async def api_fork_rom_reference(request: Request) -> Response:
+        """Set up an empty public import using a separate exported analysis of its selected game."""
+        if (bad := guard(request, write=True)):
+            return bad
+        data = await body(request)
+        slug = str(data.get('slug', ''))
+        try:
+            await app.read(fork_of, slug)
+        except NetworkError as error:
+            return fail(error)
+        resume = data.get('action') == 'resume'
+        path = str(data.get('path') or '').strip().strip('"')
+        if not resume and not path:
+            return fail(ValueError('Choose the folder containing the exported ROM analysis.'))
+        source = Path(path).expanduser() if path else None
+        if source is not None and not await app.call(lambda: source.is_dir()):
+            return fail(ValueError(f'No folder at {source}.'))
+
+        def work(log):
+            result = (net.forks.resume_rom_reference(slug, log=log) if resume
+                      else net.forks.adopt_rom_reference(slug, source, log=log))
+            settings.data['last_project'] = slug
+            settings.save()
+            autopilot(slug)
+            return result
+        def start():
+            with jobs._lock:
+                existing = jobs.active(('fork-rom-reference',), project=slug)
+                if existing:
+                    return existing['id']
+                return jobs.start('fork-rom-reference', work, project=slug,
+                                  cancel_message='ROM-backed setup stopped.')
+        return JSONResponse({'job': await app.control(start)})
+
     @mcp.custom_route("/api/fork/check", methods=["POST"])
     async def api_fork_check(request: Request) -> Response:
         """Pick a hand-built project up (or re-measure one): builds what changed, then reads its objdiff.json and
@@ -268,4 +303,7 @@ def register(app: App) -> None:
             return fail(e)
         return JSONResponse({"job": await app.control(lambda: jobs.start("fork-start-files", lambda log: net.forks.start_files(slug, log=log)))})
 
-    mcp.custom_route("/api/fork/needs", methods=["GET"])(with_project(lambda s, r, d: net.forks.needs(fork_of(s)["slug"])))
+    def fork_needs(slug, request, data):
+        slug = fork_of(slug)['slug']
+        return net.forks.needs(slug) | {'rom_reference_job':jobs.active(('fork-rom-reference',), project=slug)}
+    mcp.custom_route("/api/fork/needs", methods=["GET"])(with_project(fork_needs))

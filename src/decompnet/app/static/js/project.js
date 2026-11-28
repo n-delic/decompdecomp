@@ -1585,13 +1585,23 @@ async function renderForkSetup() {
   const kinds = { manifest: "decompdecomp manifest", dtk: "dtk-template (configure.py + ninja)", configure: "configure.py + ninja", splat: "splat + make", objdiff: "objdiff project", custom: "its own setup" };
   const expectedSha1 = typeof n.sha1 === "string" && /^[0-9a-f]{40}$/i.test(n.sha1) ? n.sha1.toLowerCase() : null;
   const romVersions = Array.isArray(n.rom_versions) ? n.rom_versions.filter((v) => /^[0-9a-f]{40}$/i.test(v.sha1 || "")) : [];
+  const showReference = n.rom_reference_available || n.rom_reference_pending || Boolean(n.rom_reference_job?.id);
   const facts = `<dl class="facts one">${[["Repository", (S.ov.repo_url || "").replace(/^https?:\/\//, "") || "made by decompdecomp"], ["Layout", kinds[n.kind] || n.kind], ["Version", n.version || "—"], ["Game goes to", n.path || "see the README"],
     ...(romVersions.length ? romVersions.map((v) => [`Original ROM SHA-1 (${v.version})`, v.sha1]) :
       n.kind === "splat" || expectedSha1 ? [["Expected SHA-1", expectedSha1 || "Not specified in the splat config"]] : [])]
     .map(([k, v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join("")}</dl>
     <div class="row"><button class="ghost small-btn" id="fsFolder" type="button">Open project folder</button>
       <button class="ghost small-btn" id="fsClose" type="button">Close project…</button></div>
-    <p class="muted small">Closing removes this unfinished import from the app and keeps its folder on disk.</p>`;
+    <p class="muted small">Closing removes this unfinished import from the app and keeps its folder on disk.</p>
+    ${showReference ? `<details class="panel settings-disclosure" id="fsRomReference"${n.rom_reference_job ? " open" : ""}>
+      <summary class="panel-head"><h2>Use an exported ROM analysis</h2></summary><div class="pad">
+      <p>${n.rom_reference_pending ? "Resume preparing the staged analysis to finish setup." : "Continue with a local ROM-backed analysis when this public project does not have a matching build."}</p>
+      <p class="small muted">The public checkout stays intact; new matches are kept in a separate local analysis with a copy of its reference sources.</p>
+      <label class="field"${n.rom_reference_pending ? " hidden" : ""}><span>Exported analysis folder</span><input id="fsReferencePath" class="mono" placeholder="Folder containing build.json"></label>
+      <div class="row"><button class="ghost small-btn" id="fsReferencePick" type="button"${n.rom_reference_pending ? " hidden" : ""}>Choose folder…</button>
+        <button class="primary small-btn" id="fsReferenceGo" type="button">${n.rom_reference_pending ? "Resume setup" : "Set up analysis"}</button>
+        <button class="ghost small-btn" id="fsReferenceStop" type="button" hidden>Stop</button></div>
+      <pre class="joblog" id="fsReferenceLog" hidden></pre></div></details>` : ""}`;
   let findRom = null, usingGame = false;
   const setImportStatus = (state, detail = "") => {
     const status = $("fsImportStatus");
@@ -1742,6 +1752,64 @@ async function renderForkSetup() {
     if (n.readme) $("fsReadme").textContent = n.readme;
     wireCopies(box);
     $("fsCheck").onclick = () => run(() => api("/api/fork/check", { method: "POST", body: { slug: S.slug } }));
+  }
+  if (showReference) {
+    const referenceLog = $("fsReferenceLog"), stop = $("fsReferenceStop"), go = $("fsReferenceGo");
+    let referenceJob = null;
+    const active = () => referenceLog.isConnected && S.slug === requestedSlug && S.gen === setupGen;
+    const followReference = async (start) => {
+      if (usingGame) return;
+      usingGame = true;
+      const controls = [...box.querySelectorAll("button, input")].filter((button) => button !== stop);
+      referenceLog._showJobProgress = true;
+      const finish = beginWork(referenceLog, "Preparing ROM-backed analysis", controls, "Analysis is ready.");
+      showJobError(referenceLog, "");
+      try {
+        referenceJob = await start();
+        if (!active()) return;
+        stop.hidden = false;
+        stop.onclick = async () => {
+          if (stop.disabled || !referenceJob) return;
+          stop.disabled = true; stop.textContent = "Stopping…";
+          try { await api("/api/job/cancel", { method: "POST", body: { id: referenceJob } }); }
+          catch (error) { stop.disabled = false; stop.textContent = "Stop"; showJobError(referenceLog, error.message); }
+        };
+        for (;;) {
+          try {
+            const result = await followJob(referenceJob, referenceLog, null, active);
+            if (!active() || !result) return;
+            loadNav(); openProject(requestedSlug); break;
+          } catch (error) {
+            if (error.job) throw error;
+            if (!active()) return;
+            showJobError(referenceLog, `Reconnecting to setup: ${error.message}`);
+            await sleep(2000);
+          }
+        }
+      } catch (error) {
+        if (active()) showJobError(referenceLog, error.message);
+      } finally {
+        finish();
+        if (active()) { stop.hidden = true; stop.disabled = false; stop.textContent = "Stop"; }
+        usingGame = false;
+      }
+    };
+    $("fsReferencePick").onclick = async () => {
+      const pick = $("fsReferencePick"); pick.disabled = true;
+      try { const { path } = await api("/api/pick", { method: "POST", body: { kind: "folder", title: "Exported ROM analysis" } });
+        if (active() && path) $("fsReferencePath").value = path;
+      } catch (error) { if (active()) showJobError(referenceLog, error.message); }
+      finally { if (active()) pick.disabled = false; }
+    };
+    go.onclick = () => {
+      const path = $("fsReferencePath").value.trim();
+      if (!n.rom_reference_pending && !path) { showJobError(referenceLog, "Choose the exported analysis folder first."); return; }
+      const body = n.rom_reference_pending ? { slug: requestedSlug, action: "resume" } : { slug: requestedSlug, path };
+      return followReference(async () => (await api("/api/fork/rom-reference", {
+        method: "POST", body
+      })).job);
+    };
+    if (n.rom_reference_job?.id) followReference(async () => n.rom_reference_job.id);
   }
   $("fsFolder").onclick = () => openFolder();
   const setupTitle = S.ov.title;

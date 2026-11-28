@@ -119,7 +119,8 @@ def _object_assembly(root: Path, platform: str, unit_name: str, symbol: str) -> 
 
 
 def draft(root: Path, platform: str, unit_name: str, symbol: str, source_path: str | None,
-          compiler_hint: str = "", timeout: float = 30, valid: bool = False) -> str | None:
+          compiler_hint: str = "", timeout: float = 30, valid: bool = False,
+          context_header: str = "", strict: bool = False) -> str | None:
     """m2c's draft of one function; `valid`: in a form that compiles (m2c's macros for what it couldn't tell, which
     from-scratch projects define in common.h)."""
     target = consoles.get(platform).m2c_target(compiler_hint)
@@ -135,12 +136,16 @@ def draft(root: Path, platform: str, unit_name: str, symbol: str, source_path: s
         if len(text) > MAX_ASM or ".fn " in text:
             text = _block(text, symbol)
         try:
-            if result := seeds.run_m2c(text, symbol, f"{target}-{lang}", timeout=timeout, valid=valid):
+            if result := seeds.run_m2c(text, symbol, f"{target}-{lang}", context_header=context_header,
+                                       timeout=timeout, valid=valid, strict=strict):
                 return result
         except seeds.DraftError as exc:
             error = exc
+    if error and strict:
+        raise error
     if text := _object_assembly(root, platform, unit_name, symbol):
-        return seeds.run_m2c(text, symbol, f"{target}-{lang}", timeout=timeout, valid=valid)
+        return seeds.run_m2c(text, symbol, f"{target}-{lang}", context_header=context_header,
+                             timeout=timeout, valid=valid, strict=strict)
     if error:
         raise error
     return None

@@ -954,6 +954,10 @@ judged tools. Reported input, output and cache tokens are tracked; missing usage
 costs remain unknown. Live MCP, compile-and-match and permission checks were tested on
 macOS; Linux and Windows launch settings have automated coverage.
 
+### Public projects without a matching build
+
+If a MIPS public project has no build the app can judge, add your game to that import and choose **Use an exported ROM analysis**. Select a previously exported analysis of the same game. The app checks the image and original code, then creates a separate local workspace with the public sources available as reference. The public checkout stays intact, and new matches remain in the local workspace. This workspace does not yet rebuild the whole game with those matches or support portable save and reimport.
+
 ### Repositories with bundled decompdecomp progress
 
 **Continue a public decomp** recognises a portable `decompdecomp.json` save at the

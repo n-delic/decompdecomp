@@ -840,7 +840,18 @@ def register(app: App) -> None:
     def p_open(slug, request, data):
         if app.web_login and not secrets.compare_digest(window.request_token(request), app.secret):
             return {'ok':False, 'message':'Project folder on the server: '+str(net.project_row(slug)['root'])}
-        why = hostenv.open_folder(Path(net.project_row(slug)["root"]))
+        project = net.project_row(slug)
+        root = Path(project["root"]).resolve()
+        if data.get('original'):
+            reference = json.loads(project['config']).get('rom_reference') or {}
+            checkout = reference.get('checkout')
+            if not isinstance(checkout, str) or not checkout:
+                return {'ok':False, 'message':'This project has no original public checkout.'}
+            original = Path(checkout).resolve()
+            if original not in root.parents or not original.is_dir():
+                return {'ok':False, 'message':'The original public checkout is unavailable.'}
+            root = original
+        why = hostenv.open_folder(root)
         return {"ok": why is None, "message": why}
 
     def p_delete(slug, request, data):

@@ -41,6 +41,10 @@ def identities(net, proj, *, include_asm=False, selected=True):
     out = {}
     for row in rows:
         hint = json.loads(row['meta'])['sdk_identity']
+        # Exact assembly proofs also keep a short SDK name here. It is not
+        # a fingerprint record; source_assembly validates that proof separately.
+        if not isinstance(hint, dict):
+            continue
         target = prints.get(row['id'])
         if (target is None or multiplicity[target.key] != 1 or target.key != hint.get('fingerprint') or target.size != hint.get('size')
                 or row['size'] != target.size or (target.asm and not include_asm) or len(hint.get('names', [])) != 1

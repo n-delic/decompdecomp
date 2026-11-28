@@ -810,6 +810,24 @@ on Apple Silicon; physical Intel Mac and retail-game checks remain planned.
 - Resident N64 directory copy loops now establish overlay ROM bounds and instruction-cache
   ranges. Banks that reuse a RAM range keep separate symbols and function boundaries.
 
+## ROM-backed public imports
+
+An imported public project without a matching build can use an existing exported ROM analysis as a local workspace. The selected game's SHA-1 must match the export's image directly; compressed analysis images are not supported yet. The public checkout stays separate and new matches remain in the local analysis. The N64 class and struct readers do not yet read these generated reference objects. A whole-game rebuild with those matches, portable save and reimport, and the remaining project features have not yet been verified for this workspace. Add those capabilities and audit the feature table on a real project before claiming them as supported. Setup retains and validates copied files across interruption and preserves the prepared workspace before measurement. Resuming target preparation and measurement still repeats those phases; add durable checkpoints for them.
+
+
+These workspaces use the project engine with the ROM judge, so the ordinary public-decomp column below is not evidence that every feature has been checked here. An N64 scratch copy was used for the checks marked below; other MIPS platforms still need the same audit. A — is work to implement or verify before claiming support.
+
+| ROM-backed public import feature | Status |
+| :-- | :-- |
+| Original image and function verification; claims, briefs, compile and match, machine drafts, Autopilot, header-aware redraft | ✓ N64 scratch copy |
+| SDK assembly set aside, local fingerprints and twins pass, cross-game lookup, project map and re-measure | ✓ N64 scratch copy; cross-game match still needs a donor check |
+| Drafting C++ methods, class recovery, struct layouts and debug-symbol briefs | — class and struct readers need the reference image adapter; audit methods and debug symbols |
+| Compiler ranges, suggestions, survey and flag search | — expose and test the reference profiles through the project compiler tools |
+| Joining and splitting code, assembly and agent verdicts, Check again, boundary reports | — audit each path against reference-backed units |
+| Cross-game and regional matches, shared knowledge, permuter and polishing | — exercise actual matches and confirm the reference judge protects them |
+| Names, saves and reopen, reimport, rebuildable export and rooms | — implement missing integration and verify the resulting project preserves matches |
+| Setup progress | — retain reference preparation across interruption and resume verification without repeating completed checks |
+
 ## What works where
 
 Polishing can ask helpers to check 64-bit PC compilation and repair casts between pointers and 32-bit integers.
@@ -872,7 +890,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Compile-tested draft refresh and saved diagnostics | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ m2c | ✓ Ghidra | — | — draft generator planned | ✓ supported draft generators |
 | Initial callback, forwarded-argument and overlapping-frame recovery | ✓ bounded MIPS | ✓ bounded MIPS | ✓ bounded MIPS | — | — | ✓ bounded MIPS | — | — processor reader planned | — processor reader planned | — | — processor reader planned | ✓ MIPS C; other readers planned |
 | Autopilot: free matches from drafts | ✓ | ✓ | ✓ | twins only | — | ✓ | ✓ (demo: 34 matches) | ✓ | ✓ exact drafts of tiny shapes (32-bit); Ghidra's made compilable | ✓ as PC | twins only (no drafts yet) | — |
-| Drafts follow the header (and, in ROM mode, matched callees' own prototypes), made in the background; `redraft` | ✓ | ✓ | ✓ | — | — | ✓ | ✓ (m2c and `redraft`) | — | ✓ Ghidra's | ✓ Ghidra's | — | — |
+| Drafts follow the header (and, in ROM mode, matched callees' own prototypes), made in the background; `redraft` | ✓ | ✓ | ✓ | — | — | ✓ | ✓ (m2c and `redraft`) | — | ✓ Ghidra's | ✓ Ghidra's | — | ✓ ROM-backed MIPS; — other public builds |
 | C++ methods drafted as `Class::method` | ✓ | ✓ | ✓ | — | — | ✓ | — | — | ✓ (RTTI, and classes from the vtables constructors store) | ✓ (RTTI, vtables) | — | — |
 | Twins: free matches from identical code | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ (ran; no pairs in demo) | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Resumable source/profile queue and explicit assembly reconsideration | ✓ ROM | ✓ ROM | ✓ ROM | — | — | ✓ ROM | — | — owned-build adapter planned | — owned-build adapter planned | — | — owned-build adapter planned | — owned-build adapter planned |

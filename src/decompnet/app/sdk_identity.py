@@ -79,7 +79,7 @@ def _identify(net, proj, *, include_asm=False, collect=None, builtin=False):
     selected = set(selection) if selection is not None else None
     if include_asm:
         from .source_assembly import detail
-        for row in net.project_store(proj['id']).all("SELECT id,name,vram,rom_offset,size,target,relocs,meta,status FROM functions WHERE project_id=? AND status='asm' AND json_extract(meta,'$.verified_assembly.kind')='sdk'",proj['id']):
+        for row in net.project_store(proj['id']).all("SELECT id,name,unit,vram,rom_offset,size,target,relocs,meta,status FROM functions WHERE project_id=? AND status='asm' AND json_extract(meta,'$.verified_assembly.kind')='sdk'",proj['id']):
             proof=detail(proj,row)
             if proof and proof['verified'] and (proof.get('verification_method')=='builtin-sdk-digest' or selected is None or proof['corpus'] in selected):
                 binary[row['id']]={'names':proof.get('names',[proof['name']]),'corpora':[proof['corpus']],

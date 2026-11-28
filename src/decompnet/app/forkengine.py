@@ -188,7 +188,7 @@ class _TreeLock:
                 self._cond.notify_all()
 
     @contextmanager
-    def exclusive(self):
+    def exclusive(self, check_cancel=None, waiting=None):
         me = threading.get_ident()
         if self._writer == me:
             yield
@@ -197,16 +197,46 @@ class _TreeLock:
             raise RuntimeError("a shared holder can't take the tree exclusively")
         with self._cond:
             self._waiting += 1
-            while self._writer is not None or self._readers:
-                self._cond.wait()
-            self._waiting -= 1
-            self._writer = me
+            try:
+                announced = False
+                while self._writer is not None or self._readers:
+                    if check_cancel:
+                        check_cancel()
+                    if waiting and not announced:
+                        waiting()
+                        announced = True
+                    self._cond.wait(.2 if check_cancel else None)
+                if check_cancel:
+                    check_cancel()
+                self._writer = me
+            finally:
+                self._waiting -= 1
+                self._cond.notify_all()
         try:
             yield
         finally:
             with self._cond:
                 self._writer = None
                 self._cond.notify_all()
+
+
+@contextmanager
+def _queued_lock(lock, log):
+    """Wait for a project build lock while reporting progress and respecting Stop."""
+    check_cancel = getattr(log, 'check_cancel', lambda:None)
+    progress = getattr(log, 'progress', lambda _:None)
+    announced = False
+    while not lock.acquire(timeout=.2):
+        check_cancel()
+        if not announced:
+            progress({'phase':'Waiting for the project build'})
+            log('Waiting for the project build to finish')
+            announced = True
+    try:
+        check_cancel()
+        yield
+    finally:
+        lock.release()
 
 
 BATCH_UNITS = 16  # units one run of a project's build takes at most
@@ -706,6 +736,12 @@ class ForkEngine:
     def _baseline(self, proj, fp: ForkProject, unit, text: str) -> tuple[dict | None, bool]:
         """({function: match %} for the unit as its source file is now, whether that builds). Scores are None when
         the file doesn't build or objdiff can't measure it."""
+        if fp.objdiff_config().get('rom_reference_manifest'):
+            # Each ROM-backed score is compiled from a fresh snapshot; no object mtime proves it.
+            try:
+                return self._attempt_diff(fp, unit, None).unit_scores, True
+            except (ObjdiffError, ForkError):
+                return None, False
         hit = self._scores.get((proj["id"], unit.name))
         if (hit and unit.base is not None and unit.base.exists() and hit[0] == hashlib.sha1(text.encode()).hexdigest()
                 and (hit[1] == unit.base.stat().st_mtime_ns or self._trials.get((proj["id"], unit.name)))):
@@ -913,7 +949,128 @@ class ForkEngine:
         _, fp, cfg = self.get(slug)
         return fp.needs(cfg.get("version")) | {"kind": fp.kind(), "versions": fp.versions(),
                                                 "version": cfg.get("version") or fp.splat_default_version(),
-                                                "readme": fp.readme()}
+                                                "readme": fp.readme(),
+                                                "rom_reference_available": bool(cfg.get('game_sha1') and not cfg.get('ready')
+                                                    and not cfg.get('rom_reference') and consoles.get(cfg.get('platform')).arch == 'mips'),
+                                                "rom_reference_pending": bool((cfg.get('rom_reference') or cfg.get('rom_reference_staging'))
+                                                                              and not cfg.get('ready'))}
+
+    def adopt_rom_reference(self, slug: str, exported: Path, log=print) -> dict:
+        """Set up an empty public import from a separately exported, owned ROM analysis."""
+        from . import rom_reference_setup
+
+        proj, _, cfg = self.get(slug)
+        if cfg.get('ready') or cfg.get('rom_reference'):
+            raise NetworkError('This project is already set up; its current work was kept.')
+        if slug in self.net.links or slug in self.net.rooms:
+            raise NetworkError('Leave the shared room before setting up a ROM-backed analysis.')
+        if any(cfg.get(key) for key in ('progress_folder', 'save_folder', 'auto_commit_folder',
+                                        'repository_sync_folder', 'export', 'auto_push')):
+            raise NetworkError('This project has saved-folder or push settings; keep its current setup and review those first.')
+        if consoles.get(cfg.get('platform')).arch != 'mips':
+            raise NetworkError('ROM-backed imported analysis currently needs a MIPS project.')
+        old_root = Path(proj['root']).resolve()
+        expected_cfg = proj['config']
+        staging = cfg.get('rom_reference_staging')
+        if staging and (not isinstance(staging, dict) or staging.get('checkout') != str(old_root)
+                        or staging.get('game_sha1') != cfg.get('game_sha1')
+                        or staging.get('platform') != cfg.get('platform')
+                        or staging.get('export') != str(exported.expanduser().resolve())):
+            raise NetworkError('The saved setup checkpoint does not match this project or export.')
+        stage = Path(staging['stage']) if staging and isinstance(staging.get('stage'), str) else None
+        if staging and stage is None:
+            raise NetworkError('The saved setup checkpoint is invalid.')
+        store = self.net.project_store(proj['id'])
+        check_cancel = getattr(log, 'check_cancel', lambda:None)
+        def waiting():
+            getattr(log, 'progress', lambda _:None)({'phase':'Waiting for the project tree'})
+            log('Waiting for the project tree to become available')
+        with self._tree(proj).exclusive(check_cancel=check_cancel, waiting=waiting), _queued_lock(self._build_locks[proj['id']], log):
+            if store.one('SELECT 1 FROM functions WHERE project_id=? LIMIT 1', proj['id']):
+                raise NetworkError('This project already has function work; its current setup was kept.')
+            def checkpoint(path):
+                nonlocal expected_cfg, stage
+                with store.tx() as db:
+                    current = db.execute('SELECT root,config FROM projects WHERE id=?', (proj['id'],)).fetchone()
+                    if (current is None or Path(current['root']).resolve() != old_root or current['config'] != expected_cfg
+                            or db.execute('SELECT 1 FROM functions WHERE project_id=? LIMIT 1', (proj['id'],)).fetchone()):
+                        raise NetworkError('The project changed during setup; its existing work was kept. Try again.')
+                    new_cfg = json.loads(current['config'])
+                    new_cfg['rom_reference_staging'] = {'stage':str(path), 'checkout':str(old_root),
+                        'game_sha1':cfg['game_sha1'], 'platform':cfg['platform'],
+                        'export':str(exported.expanduser().resolve())}
+                    expected_cfg = json.dumps(new_cfg)
+                    db.execute('UPDATE projects SET config=? WHERE id=?', (expected_cfg, proj['id']))
+                stage = path
+            try:
+                workspace = rom_reference_setup.prepare(old_root, exported, cfg.get('game_sha1') or '',
+                                                        cfg.get('platform') or '', log=log,
+                                                        checkpoint=checkpoint, resume_stage=stage)
+            except ForkError as error:
+                raise NetworkError(str(error)) from error
+            adopted = False
+            try:
+                getattr(log, 'check_cancel', lambda:None)()
+                with store.tx() as db:
+                    current = db.execute('SELECT root,config FROM projects WHERE id=?', (proj['id'],)).fetchone()
+                    if (current is None or Path(current['root']).resolve() != old_root or current['config'] != expected_cfg
+                            or db.execute('SELECT 1 FROM functions WHERE project_id=? LIMIT 1', (proj['id'],)).fetchone()):
+                        raise NetworkError('The project changed during setup; its existing work was kept. Try again.')
+                    new_cfg = json.loads(current['config'])
+                    new_cfg.pop('rom_reference_staging', None)
+                    new_cfg['rom_reference'] = {'checkout':str(old_root), 'game_sha1':cfg['game_sha1']}
+                    new_cfg['fork_kind'] = 'ROM-backed analysis'
+                    new_cfg['ready'] = False
+                    db.execute('UPDATE projects SET root=?,config=? WHERE id=?',
+                               (str(workspace), json.dumps(new_cfg), proj['id']))
+                adopted = True
+                if stage is not None:
+                    shutil.rmtree(stage, ignore_errors=True)
+                # Persist the workspace before the potentially long measurement.
+                # A stopped or interrupted job can resume without repeating the
+                # export copy and target preparation; scores are always rechecked.
+                log('Checking every source-backed function against the original game')
+                rep = ForkProject(workspace, create_state=False).report(log=log)
+                check_cancel()
+                self.sync(slug, log=log, rep=rep)
+                with store.tx() as db:
+                    current = json.loads(db.execute('SELECT config FROM projects WHERE id=?', (proj['id'],)).fetchone()['config'])
+                    current['ready'] = True
+                    db.execute('UPDATE projects SET config=? WHERE id=?', (json.dumps(current), proj['id']))
+                self.start_indexing(slug)
+                return {'slug':slug, 'path':str(workspace), 'reference_checkout':str(old_root)}
+            except BaseException:
+                if not adopted:
+                    shutil.rmtree(workspace, ignore_errors=True)
+                else:
+                    log('The prepared analysis was kept. Resume ROM-backed setup to finish checking it.')
+                raise
+
+    def resume_rom_reference(self, slug: str, log=print) -> dict:
+        """Finish a previously staged ROM-backed analysis after an interrupted handoff."""
+        proj, fp, cfg = self.get(slug)
+        staging = cfg.get('rom_reference_staging')
+        if staging and not cfg.get('rom_reference') and not cfg.get('ready'):
+            if not isinstance(staging, dict) or not isinstance(staging.get('export'), str):
+                raise NetworkError('The saved setup checkpoint is invalid.')
+            return self.adopt_rom_reference(slug, Path(staging['export']), log=log)
+        if not cfg.get('rom_reference') or cfg.get('ready'):
+            raise NetworkError('There is no unfinished ROM-backed setup for this project.')
+        check_cancel = getattr(log, 'check_cancel', lambda:None)
+        def waiting():
+            getattr(log, 'progress', lambda _:None)({'phase':'Waiting for the project tree'})
+            log('Waiting for the project tree to become available')
+        with self._tree(proj).exclusive(check_cancel=check_cancel, waiting=waiting), _queued_lock(self._build_locks[proj['id']], log):
+            rep = fp.report(log=log)
+            check_cancel()
+            self.sync(slug, log=log, rep=rep)
+            store = self.net.project_store(proj['id'])
+            with store.tx() as db:
+                current = json.loads(db.execute('SELECT config FROM projects WHERE id=?', (proj['id'],)).fetchone()['config'])
+                current['ready'] = True
+                db.execute('UPDATE projects SET config=? WHERE id=?', (json.dumps(current), proj['id']))
+            self.start_indexing(slug)
+            return {'slug':slug, 'path':proj['root'], 'reference_checkout':cfg['rom_reference']['checkout']}
 
     def setup(self, slug: str, game: bytes | Path | None, filename: str = "", log=print, move: bool = False) -> dict:
         """Add the user's game (bytes, or a file on disk) and run the project's setup, then measure it."""
@@ -1148,6 +1305,8 @@ class ForkEngine:
         rollback, an editor) are measured as they are; a measure reads build/ as it is, and a rolled-back Xbox game
         measured its broken build again and again."""
         proj, fp, cfg = self.get(slug)
+        if (cfg.get('rom_reference') or cfg.get('rom_reference_staging')) and not cfg.get('ready'):
+            raise NetworkError('Resume ROM-backed setup before re-measuring the project.')
         if not (fp.root / "objdiff.json").exists():
             log("Preparing the project's missing objdiff configuration from verified original code")
             if build:
@@ -1166,12 +1325,26 @@ class ForkEngine:
         if build:
             log("building what changed since the last build")
             failed: list[str] = []
-            with self._tree(proj).exclusive(), self._build_locks[proj["id"]]:
-                ok, output = fp.build_all(log=log, failed=failed)
-                if not ok and not failed:
-                    raise NetworkError("The project build failed without identifying which objects failed, so its "
-                                       f"previous objects cannot be measured safely. Fix the build and try again:\n{_tail(output)}")
-                rep = fp.report()
+            reference = bool(fp.objdiff_config().get('rom_reference_manifest'))
+            check_cancel = getattr(log, 'check_cancel', lambda:None)
+            def waiting():
+                getattr(log, 'progress', lambda _:None)({'phase':'Waiting for the project tree'})
+                log('Waiting for the project tree to become available')
+            tree = (self._tree(proj).exclusive(check_cancel=check_cancel, waiting=waiting)
+                    if reference else self._tree(proj).exclusive())
+            build_lock = _queued_lock(self._build_locks[proj['id']], log) if reference else self._build_locks[proj['id']]
+            with tree, build_lock:
+                if reference:
+                    # The ROM report compiles each real source from a fresh snapshot.
+                    # A preceding build would repeat every compile and produce no
+                    # reusable candidate objects for this judge.
+                    rep = fp.report(log=log)
+                else:
+                    ok, output = fp.build_all(log=log, failed=failed)
+                    if not ok and not failed:
+                        raise NetworkError("The project build failed without identifying which objects failed, so its "
+                                           f"previous objects cannot be measured safely. Fix the build and try again:\n{_tail(output)}")
+                    rep = fp.report()
             # a unit whose source doesn't build keeps its last object: what it matched then doesn't count now
             measures = self.sync(slug, log=log, rep=rep, broken=fp.failed_units(failed))
         else:
@@ -1190,7 +1363,7 @@ class ForkEngine:
             log("measuring progress with objdiff")
             try:
                 with self._tree(proj).exclusive():  # never read an object while a build writes it
-                    rep = fp.report()
+                    rep = fp.report(log=log) if fp.objdiff_config().get('rom_reference_manifest') else fp.report()
             except (ObjdiffError, ForkError) as e:
                 raise NetworkError(f"objdiff couldn't measure the project: {e}") from None
         units = {u.name: u for u in fp.units()}
@@ -2935,24 +3108,31 @@ class ForkEngine:
                         "```c", src.strip(), "```"]
         return out
 
+    @staticmethod
+    def _draft_compiler(fp: ForkProject, cfg: dict, unit) -> str:
+        if cfg.get('rom_reference'):
+            from ..forks.rom_judge import compiler_for_unit
+            return compiler_for_unit(fp, unit)
+        return (unit.scratch or {}).get('compiler', '') or compiler_info.describe(fp, cfg.get('version')).get('name', '')
+
     def _draft(self, proj, fp: ForkProject, cfg: dict, fn, unit) -> str | None:
         """m2c draft from the project's assembly for this function (Ghidra's from its target object where m2c can't
         read the code), cached in the database. A console with drafts of its own (Ghidra's: PC) keys it by the unit's
         target object: a join, a split or a repair of the analysis changes that, and the draft is made again."""
-        key = self._draft_key(cfg, unit, fp.root)
+        key = self._draft_key(cfg, unit, fp.root, project=fp)
         if fn["seed"] is not None and fn["seed_key"] == key:
             return fn["seed"] or None
         # A new object fallback only changes failed drafts. Keep existing useful
         # seeds and migrate their key without regenerating them.
-        legacy = self._draft_key(cfg, unit, fp.root, object_revision=False)
+        legacy = self._draft_key(cfg, unit, fp.root, object_revision=False, project=fp)
         if fn["seed"] and fn["seed_key"] == legacy:
             with self.net.project_store(proj['id']).tx() as db:
                 db.execute("UPDATE functions SET seed_key=? WHERE id=? AND seed_key=? AND seed=?",
                            (key, fn["id"], legacy, fn["seed"]))
             return fn["seed"]
-        hint = (unit.scratch or {}).get("compiler", "") or compiler_info.describe(fp, cfg.get("version")).get("name", "")
         meta = self._meta(fn)
         try:
+            hint = self._draft_compiler(fp, cfg, unit)
             text = drafts.draft(fp.root, cfg.get("platform") or "", unit.name, meta.get("symbol") or fn["name"],
                                 unit.source, compiler_hint=hint)
             text = text and "/* m2c */\n" + text
@@ -2961,16 +3141,22 @@ class ForkEngine:
                 names = [meta.get("symbol") or fn["name"], *self._names(meta, fn)]
                 body = next((found[n] for n in names if n in found), None)
                 text = body and "/* Ghidra */\n" + consoles.get(cfg.get("platform") or "").adapt_draft(body.strip())
-        except OSError:
+        except (OSError, ForkError):
             text = None
         with self.net.project_store(proj['id']).tx() as db:
             db.execute("UPDATE functions SET seed=?, seed_key=? WHERE id=?", (text or "", key, fn["id"]))
         return text
 
     @staticmethod
-    def _draft_key(cfg: dict, unit, root=None, *, object_revision=True) -> str:
+    def _draft_key(cfg: dict, unit, root=None, *, object_revision=True, project=None) -> str:
         """Target/header/source inputs for a unit, including an explicit regeneration request."""
         inputs = [cfg.get('draft_generation',0),cfg.get('version'),unit.scratch]
+        if root is not None and cfg.get('rom_reference'):
+            try:
+                from ..forks.rom_judge import compiler_for_unit
+                inputs.append(('rom-compiler', compiler_for_unit(project or ForkProject(root, create_state=False), unit)))
+            except (ForkError, OSError, ValueError):
+                inputs.append(('rom-compiler', None))
         if (object_revision and unit.target is not None
                 and arch.get(consoles.get(cfg.get('platform')).arch).object_draft_assembly):
             inputs.append(('object-draft', drafts.OBJECT_DRAFT_REVISION))
@@ -2989,11 +3175,11 @@ class ForkEngine:
     # ------------------------------------------------------------------ drafts in the background (app/drafts.py)
 
     def can_draft(self, proj) -> bool:
-        """Scratch projects use their own draft decompiler or the console's m2c target."""
+        """Scratch and ROM-reference projects can draft from their verified targets."""
         from .. import seeds
         cfg = json.loads(proj['config'])
         console = consoles.get(cfg.get('platform'))
-        return (cfg.get('origin') == 'scratch' and bool(cfg.get('ready'))
+        return ((cfg.get('origin') == 'scratch' or cfg.get('rom_reference')) and bool(cfg.get('ready'))
                 and ((console.own_drafts and ghidra.available()) or (drafts.supported(console.id) and seeds.available())))
 
     def stale_drafts(self, proj) -> list[int]:
@@ -3007,7 +3193,7 @@ class ForkEngine:
         for r in rows:
             if r["unit"] not in keys:
                 try:
-                    keys[r["unit"]] = self._draft_key(cfg, fp.unit(r["unit"]), fp.root)
+                    keys[r["unit"]] = self._draft_key(cfg, fp.unit(r["unit"]), fp.root, project=fp)
                 except (ForkError, KeyError):
                     keys[r["unit"]] = None
         stale = [r["id"] for r in rows if r["seed"] is None or r["seed_key"] != keys[r["unit"]]]
@@ -3036,6 +3222,32 @@ class ForkEngine:
         agent's declarations (a class that declares the function, a callee's prototype, a global's type) on top of the
         project's headers. Recorded nowhere."""
         proj, fp, cfg = self.get(slug)
+        if cfg.get('rom_reference'):
+            from .. import seeds
+            if not seeds.available():
+                raise NetworkError('redraft needs m2c, the draft decompiler: install it in Setup.')
+            mine = seeds.declarations(seeds.c_only(context))
+            if not mine:
+                raise NetworkError('Pass declarations to draft with in context (a struct, a prototype, or an extern).')
+            fn = self._fn(slug, function)
+            unit = fp.unit(fn['unit'])
+            declared = set().union(*(d.names for d in mine))
+            known = seeds.declarations(seeds.c_only(self._known(fp, unit)))
+            theirs = [d.text for d in known if not (d.names and d.names <= declared)]
+            symbol = self._meta(fn).get('symbol') or fn['name']
+            try:
+                text = drafts.draft(fp.root, cfg.get('platform') or '', unit.name, symbol, unit.source,
+                                    compiler_hint=self._draft_compiler(fp, cfg, unit),
+                                    context_header='\n'.join(theirs + [d.text for d in mine]), strict=True)
+            except seeds.DraftError as error:
+                raise NetworkError(f"m2c couldn't make the draft with your declarations: {error}") from None
+            except ForkError as error:
+                raise NetworkError(str(error)) from None
+            if not text:
+                raise NetworkError(f"m2c made no draft of {fn['name']}.")
+            return (f"m2c's draft of {fn['name']} with your declarations. Recorded nowhere: try it with "
+                    'compile_and_diff, and add useful declarations to the project headers.\n```c\n'
+                    + text.strip() + '\n```')
         if not consoles.get(cfg.get("platform")).own_drafts:
             raise NetworkError("redraft makes the machine drafts of ROM projects (m2c) and PC games (Ghidra's): in "
                                "this project, write from the brief's draft")
@@ -3823,7 +4035,7 @@ class ForkEngine:
         elif not drafts.supported(cfg.get("platform") or ""):
             raise NetworkError("autopilot needs m2c, the draft decompiler: install it in Setup")
         no_m2c = not console.own_drafts and toolchains.installed("m2c") is None
-        if cfg.get("origin") != "scratch":
+        if cfg.get("origin") != "scratch" and not cfg.get('rom_reference'):
             if no_m2c:
                 raise NetworkError("autopilot needs m2c, the draft decompiler: install it in Setup")
             from ..forks.scaffold import prepare
@@ -3879,7 +4091,7 @@ class ForkEngine:
                                "(a ds-decomp project): helpers still work on it.")
         if no_m2c:
             raise NetworkError("autopilot needs m2c, the draft decompiler: install it in Setup")
-        if not console.own_drafts and drafts.add_m2c_macros(fp.root / "include" / "common.h"):  # projects made before autopilot ran on them
+        if not console.own_drafts and not cfg.get('rom_reference') and drafts.add_m2c_macros(fp.root / "include" / "common.h"):  # projects made before autopilot ran on them
             self._commit(proj, fp, "include/common.h", "Add the macros machine drafts use\n\nWritten by decompdecomp's autopilot.")
         rows = self.net.project_store(slug).all("SELECT id FROM functions WHERE project_id=? AND status='open' ORDER BY n_insns, id",
                                   proj["id"])
@@ -3945,7 +4157,7 @@ class ForkEngine:
             if (made := self._compilable(proj, fp, cfg, fn, unit)) is not None:
                 yield made
             return
-        hint = (unit.scratch or {}).get("compiler", "") or compiler_info.describe(fp, cfg.get("version")).get("name", "")
+        hint = self._draft_compiler(fp, cfg, unit)
         text = drafts.draft(fp.root, cfg.get("platform") or "", unit.name, meta.get("symbol") or fn["name"],
                             unit.source, compiler_hint=hint, valid=True)
         _, span = self._find(text, self._names(meta, fn)) if text else (None, None)
@@ -4021,7 +4233,7 @@ class ForkEngine:
                 return "skip"
             names = self._names(self._meta(fn), fn)
             from . import draft_reports
-            inputs = (self._draft_key(cfg, unit, fp.root),cfg.get('draft_generation',0))
+            inputs = (self._draft_key(cfg, unit, fp.root, project=fp),cfg.get('draft_generation',0))
             if refresh := draft_reports.generation(self.net,fid,project_id=proj['id']):
                 inputs += (refresh,)
             input_key = draft_reports.key(repr(inputs), self._known(fp,unit), '', fn)
@@ -4029,7 +4241,7 @@ class ForkEngine:
             if not retry_draft and previous.get('key') == input_key and previous.get('complete'):
                 return 'skip'
             if not retry_draft and previous.get('complete') and (previous.get('scored') or previous.get('matched')):
-                legacy = (self._draft_key(cfg, unit, fp.root, object_revision=False), *inputs[1:])
+                legacy = (self._draft_key(cfg, unit, fp.root, object_revision=False, project=fp), *inputs[1:])
                 if previous.get('key') == draft_reports.key(repr(legacy), self._known(fp,unit), '', fn):
                     return 'skip'  # Preserve a scored result under the previous generator.
             report = {'key':input_key, 'compiled':False, 'scored':False, 'matched':False, 'trials':0, 'failures':[]}
@@ -4618,7 +4830,8 @@ class ForkEngine:
                 "slug": slug, "title": proj["name"], "description": proj["description"], "kind": "fork",
                 **consoles.get(cfg.get("platform")).project_facts(),
                 "repo_url": cfg.get("repo_url"), "fork_kind": cfg.get("fork_kind"), "version": cfg.get("version"),
-                "origin": cfg.get("origin"), "compiler_name": cfg.get("compiler"), "versions": [],
+                "origin": cfg.get("origin"), "rom_reference": bool(cfg.get('rom_reference')),
+                "compiler_name": cfg.get("compiler"), "versions": [],
                 "ready": bool(cfg.get("ready")), "needs": None,
                 "rom": {"game_code": cfg.get("version") or "", "region": consoles.name(cfg.get("platform")),
                         "title": proj["name"]},
@@ -4642,14 +4855,15 @@ class ForkEngine:
             "slug": slug, "title": proj["name"], "description": proj["description"], "kind": "fork",
             **consoles.get(cfg.get("platform")).project_facts(),
             "repo_url": cfg.get("repo_url"), "fork_kind": cfg.get("fork_kind"), "version": cfg.get("version"),
-            "origin": cfg.get("origin"), "compiler_name": cfg.get("compiler"),
+            "origin": cfg.get("origin"), "rom_reference": bool(cfg.get('rom_reference')),
+            "compiler_name": cfg.get("compiler"),
             "project_compiler": None if quick else compiler_info.describe(fp, cfg.get("version")),
             "libultra": None if quick else libultra_report(self.net, proj),
             "versions": [cfg.get("version")] if quick and cfg.get("ready") else fp.versions(), "ready": bool(cfg.get("ready")), "needs": need,
             "rom": {"game_code": cfg.get("version") or "", "region": consoles.name(cfg.get("platform")),
                     "title": proj["name"]},
-            "compiler": {"toolchain": "project", "name": "Project's own build", "flags": [], "installed": True,
-                         "proprietary": False, "supported": True},
+            "compiler": {"toolchain": "project", "name": "Pinned ROM compiler profiles" if cfg.get('rom_reference') else "Project's own build",
+                         "flags": [], "installed": True, "proprietary": False, "supported": True},
             "compilers": [],
             **(self._compiler_facts(fp, cfg) if cfg.get("ready") and not quick else {}),
             "functions": agg["total"] or 0, "matched": agg["matched"] or 0, "bytes": agg["bytes"] or 0,

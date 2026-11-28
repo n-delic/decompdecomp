@@ -1211,20 +1211,33 @@ const cwName = (c) => (c.startsWith("DS/") ? `CodeWarrior for DS ${c.slice(3)}` 
 function openExport() {
   const fork = S.ov.kind === "fork";
   dialog(fork ? "The source code" : "Export the source code", `<p id="srcText"></p><p class="muted small" id="srcWhen"></p><div class="src-state" id="srcState"></div>
-    <div class="row"><button class="primary" id="srcExport" type="button">Export project</button><button class="ghost" id="srcOpen" type="button">Open folder</button></div>
+    <div class="row"><button class="primary" id="srcExport" type="button">Export project</button><button class="ghost" id="srcOpen" type="button">Open folder</button><button class="ghost" id="srcOriginal" type="button" hidden>Open original checkout</button></div>
     <pre class="joblog tall" id="expLog" hidden></pre><div id="expResult"></div>`, "export");
   $("srcOpen").onclick = () => openFolder();
   $("srcExport").onclick = exportNow;
+  $("srcOriginal").onclick = async () => {
+    const button = $("srcOriginal");
+    button.disabled = true; button.textContent = "Opening…";
+    try {
+      const result = await api("/api/open", { method: "POST", body: { slug: S.slug, original: true } });
+      if (!result.ok) throw new Error(result.message || "Could not open the original checkout.");
+      toast("Opened the original checkout.");
+    } catch (e) { toast(e.message, "error"); }
+    finally { button.disabled = false; button.textContent = "Open original checkout"; }
+  };
   renderSource(S.ov);
 }
 const exportOpen = () => S.dialogKind === "export" && !$("dialog").hidden;
 function renderSource(ov) {
   const ex = ov.export, fork = ov.kind === "fork";
   $("srcExport").hidden = fork || !ov.exportable;
+  $("srcOriginal").hidden = !ov.rom_reference;
   $("srcWhen").textContent = !fork && ex ? `exported ${since(ex.t)}` : "";
   if (fork) {
     const rb = ov.rebuild;
-    $("srcText").innerHTML = ov.origin === "scratch"
+    $("srcText").innerHTML = ov.rom_reference
+      ? `This local analysis compares functions with your game. The original public checkout is preserved, and <code>reference/</code> contains a copy of its source for investigation. Matches are committed locally; rebuilding the whole game with those matches is not available yet.`
+      : ov.origin === "scratch"
       ? `This project <b>is</b> the source tree: a ${ov.layout || "decomp"} project that rebuilds your game on every build. Every match is committed to git in the project folder.`
         + (rb ? `<p class="small ${rb.identical ? "ok" : "warn-text"}">${rb.identical ? `✓ ${esc(rb.what || "The rebuilt game")} is your copy, byte for byte` + (/padding/.test(rb.detail) ? " (up to the padding at its end: your copy is trimmed)." : ".")
           : `The rebuilt game isn't your copy byte for byte yet: ${esc(rb.detail)}. Decompiling works anyway: every function is compared with your copy's own code.`}</p>` : "")
