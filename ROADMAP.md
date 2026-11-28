@@ -165,6 +165,8 @@
   under the mapping of the code before it (two more on that game).
   Alignment-based gap mappings need a unique best offset and at least two calls not already explained by a
   mapped bank; ties and calls that might target an existing overlay remain for review.
+  A runtime-observed bank can count its first entry as an internal call when that entry is a complete called leaf,
+  even when it has no stack frame; the other mapping and overlap checks still apply.
   A project that exists gains them without a reimport: Code coverage review's **Add missed
   functions** (`find_missed_functions`, the console's `missed_functions`) runs the same
   search on the project's own splat config and adds what it finds as open functions and
