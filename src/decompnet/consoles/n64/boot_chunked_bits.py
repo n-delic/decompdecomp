@@ -13,6 +13,7 @@ _VARIANT_TEXT = '31133f68985fed7e9d6871a5c31d18c1fb2c9f0d7478f21360dc527b9592e01
 _VARIANT2 = 'd23bb6845b14fa601fdfd283f00ecf4ff1674f580b4d410c6a6c998a4c7624ca'
 _VARIANT2_TEXT = '536038ee4edee1e18fffba67b85e873954b3cb1adab362c169b71e3989b305ac'
 _PRIMARY = '10d91d2c6916496106b399cc05b6ee0663d10a3ae9fd8003cad4936ad5476b71'
+_VARIANT_PRIMARY = '3ca488c5e900ac5748c11ef50a1178305b116e6a70bf22b7826d0c39bf4683a3'
 # Directory index, offset, output and stored sizes, runtime address, text bounds,
 # and the full image digest. The text was checked against independent RAM captures.
 EXTRA_PROGRAMS = (
@@ -24,6 +25,24 @@ EXTRA_PROGRAMS = (
      '379e415c25f7841e3053233aecc6afc146dee3ec62f31a32502df74f97decc3d'),
     (5, 0xdfb88, 0x337e0, 0x1a6c8, 0x8010b210, 0x1048, 0x2be04,
      '96d59f2c1077f726937795b45ac0a7fa10fa1d5a0942c5fb589ac7dd592eb451'),
+)
+VARIANT_PROGRAMS = (
+    (1, 0x39534, 0x40570, 0x19010, 0x800838b8, 0x1020, 0x2d074,
+     'f6ff153e08417fd99801d0889c5448a064e47b09d4bb923c52177c928e265905'),
+    (2, 0x52544, 0x2ba90, 0x17318, 0x800c3e28, 0x8, 0x2ba90,
+     'ed9dc915524e4db9f21b3f62d575cf096cea1cff36379187ec431a2ae5929f6a'),
+    (4, 0x6f798, 0x3c290, 0x20970, 0x800fbb18, 0x40, 0x3c1f4,
+     'b8bcfca252b273b2753c598f9c9f7d47b7d8920f5a38c0f70e1fc7b59c827813'),
+    (6, 0x959d8, 0x9200, 0x5724, 0x80137da8, 0x168, 0x8f8c,
+     '85e5428d76c7f07b676a697e16ec340b32800983b13e25dbb7cc491e94ee569a'),
+    (7, 0x9b0fc, 0x3f340, 0x20e50, 0x800838b8, 0x18b8, 0x3b7dc,
+     '108e730f8aa0a1326952f45c1d82d6250c2d27b6c639d82bf6908ac01e3a47ca'),
+    (8, 0xbbf4c, 0x2c150, 0x1712c, 0x800c3e28, 0x1190, 0x292bc,
+     '3bb1c933a356e25e7513e6a710a1eaeff5d8d10d5b153c75c46be7bbc716d670'),
+    (9, 0xd3078, 0x3bfd0, 0x1f194, 0x800fbb18, 0xe38, 0x388f0,
+     '7d307e9a46cf04434436248ee57889518cf3f4f0e54cb23d365b2fc34566396c'),
+    (10, 0xf220c, 0x8288, 0x4818, 0x80137da8, 0x8, 0x8288,
+     'ca2978240f8f0180aabaa69318ad3ccec24ae10d01b41fe1684e298820b286a5'),
 )
 
 
@@ -38,7 +57,7 @@ def drop_impossible_bss(segments):
 def code_start(vram, text):
     if vram == 0x80000400:
         return 96 if len(text) >= 96 and not any(text[80:96]) else 80
-    return next((start for _, _, _, _, address, start, end, _ in EXTRA_PROGRAMS
+    return next((start for _, _, _, _, address, start, end, _ in EXTRA_PROGRAMS + VARIANT_PROGRAMS
                  if address == vram and end == len(text)), None)
 
 
@@ -123,10 +142,12 @@ def find(rom, boot_ranges):
         return None
     end = returns[-1] + 8
     primary = (0x80000400, data[:end], data[end:])
-    if hashlib.sha256(data).hexdigest() != _PRIMARY:
+    digest = hashlib.sha256(data).hexdigest()
+    extras = EXTRA_PROGRAMS if digest == _PRIMARY else VARIANT_PROGRAMS if digest == _VARIANT_PRIMARY else ()
+    if not extras:
         return (primary,)
     programs = [primary]
-    for index, offset, expanded, packed, vram, start, end, digest in EXTRA_PROGRAMS:
+    for index, offset, expanded, packed, vram, start, end, digest in extras:
         if directory + 12 * (index + 1) > len(rom):
             return (primary,)
         if struct.unpack_from('>III', rom, directory + 12 * index) != (offset, expanded, 0x80000000 | packed):
