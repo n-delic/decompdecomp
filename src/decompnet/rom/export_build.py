@@ -635,6 +635,12 @@ def build() -> bool:
                 if not verify_analysis(original, out):
                     fail("Rebuilt code differs from the original compressed archive members.")
                 out = original
+            elif cartridge.get("table_overlays"):
+                from decompnet.consoles.n64.overlays import verify_analysis
+
+                if not verify_analysis(original, out):
+                    fail("Rebuilt code differs from the original table-defined overlays.")
+                out = original
             elif boot_ranges := cartridge.get("paged_boot_ranges"):
                 from decompnet.consoles.n64.indexed_tlb_code import verify_analysis
 

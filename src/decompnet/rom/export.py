@@ -879,6 +879,7 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
         paged_boot_ranges = []
         byte_cipher_ranges = []
         archive_analysis = False
+        table_overlay_analysis = False
         if not blocks and not runtime_verified:
             gzip_boot_ranges = [entry for entry in split.code_ranges(configs[0]) if entry[1] <= len(original)]
             from ..consoles.n64 import runtime_byte_cipher
@@ -886,8 +887,10 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
                 byte_cipher_ranges, gzip_boot_ranges = gzip_boot_ranges, []
             elif not boot_gzip.verify_analysis(original, image, gzip_boot_ranges):
                 from ..consoles.n64 import indexed_runtime_code
-                archive_analysis = indexed_runtime_code.verify_analysis(original, image)
-                if not archive_analysis:
+                from ..consoles.n64 import overlays as table_overlays
+                table_overlay_analysis = table_overlays.verify_analysis(original, image)
+                archive_analysis = not table_overlay_analysis and indexed_runtime_code.verify_analysis(original, image)
+                if not archive_analysis and not table_overlay_analysis:
                     from ..consoles.n64 import indexed_tlb_code
                     if indexed_tlb_code.verify_analysis(original, image, gzip_boot_ranges):
                         paged_boot_ranges = gzip_boot_ranges
@@ -903,6 +906,8 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
             build["cartridge"]["gzip_boot_ranges"] = gzip_boot_ranges
         if archive_analysis:
             build["cartridge"]["indexed_archive"] = True
+        if table_overlay_analysis:
+            build["cartridge"]["table_overlays"] = True
         if paged_boot_ranges:
             build["cartridge"]["paged_boot_ranges"] = paged_boot_ranges
         if byte_cipher_ranges:
@@ -940,7 +945,7 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
         if cartridge.get('byte_cipher_ranges'):
             text += ("\nThe build verifies the linked analysis image against the audited runtime decoder and "
                      "then checks the original cartridge. Byte-changing edits require encoding the modified code.\n")
-        elif (cartridge.get('runtime_zlib') or cartridge.get('indexed_archive') or cartridge.get('gzip_boot_ranges')
+        elif (cartridge.get('runtime_zlib') or cartridge.get('indexed_archive') or cartridge.get('table_overlays') or cartridge.get('gzip_boot_ranges')
                 or cartridge.get('paged_boot_ranges')):
             text += ("\nThe build checks the linked analysis image against the original compressed programs and "
                      "verifies the original cartridge. Byte-changing edits require recompression.\n")
