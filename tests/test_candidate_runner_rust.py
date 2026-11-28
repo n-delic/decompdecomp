@@ -120,3 +120,127 @@ def test_concurrency_limit_and_empty_batch():
     assert len(results) == 3
     assert all(r.exit_code == 0 and not r.timed_out for r in results)
     assert elapsed >= 0.30
+
+
+def test_compile_sources_batch_rust_and_fallback(monkeypatch, tmp_path: Path):
+    from decompnet import compiler
+
+    fake_cc = tmp_path / "fake_cc.py"
+    fake_cc.write_text(
+        "import sys, time\n"
+        "from pathlib import Path\n"
+        "src, obj = Path(sys.argv[1]), Path(sys.argv[2])\n"
+        "text = src.read_text()\n"
+        "if 'FAIL' in text:\n"
+        "    print('syntax error', file=sys.stderr)\n"
+        "    sys.exit(1)\n"
+        "if 'SLEEP' in text:\n"
+        "    time.sleep(5)\n"
+        "obj.write_bytes(b'OBJ:' + text.splitlines()[-1].encode())\n",
+        encoding="utf-8",
+    )
+    cfg = compiler.CompilerConfig(
+        cmd=[sys.executable, str(fake_cc), "{src}", "{obj}"],
+        timeout=0.4,
+        sandbox="none",
+    )
+    sources = [
+        "int a(void) { return 1; }",
+        "int b(void) { FAIL; }",
+        "int c(void) { __asm__(\"nop\"); }",
+        "int d(void) { return 4; }",
+    ]
+
+    # Fallback when gateway binary is unavailable.
+    monkeypatch.setattr(mcp_gateway, "program", lambda: None)
+    assert compiler.compile_sources_batch(cfg, "/* hdr */\n", sources) is None
+
+    # Fallback when disabled via env or unsupported modes.
+    exe = mcp_gateway.built()
+    if exe is None:
+        pytest.skip("decomp-mcp-gateway binary not built")
+    monkeypatch.setattr(mcp_gateway, "program", lambda: exe)
+    monkeypatch.setenv("DECOMP_RUST_CANDIDATE_RUNNER", "0")
+    assert compiler.compile_sources_batch(cfg, "/* hdr */\n", sources) is None
+    monkeypatch.delenv("DECOMP_RUST_CANDIDATE_RUNNER", raising=False)
+
+    assert compiler.compile_sources_batch(cfg, "/* hdr */\n", sources[:1]) is None
+    assert compiler.compile_sources_batch(
+        compiler.CompilerConfig(cmd=cfg.cmd, sandbox="none", wsl=True), "/* hdr */\n", sources
+    ) is None
+    assert compiler.compile_sources_batch(
+        compiler.CompilerConfig(cmd=cfg.cmd, sandbox="none", cplusplus=True), "/* hdr */\n", sources
+    ) is None
+
+    # Real Rust candidate-runner batch compile.
+    results = compiler.compile_sources_batch(cfg, "/* hdr */\n", sources, max_concurrency=2)
+    assert results is not None
+    assert len(results) == 4
+    assert results[0] is not None and results[0].ok and results[0].obj == b"OBJ:int a(void) { return 1; }"
+    assert results[1] is not None and not results[1].ok and "syntax error" in results[1].log
+    assert results[2] is not None and not results[2].ok and "rejected:" in results[2].log
+    assert results[3] is not None and results[3].ok and results[3].obj == b"OBJ:int d(void) { return 4; }"
+
+
+def test_deep_compilation_pool_parallel_batch_and_fallback(monkeypatch):
+    import threading
+    from types import MethodType
+
+    from decompnet import compiler
+    from decompnet.app import deep_compilation, deep_permuter, permute
+    from decompnet.network import Network
+    from tests.test_deep_permuter import Log
+    from tests.test_permute import AGENT, FakeNet
+
+    monkeypatch.setattr(compiler, "concurrency_limit", lambda: 2)
+    net = FakeNet()
+    net._compile_ahead_local = threading.local()
+    net.compiled_ahead = MethodType(Network.compiled_ahead, net)
+    net._attempt_compilation = MethodType(Network._attempt_compilation, net)
+    net._compile_snapshot = Network._compile_snapshot
+    net.keep_diff = lambda *args: None
+
+    parallel_calls: list[list[str]] = []
+    single_calls: list[str] = []
+
+    def parallel_batch(proj, header, sources, fn, *, max_concurrency=None):
+        parallel_calls.append(list(sources))
+        return [compiler.CompileResult(True, s.encode(), "") for s in sources]
+
+    def single_compile(proj, header, source, fn):
+        single_calls.append(source)
+        return compiler.CompileResult(True, source.encode(), "")
+
+    net._compile_parallel_batch = parallel_batch
+    net._compile = single_compile
+
+    search = deep_permuter.Search(net, 1, 10, Log(), net.function())
+    search.compile_pool = deep_compilation.Pool(count=2, remote=True)
+    judged: list[str] = []
+
+    def score(self, agent, proj, fn, source, best, fork):
+        res = net._attempt_compilation(proj, net._context(1, "")["header"], source, fn)
+        assert res.obj == source.encode()
+        judged.append(source)
+        return 40
+
+    monkeypatch.setattr(permute.Permuter, "_score_work", score)
+    sources = [f"int f(){{return {i};}}" for i in range(4)]
+
+    try:
+        for source in search._stream_variants((c for c in [sources]), AGENT, net.project_row("game"), net.function(), None):
+            assert search._score(AGENT, net.project_row("game"), net.function(), source, 40, None) == 40
+        assert judged == sources
+        assert len(parallel_calls) == 1 and parallel_calls[0] == sources
+        assert single_calls == []
+
+        # Now return None from parallel_batch to verify seamless fallback to single_compile.
+        net._compile_parallel_batch = lambda *a, **kw: None
+        judged.clear()
+        sources2 = [f"int g(){{return {i};}}" for i in range(4)]
+        for source in search._stream_variants((c for c in [sources2]), AGENT, net.project_row("game"), net.function(), None):
+            assert search._score(AGENT, net.project_row("game"), net.function(), source, 40, None) == 40
+        assert judged == sources2
+        assert sorted(single_calls) == sorted(sources2)
+    finally:
+        search.compile_pool.close()

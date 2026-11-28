@@ -1223,6 +1223,25 @@ class Network:
                                              'language':'c', 'settings_source':'compile invocation snapshot (batched)'}
         return results
 
+    def _compile_parallel_batch(self, proj, header: str, sources: list[str], fn, *, max_concurrency: int | None = None):
+        """Compile several candidates of `fn` in parallel via the Rust candidate runner, or None to fall back."""
+        if '_compile' in getattr(self, '__dict__', {}):
+            return None
+        from .compiler import compile_sources_batch
+        cfg, invocation = Network._invocation(proj, fn)
+        try:
+            results = compile_sources_batch(invocation, header, sources, max_concurrency=max_concurrency)
+        except OSError:
+            return None
+        if results is None:
+            return None
+        for result in results:
+            if result is not None:
+                result.effective_settings = {'compiler': cfg['compiler'], 'effective_command': list(invocation.cmd),
+                                             'language': getattr(result, 'language', 'unknown'),
+                                             'settings_source': 'compile invocation snapshot (parallel batch)'}
+        return results
+
     @staticmethod
     def _compile_snapshot(proj, fn, header, source):
         # Include naming metadata: canonical_source can change the compiler input after a rename.

@@ -153,6 +153,19 @@ class Pool:
                 # an idle compile thread took each before its siblings were in the queue, and 94% of groups held one
                 # candidate (a run costs 15-20 ms, a batch member 1.4). Candidates queued singly still join as before.
                 if isinstance(item, list) and (self.batching <= 1 or item[0].batch[0] in self.unbatchable):
+                    # When candidates cannot share a combined translation unit (or remote=True),
+                    # dispatch them in parallel via the Rust candidate runner when available.
+                    if len(item) >= 2 and self._can_parallel_batch(item):
+                        group = [each for each in item if each.started or each.future.set_running_or_notify_cancel()]
+                        for each in group:
+                            each.started = False
+                        if len(group) >= 2 and self._run_parallel_batch(group):
+                            continue
+                        for each in group:
+                            each.started = True
+                            try:self.queue.put_nowait(each)
+                            except queue.Full:pending.append(each)
+                        continue
                     # (a function whose candidates cannot share a run: let every worker take one, as they always did)
                     for each in item:
                         try:self.queue.put_nowait(each)
@@ -244,6 +257,21 @@ class Pool:
             # It compiled, and none could be used: a function that refers to its file's own data. One by one.
             with self.lock:
                 self.unbatchable.add(group[0].batch[0])
+        alone_tickets = [ticket for index, ticket in enumerate(group) if not results or results[index] is None]
+        if len(alone_tickets) >= 2 and self._can_parallel_batch(alone_tickets):
+            for index, ticket in enumerate(group):
+                result = results[index] if results else None
+                if result is None:
+                    continue
+                if ticket.stopped.is_set():
+                    ticket.future.set_exception(CancelledError())
+                else:
+                    ticket.future.set_result(result)
+            if self._run_parallel_batch(alone_tickets):
+                return
+            for ticket in alone_tickets:
+                self._run_one(ticket)
+            return
         mine = None
         for index, ticket in enumerate(group):
             result = results[index] if results else None
@@ -261,6 +289,53 @@ class Pool:
                 ticket.future.set_result(result)
         if mine is not None:
             self._run_one(mine)
+
+    def _can_parallel_batch(self, tickets):
+        if len(tickets) < 2:
+            return False
+        batch_info = getattr(tickets[0], 'batch', None)
+        if batch_info is None:
+            return False
+        _, net, _, _, _ = batch_info
+        return hasattr(net, '_compile_parallel_batch') and all(
+            getattr(t, 'batch', None) is not None and t.batch[0] == batch_info[0]
+            for t in tickets
+        )
+
+    def _run_parallel_batch(self, group):
+        """Compile `group` in parallel via the Rust candidate runner.
+
+        Returns True if the group was handled (any individual `None` results are compiled
+        via `_run_one`), or False to fall back to the ordinary Python per-ticket path.
+        """
+        _, net, proj, header, fn = group[0].batch
+        compile_parallel = getattr(net, '_compile_parallel_batch', None)
+        if compile_parallel is None:
+            return False
+        try:
+            group[0].check()
+            token = compile_timing.ORIGIN.set('parallel_batch')
+            try:
+                with compiler.cancellable(group[0].check), compile_timing.collect(group[0].compile_counts, append=True):
+                    results = compile_parallel(
+                        proj, header, [t.batch_source for t in group], fn, max_concurrency=self.count
+                    )
+            finally:
+                compile_timing.ORIGIN.reset(token)
+        except BaseException as error:
+            for ticket in group:
+                ticket.future.set_exception(error)
+            return True
+        if results is None:
+            return False
+        for ticket, result in zip(group, results, strict=True):
+            if result is None:
+                self._run_one(ticket)
+            elif ticket.stopped.is_set():
+                ticket.future.set_exception(CancelledError())
+            else:
+                ticket.future.set_result(result)
+        return True
 
     def _judge_random_batch(self, group, results, net, proj, fn):
         judge = getattr(net, "_judge_random_batch", None)
@@ -333,8 +408,8 @@ def chunk(search, agent, proj, fn, sources, fork):
                 snapshot = search.net._compile_snapshot(proj, fn, header, source)
                 ticket = Ticket(key[1], snapshot,
                                 lambda source=source:search.net._compile(proj, header, source, fn), check)
-                if hasattr(search.net, '_compile_batch'):
-                    # what batch_compile needs: the run's group (one function, one header) and this candidate
+                if hasattr(search.net, '_compile_batch') or hasattr(search.net, '_compile_parallel_batch'):
+                    # what batch_compile / parallel candidate runner needs: the run's group and this candidate
                     ticket.batch = ((id(search.net), proj['id'], fn['id'], header), search.net, proj, header, fn)
                     ticket.batch_source = source
                     ticket.random_rewrite = True

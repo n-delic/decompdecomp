@@ -608,6 +608,134 @@ def _compile_as(cfg: CompilerConfig, work: Path, root: str, source: str, ext: st
     return CompileResult(True, obj.read_bytes(), log[-2000:], "c++" if ext == "cpp" else "c")
 
 
+def compile_sources_batch(
+    cfg: CompilerConfig,
+    context_header: str,
+    sources: list[str],
+    *,
+    trusted: bool = False,
+    max_concurrency: int | None = None,
+) -> list[CompileResult | None] | None:
+    """Compile a batch of candidate C sources in parallel via the Rust candidate runner.
+
+    Returns a list aligned with `sources` (where `None` means that entry should fall back
+    to single-candidate compilation), or `None` if the batch cannot use the Rust runner
+    (missing binary, unsupported sandbox/C++ mode, direct_gcc multi-step, or artifact sink).
+    """
+    if len(sources) < 2 or _ARTIFACT_SINK.get() is not None:
+        return None
+    if os.environ.get("DECOMP_RUST_CANDIDATE_RUNNER") == "0":
+        return None
+    mode = _sandbox_mode(cfg)
+    if mode not in ("none", "bwrap"):
+        return None
+    if cfg.cplusplus and cfg.source_extension == "c":
+        return None
+    from .app import mcp_gateway
+    if mcp_gateway.program() is None:
+        return None
+
+    if check := _CANCEL_CHECK.get():
+        check()
+
+    out: list[CompileResult | None] = [None] * len(sources)
+    eligible: list[tuple[int, str]] = []
+    for idx, source in enumerate(sources):
+        if not trusted:
+            try:
+                if context_header.startswith(DONOR_UNIT_HEADER):
+                    check_source(context_header + source, max_bytes=MAX_DONOR_UNIT_BYTES)
+                else:
+                    check_source(source)
+            except SourceRejected as e:
+                out[idx] = CompileResult(False, None, f"rejected: {e}")
+                continue
+        eligible.append((idx, source))
+
+    if len(eligible) < 2:
+        return None
+
+    from . import candidate_runner, direct_gcc
+    ext = cfg.source_extension
+    name = f"func.{ext}"
+    intrinsics = importlib.import_module(cfg.intrinsics).header() if cfg.intrinsics else ""
+    timeout_s = min(cfg.timeout, limits.compiler_time_limit())
+    timeout_ms = max(1, int(timeout_s * 1000))
+
+    with _workspace("decompnet-batch-") as tmp:
+        batch_dir = Path(tmp)
+        shared_inc = batch_dir / "include"
+        shared_inc.mkdir()
+        for d in cfg.include_dirs:
+            shutil.copytree(d, shared_inc, dirs_exist_ok=True)
+        for header in shared_inc.rglob("*"):
+            if header.is_file() and header.suffix.lower() in (".h", ".hpp", ".hxx", ".inc", ".inl"):
+                data = header.read_bytes()
+                if b"\r\n" in data:
+                    header.write_bytes(data.replace(b"\r\n", b"\n"))
+        (shared_inc / "context.h").write_text(context_header, encoding="utf-8", newline="\n")
+
+        jobs: list[candidate_runner.CandidateJob] = []
+        work_dirs: list[tuple[int, str, Path, str]] = []
+        for idx, source in eligible:
+            work_i = batch_dir / f"c{idx}"
+            work_i.mkdir()
+            root_i = _root(cfg, work_i)
+            if mode == "bwrap":
+                shutil.copytree(shared_inc, work_i / "include")
+                inc_root = f"{root_i}/include"
+            else:
+                inc_root = str(shared_inc)
+            subst = {"{src}": f"{root_i}/{name}", "{obj}": f"{root_i}/func.o", "{include}": inc_root}
+            argv_i = [subst.get(a, a) for a in cfg.cmd]
+            argv_i = [a.replace("{include}", subst["{include}"]) for a in argv_i]
+            if direct_gcc.plan(argv_i, root_i, mode):
+                return None
+            wrapped = _wrap(cfg, work_i, argv_i)
+            src_content = cfg.prelude + intrinsics + f'#include "context.h"\n#line 1 "{name}"\n' + source + "\n"
+            jobs.append(
+                candidate_runner.CandidateJob(
+                    id=str(idx),
+                    argv=wrapped,
+                    cwd=str(work_i),
+                    source_file=candidate_runner.SourceFile(path=str(work_i / name), content=src_content),
+                    timeout_ms=timeout_ms,
+                )
+            )
+            work_dirs.append((idx, source, work_i, root_i))
+
+        if check := _CANCEL_CHECK.get():
+            check()
+        compile_timing.add("requests", len(sources))
+        with _slot():
+            compile_timing.add("invocations", len(jobs))
+            compile_timing.add(compile_timing.run_origin(), len(jobs))
+            with span("compile_execute"), compile_timing.phase("execute"):
+                raw_results = candidate_runner.run_batch(jobs, max_concurrency=max_concurrency, use_rust=True)
+        if check := _CANCEL_CHECK.get():
+            check()
+
+        from .inline_helpers import check as check_inline_helpers
+        for (idx, source, work_i, root_i), res in zip(work_dirs, raw_results, strict=True):
+            if res.error is not None:
+                out[idx] = None
+                continue
+            if res.timed_out:
+                out[idx] = CompileResult(False, None, f"compiler timed out after {cfg.timeout}s")
+                continue
+            log = (res.stdout + res.stderr).replace(root_i + "/", "")
+            obj = work_i / "func.o"
+            if res.exit_code != 0 or not obj.exists():
+                out[idx] = CompileResult(False, None, log[-4000:] or f"compiler exited with {res.exit_code}")
+                continue
+            obj_bytes = obj.read_bytes()
+            if reason := check_inline_helpers(source, obj_bytes):
+                out[idx] = CompileResult(False, None, reason)
+            else:
+                out[idx] = CompileResult(True, obj_bytes, log[-2000:], "c++" if ext == "cpp" else "c")
+        return out
+
+
 def preprocess_candidate(cfg: CompilerConfig, context_header: str, source: str) -> dict:
     """A candidate preprocessed exactly as the app's compile does it, for an agent who wants the `.i` to run cc1's dumps on.
 
