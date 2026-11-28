@@ -13,6 +13,19 @@ RETURN=0x03e00008
 def image(words,big=True):return b''.join(w.to_bytes(4,'big' if big else 'little') for w in words)
 
 
+def test_called_body_can_initialize_a_proven_global_before_its_frame():
+    words = [0x3c018001, 0xac200100, FRAME, 0xafbf0014, 0x8fbf0014, RETURN, POP]
+    data = image(words)
+    assert called_extent(data, 0, len(data), BASE) is None
+    assert called_extent(data, 0, len(data), BASE, max_lead=16, global_store_lead=True) == len(data)
+    # A caller-provided pointer or a clobbered address is not a fixed global.
+    words[1] = 0xac800100
+    assert called_extent(image(words), 0, len(data), BASE, max_lead=16, global_store_lead=True) is None
+    words[1] = 0x8c210100
+    words.insert(2, 0xac200100)
+    assert called_extent(image(words), 0, len(words)*4, BASE, max_lead=16, global_store_lead=True) is None
+
+
 @pytest.mark.parametrize('platform',['n64','psx','ps2','psp'])
 def test_compiler_can_pop_immediately_before_return(platform):
     console=consoles.get(platform)

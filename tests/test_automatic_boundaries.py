@@ -444,6 +444,27 @@ def test_a_piece_whose_frame_comes_after_scheduled_loads_joins_its_tail():
     assert [(f.vram,f.size) for f in result]==[(BASE,8),(BASE+8,40)]
 
 
+def test_called_global_initialization_before_frame_joins_its_closed_tail():
+    prefix = [0x3c018001, 0xac200100] * 6
+    body = [0x27bdffe8, 0xafbf0014, 0x0c000c00, 0,
+            0x8fbf0014, 0x03e00008, 0x27bd0018]
+    caller = [0x0c000000 | ((BASE >> 2) & 0x3ffffff), 0, 0x03e00008, 0]
+    words = prefix + body + caller
+    image, functions, segments = fixture(words, cuts=(0, 60, 76, 92))
+    result = repair(functions, [], image, consoles.get('n64'), segments)
+    assert [(f.rom, f.size) for f in result] == [(0, 76), (76, 16)]
+    words[-4] = 0
+    image, functions, segments = fixture(words, cuts=(0, 60, 76, 92))
+    result = repair(functions, [], image, consoles.get('n64'), segments)
+    assert not any(f.rom == 0 and f.size == 76 for f in result)
+    # A recursive call plus an external jump is not an independent caller.
+    words[len(prefix)+2] = 0x0c000000 | ((BASE >> 2) & 0x3ffffff)
+    words[-4] = 0x08000000 | ((BASE >> 2) & 0x3ffffff)
+    image, functions, segments = fixture(words, cuts=(0, 60, 76, 92))
+    result = repair(functions, [], image, consoles.get('n64'), segments)
+    assert not any(f.rom == 0 and f.size == 76 for f in result)
+
+
 def test_called_load_before_frame_joins_closed_scheduled_switch():
     words = [0x8f8204b4, 0x27bdffe8, 0xafbf0014,
              0x2c430002, 0x1060000b, 0x00021880, 0x3c048000, 0x24841100,

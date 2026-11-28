@@ -13,7 +13,7 @@ def _closed(info, table_ranges):
 
 
 def called_extent(image, start, end, vram, *, big_endian=True, cpu='', asm_check=None, table_ranges=(),
-                  allow_loop_epilogue=False, max_lead=None, resolved_indirect=None):
+                  allow_loop_epilogue=False, max_lead=None, resolved_indirect=None, global_store_lead=False):
     """Reject incomplete, unbalanced and multi-frame bodies; this never grants a match.
 
     A call into raw disassembler output can locate code, but a frame pattern alone is
@@ -26,7 +26,7 @@ def called_extent(image, start, end, vram, *, big_endian=True, cpu='', asm_check
     if start<0 or start%4 or end>len(image) or start+8>end:
         return None
     word=lambda at:int.from_bytes(image[at:at+4],order)
-    lead=_lead(image,start,end,order,cpu,max_lead=max_lead)
+    lead=_lead(image,start,end,order,cpu,max_lead=max_lead,global_store_lead=global_store_lead)
     if lead is None:
         return None
     entry=start;start+=lead  # the frame's own address: the checks below are about the body it opens
@@ -164,7 +164,7 @@ def _loop_epilogue(word, frame, finish, limit, amount):
 LEAD = 5  # instructions the compiler may schedule ahead of the frame
 
 
-def _lead(image, start, end, order, cpu, *, max_lead=None):
+def _lead(image, start, end, order, cpu, *, max_lead=None, global_store_lead=False):
     """How many bytes come before the frame: GCC can schedule a load or two ahead of `addiu $sp` (an N64 game's
     overlay: `lui $v0; lbu $v0; addiu $sp, -0x20`), and those stay part of the function. Only plain loads and
     arithmetic into scratch registers or a full run of argument home stores qualify. Transfers and other
@@ -184,6 +184,7 @@ def _lead(image, start, end, order, cpu, *, max_lead=None):
             and is_frame(int.from_bytes(image[start+homes:start+homes+4], order))):
         return homes
 
+    constants = {}
     for n in range((LEAD if max_lead is None else min(max_lead, 16))+1):
         at=start+4*n
         if at+4>end:return None
@@ -191,9 +192,22 @@ def _lead(image, start, end, order, cpu, *, max_lead=None):
         if is_frame(w):return 4*n
         ins=rabbitizer.Instruction(w,0,rabbitizer_category(cpu))
         uses=_mips_uses(w,cpu)
-        if (not ins.isValid() or ins.isBranch() or ins.isJump() or ins.hasDelaySlot() or ins.doesStore() or uses is None
+        store = ins.doesStore()
+        # For an independently called entry, a compiler may initialize known
+        # global addresses before allocating its frame. Never accept a store
+        # through an argument, a loaded pointer, or an unknown base.
+        if store:
+            base = constants.get((w >> 21) & 31)
+            displacement = (w & 0xffff) - (0x10000 if w & 0x8000 else 0)
+            if not global_store_lead or base is None or not 0x80000000 <= base+displacement < 0x80800000:
+                return None
+        if (not ins.isValid() or ins.isBranch() or ins.isJump() or ins.hasDelaySlot() or uses is None
                 or (uses[0]|uses[1])&{16,17,18,19,20,21,22,23,29,30,31}):
             return None
+        for register in uses[1]:
+            constants.pop(register, None)
+        if w >> 26 == 15 and 0x8000 <= w & 0xffff <= 0x807f:
+            constants[(w >> 16) & 31] = (w & 0xffff) << 16
     return None
 
 

@@ -392,6 +392,16 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
                                              for source,_ in references.get(at+mapping, ())))
                 size=size or called_extent(image,at,hi,at+mapping,**framed,table_ranges=tables,
                                            allow_loop_epilogue=independently_entered)
+                if not size and at+mapping in direct_calls:
+                    # Some compilers initialize fixed globals before the
+                    # stack frame. Require a real call and a closed, balanced
+                    # body; unknown-address stores remain ineligible.
+                    candidate=called_extent(image,at,hi,at+mapping,**framed,table_ranges=tables,
+                                            max_lead=16,global_store_lead=True)
+                    if candidate and any((source < at or source >= at+candidate)
+                                         and int.from_bytes(image[source:source+4], order) >> 26 == 3
+                                         for source,_ in references.get(at+mapping, ())):
+                        size=candidate
                 if not size and at+mapping in direct_calls and at in cuts:
                     size=assembly_extent(image,at,hi,at+mapping,console,order)
                     if size and at+size not in cuts:
