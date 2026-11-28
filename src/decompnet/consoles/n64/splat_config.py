@@ -3,8 +3,33 @@
 import hashlib
 import json
 import re
+import struct
 
 import yaml
+
+
+def _boot_call_size(rom, vram, offset, size):
+    """A call immediately into the following function ends this boot stub.
+
+    Splat otherwise reads the callee as part of the entrypoint and crashes on
+    its indirect call. Keep this exception narrow: the original instructions
+    remain untouched and the direct call and its delay slot are both retained.
+    """
+    data = rom[offset:offset+size]
+    words = [word for word, in struct.iter_unpack('>I', data[:len(data)//4*4])]
+    for index, word in enumerate(words):
+        opcode = word >> 26
+        if opcode in (1, 2, 4, 5, 6, 7) or (word & 0xfc00003f) in (8, 9):
+            break
+        if opcode != 3:
+            continue
+        pc = vram + 4*index
+        target = ((pc+4) & 0xf0000000) | ((word & 0x03ffffff) << 2)
+        if (target == pc+8 and index+1 < len(words)
+                and any((w & 0xfc00003f) == 9 for w in words[index+2:])):
+            return 4*(index+2)
+        break
+    return size
 
 
 def create(args, workdir, log):
@@ -15,18 +40,25 @@ def create(args, workdir, log):
         header = stream.read(64)
     if len(header) < 64 or header[:4] != b'\x80\x37\x12\x40':
         return _splat(args, workdir, log)
+    with path.open('rb') as stream:
+        boot = stream.read(0x1100)
+    vram = int.from_bytes(header[8:12], 'big')
+    module = ('decompnet.consoles.n64.splat_boot_config'
+              if _boot_call_size(boot, vram, 0x1000, 0x100) < 0x100 else 'splat')
+    def run():
+        return _splat(args, workdir, log, module=module) if module != 'splat' else _splat(args, workdir, log)
     original = header[0x20:0x34]
     try:
         name = original.decode('ascii').rstrip(' \x00')
     except UnicodeDecodeError:
-        return _splat(args, workdir, log)
+        return run()
     expected = name.title() + ' (Region)'
     try:
         safe = yaml.safe_load('name: ' + expected)
     except yaml.YAMLError:
         safe = None
     if safe == {'name': expected}:
-        return _splat(args, workdir, log)
+        return run()
     # Only splat's config generator sees the sanitized title. Its output is
     # corrected after restoring the import copy, before any analysis reads it.
     replacement = bytes(c if 32 <= c < 127 and chr(c).isalnum() else 32 for c in original)
@@ -37,7 +69,7 @@ def create(args, workdir, log):
         stream.seek(0x20)
         stream.write(replacement)
     try:
-        output = _splat(args, workdir, log)
+        output = run()
     finally:
         with path.open('r+b') as stream:
             stream.seek(0x20)
