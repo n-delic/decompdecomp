@@ -1538,6 +1538,41 @@ def test_reimport_groups_repeated_data_aliases_and_preserves_port_expressions():
                          candidate) is None
 
 
+def test_reimport_groups_repeated_direct_casts_when_compiler_merges_loads():
+    from types import SimpleNamespace
+
+    from decompnet.consoles.n64.reimport_bindings import _split_direct_data
+
+    fn = {'name': 'work'}
+    source = ('int work(void) { return ((State *)(&D_00000000))->value + '
+              '((State *)(&D_00000000))->other + (char *)&D_00000000; }')
+    header = 'extern int D_00000000;\n#define READ(x) (x)\n'
+    candidate = SimpleNamespace(relocs=[SimpleNamespace(type=6, symbol='D_00000000') for _ in range(2)])
+    result = _split_direct_data(fn, source, header, candidate, group_casts=True)
+    assert result.count('#define decomp_overlay_data_ref_1 D_00000000') == 1
+    assert result.count('((State *)(&decomp_overlay_data_ref_1))') == 2
+    assert '(char *)&decomp_overlay_data_ref_3' in result
+    assert _split_direct_data(fn, source, header, candidate) is None
+    assert _split_direct_data(fn, source.replace('((State *)(&D_00000000))->other',
+                                                 'READ(((State *)(&D_00000000))->other)'),
+                              header, candidate, group_casts=True) is None
+
+
+def test_reimport_separates_an_indexed_use_of_a_local_placeholder_pointer():
+    from decompnet.consoles.n64.reimport_bindings import _split_local_pointer
+
+    source = ('int work(void) { int *p; p = &D_00000000; '
+              'return ((int *)p)[3] + p[4]; }')
+    header = 'extern int D_00000000;\n#define READ(x) (x)\n'
+    result = _split_local_pointer({'name': 'work'}, source, header)
+    assert '#define decomp_overlay_local_site p' in result
+    assert '#define decomp_overlay_local_site (&decomp_overlay_local_ref)' in result
+    assert '((int *)decomp_overlay_local_site)[3] + p[4]' in result
+    assert _split_local_pointer({'name': 'work'}, source.replace('((int *)p)[3]', 'READ(((int *)p)[3])'),
+                                header) is None
+    assert _split_local_pointer({'name': 'work'}, source.replace('p[4]', '((int *)p)[4]'), header) is None
+
+
 def test_reimport_direct_retry_can_bind_nested_calls_inside_first():
     from types import SimpleNamespace
 
