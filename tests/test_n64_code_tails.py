@@ -33,6 +33,19 @@ def test_normal_completed_segment_is_unchanged():
     assert complete(rom,[(0,len(rom),0x80001000)])==[(0,len(rom),0x80001000)]
 
 
+def test_called_leaf_after_return_can_extend_through_closed_branches():
+    words = [0x03e00008, 0, 0x3c02800c, 0x8c420000, 0x10400002, 0, 0x24420001, 0x03e00008, 0]
+    rom = struct.pack('>9I', *words)
+    segment = (0, 16, 0x80001000)
+    assert complete(rom, [segment], called={0x80001008}) == [(0, len(rom), 0x80001000)]
+    assert complete(rom, [segment]) == [segment]
+    assert complete(rom, [segment], [(24, len(rom), 0x90001000)], called={0x80001008}) == [segment]
+    assert complete(rom, [segment], called={0x80001008, 0x80001018}) == [segment]
+    damaged = bytearray(rom)
+    struct.pack_into('>I', damaged, 16, 0x10407fff)
+    assert complete(damaged, [segment], called={0x80001008}) == [segment]
+
+
 def test_loads_before_frame_in_alignment_tail_are_completed():
     words=[0x03e00008,0,0x3c02800c,0x8c427f84,0x27bdffe8]+[0]*1000+[0x03e00008,0x27bd0018]
     rom=struct.pack('>'+str(len(words))+'I',*words)

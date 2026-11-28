@@ -1,12 +1,53 @@
-"""Complete a frame prologue caught in the alignment tail of a detected code segment.
+"""Complete called functions caught in the alignment tail of a detected code segment.
 
 The block scanner can see no frame/return for several blocks inside a large function.
 Its last-return alignment then includes the next prologue but leaves its body as bin.
-Only extend that specific shape, through valid instructions to a balanced return.
+Extend a frame through a balanced return, or a directly called leaf through closed
+control flow and a return, without crossing a known segment or another called entry.
 """
 from ...arch.mips import JR_RA, is_frame
 
 MAX_TAIL = 0x10000
+
+
+def _called_leaf_tail(rom, start, end, vram, entry, limit, called):
+    """Finish a called leaf cut just after its preceding return, if its control flow closes."""
+    import rabbitizer
+
+    address = vram + entry - start
+    if address not in called or end - entry > 16:
+        return None
+    targets, delays = set(), set()
+    for at in range(entry, limit - 7, 4):
+        word = int.from_bytes(rom[at:at+4], 'big')
+        insn = rabbitizer.Instruction(word)
+        op = word >> 26
+        if (not insn.isValid() or is_frame(word) or op == 3
+                or op == 1 and (word >> 16) & 31 in (16, 17, 18, 19)
+                or at in delays and insn.hasDelaySlot()):
+            return None
+        if op == 0 and word & 63 in (8, 9):
+            if word != JR_RA:
+                return None
+            delay_word = int.from_bytes(rom[at+4:at+8], 'big')
+            delay = rabbitizer.Instruction(delay_word)
+            if not delay.isValid() or delay.hasDelaySlot() or is_frame(delay_word):
+                return None
+            recovered = at + 8
+            if recovered <= end or any(not entry <= target < recovered or target in delays for target in targets):
+                return None
+            if any(address < target < vram + recovered - start for target in called):
+                return None
+            return recovered
+        if op in (1, 4, 5, 6, 7, 20, 21, 22, 23) or (op == 17 and (word >> 21) & 31 == 8):
+            delta = word & 0xffff
+            targets.add(at + 4 + (delta - 0x10000 if delta & 0x8000 else delta) * 4)
+        elif op == 2:
+            target = ((vram + at - start + 4) & 0xf0000000) | ((word & 0x3ffffff) << 2)
+            targets.add(start + target - vram)
+        if insn.hasDelaySlot():
+            delays.add(at + 4)
+    return None
 
 
 def complete(rom, segments, taken=(), *, called=(), allow_inferred_overlap=False):
@@ -27,7 +68,12 @@ def complete(rom, segments, taken=(), *, called=(), allow_inferred_overlap=False
         lookahead = 64 if vram+last-start in called else 16
         frames = [at for at in range(last,min(end+lookahead,len(rom)-3),4) if is_frame(word(at))]
         if not frames:
-            result.append((start,end,vram));continue
+            limit = min(len(rom), end + MAX_TAIL, *[s for s,_,_ in all_segments if s>=end and s!=start])
+            for s,e,v in all_segments:
+                if s!=start and v>=vram+end-start and (not allow_inferred_overlap or (s,e,v) in taken):
+                    limit = min(limit,start+v-vram)
+            recovered = _called_leaf_tail(rom, start, end, vram, last, limit, called) if returns else None
+            result.append((start,recovered or end,vram));continue
         frame = frames[0]
         if any(not rabbitizer.Instruction(word(at)).isValid() or word(at)>>26 in (1,2,3,4,5,6,7)
                or (word(at)>>26==0 and word(at)&63 in (8,9)) for at in range(last,frame,4)):
