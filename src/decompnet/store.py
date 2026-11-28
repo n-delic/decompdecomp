@@ -1215,6 +1215,30 @@ class Store:
     def one(self, sql: str, *args) -> sqlite3.Row | None:
         return self._read(sql, args, single=True)
 
+    def cached_one(self, sql: str, *args) -> sqlite3.Row | None:
+        """Reuse one row per reader while its committed SQLite database is unchanged."""
+        conn = self._reader()
+        if conn is None:
+            return self.one(sql, *args)
+        try:
+            reader = self._local.reader
+            cursor = sqlite3.Connection.execute(conn, 'PRAGMA data_version')
+            try:
+                version = cursor.fetchone()[0]
+            finally:
+                cursor.close()
+            # SQLite's version is only comparable on the same connection. Check it
+            # before loading the row so a concurrent commit invalidates the next read.
+            key = (version, sql, args)
+            cached = getattr(reader, 'cached_row', None)
+            if cached is not None and cached[0] == key:
+                return cached[1]
+            row = self.one(sql, *args)
+            reader.cached_row = (key, row)
+            return row
+        finally:
+            self._release_reader()
+
     def all(self, sql: str, *args) -> list[sqlite3.Row]:
         return self._read(sql, args, single=False)
 

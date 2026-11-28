@@ -4096,6 +4096,58 @@ def test_the_project_list_answers_same_for_an_unchanged_signature(app, monkeypat
     assert changed['sig'] != first['sig'] and changed['projects'][0]['matched'] == 2
 
 
+def test_project_list_reuses_separate_store_summaries_until_commit(tmp_path, monkeypatch):
+    import sqlite3
+    from contextlib import closing
+
+    net = RomNetwork(tmp_path / "app.db", tmp_path, project_databases=True)
+    config = {"kind": "rom", "platform": "n64", "rom": {}}
+    for slug in ("left", "right"):
+        with net.project_registration(slug=slug, name=slug, description="", arch="mips",
+                                      big_endian=True, root=tmp_path, config=config) as (db, pid):
+            db.execute("INSERT INTO functions(project_id,name,n_insns,target) VALUES(?,'func',1,?)",
+                       (pid, bytes(4)))
+    store = net.project_store("left")
+    mcp, _, security, _ = build(net, tmp_path, PORT, SECRET)
+    net.autosave.close()
+    client = TestClient(mcp.streamable_http_app(transport_security=security, host="127.0.0.1"),
+                        base_url=f"http://127.0.0.1:{PORT}", headers=WINDOW)
+    reads = []
+    one = store.one
+
+    def count_summary(sql, *args):
+        if "AS last_activity" in sql:
+            reads.append(sql)
+        return one(sql, *args)
+
+    monkeypatch.setattr(store, "one", count_summary)
+    first = client.get("/api/projects?since=").json()
+    assert len(first["projects"]) == 2
+    assert client.get(f"/api/projects?since={first['sig']}").json() == {"sig": first["sig"], "same": True}
+    assert len(reads) == 1
+
+    with pytest.raises(ValueError), store.tx() as db:
+        db.execute("UPDATE projects SET name='Rolled back'")
+        raise ValueError("rollback")
+    assert client.get(f"/api/projects?since={first['sig']}").json() == {"sig": first["sig"], "same": True}
+    assert len(reads) == 1
+
+    with store.tx() as db:
+        db.execute("UPDATE functions SET status='matched'")
+    second = client.get(f"/api/projects?since={first['sig']}").json()
+    left = next(project for project in second["projects"] if project["slug"] == "left")
+    assert left["matched"] == 1 and left["last_activity"] is None
+    assert len(reads) == 2
+
+    with closing(sqlite3.connect(store.path)) as db, db:
+        db.execute("UPDATE projects SET name='Renamed' WHERE slug='left'")
+        db.execute("INSERT INTO events(project_id,kind,created_at) SELECT id,'match',123 FROM projects WHERE slug='left'")
+    third = client.get(f"/api/projects?since={second['sig']}").json()
+    left = next(project for project in third["projects"] if project["slug"] == "left")
+    assert left["title"] == "Renamed" and left["last_activity"] == 123
+    assert len(reads) == 3
+
+
 @pytest.mark.skipif(sys.platform != "darwin" or not os.getenv("DECOMPNET_RT64_ADAPTER"),
                     reason="requires a local RT64 adapter and a macOS desktop")
 def test_rt64_play_runs_saved_c_and_both_fallbacks(app, tmp_path, monkeypatch):
