@@ -199,7 +199,9 @@ class EditMixin:
             selected_store = self.project_store(proj["id"])
             rows = selected_store.all(
                 "SELECT name,rom_offset,size,vram,target,status FROM functions WHERE project_id=? AND rom_offset IS NOT NULL", proj["id"])
-            original_entries = sorted((r['name'], r['rom_offset'], r['size'], r['vram'], r['target'], r['status']) for r in rows)
+            # Claims, matches and SDK classification can change status while
+            # the scan runs. They do not change code or its split mapping.
+            original_entries = sorted((r['name'], r['rom_offset'], r['size'], r['vram'], r['target']) for r in rows)
             original_symbols = sorted(tuple(row) for row in selected_store.all(
                 'SELECT name,address,size,kind FROM symbols WHERE project_id=?', proj['id']))
             original_cfg = self.cfg(proj)
@@ -295,7 +297,7 @@ class EditMixin:
             with store.tx() as db:
                 cfg = json.loads(db.execute("SELECT config FROM projects WHERE id=?", (proj["id"],)).fetchone()["config"])
                 current_entries = sorted(tuple(row) for row in db.execute(
-                    'SELECT name,rom_offset,size,vram,target,status FROM functions WHERE project_id=? AND rom_offset IS NOT NULL',
+                    'SELECT name,rom_offset,size,vram,target FROM functions WHERE project_id=? AND rom_offset IS NOT NULL',
                     (proj['id'],)).fetchall())
                 current_symbols = sorted(tuple(row) for row in db.execute(
                     'SELECT name,address,size,kind FROM symbols WHERE project_id=?', (proj['id'],)).fetchall())

@@ -725,6 +725,27 @@ def test_a_concurrent_function_change_rolls_back_only_our_config(tmp_path, monke
     assert not net.project_store(pid).one("SELECT 1 FROM functions WHERE name='func_80001010'")
 
 
+def test_concurrent_status_and_source_updates_survive_the_search(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import emulator, runtime_staging
+
+    net, pid = project(tmp_path)
+    monkeypatch.setattr(emulator, 'installed', lambda: None)
+
+    def verify(*args, **kwargs):
+        with net.project_store(pid).tx() as db:
+            db.execute("UPDATE functions SET status='asm' WHERE name='a'")
+            db.execute("UPDATE functions SET status='matched', matched_source='new work' WHERE name='b'")
+        return True
+
+    monkeypatch.setattr(runtime_staging, 'verify', verify)
+    result = net.find_missed_functions('game', log=lambda *_: None)
+    assert len(result['added']) == 1
+    store = net.project_store(pid)
+    assert store.one("SELECT status FROM functions WHERE name='a'")['status'] == 'asm'
+    row = store.one("SELECT status,matched_source FROM functions WHERE name='b'")
+    assert (row['status'], row['matched_source']) == ('matched', 'new work')
+
+
 def test_a_concurrent_symbol_change_is_not_overwritten(tmp_path, monkeypatch):
     from decompnet.consoles.n64 import emulator, runtime_staging
 
