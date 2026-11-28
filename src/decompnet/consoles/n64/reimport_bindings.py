@@ -254,30 +254,30 @@ def _grouped_data(fn, source, header, candidate):
 
 
 def _probe_grouped(net, project, fn, source, header, candidate, target, info):
-        grouped = _grouped_data(fn, source, header, candidate)
-        if grouped:
-            built = net._compile(project, header, grouped, fn)
-            if not built.ok:
-                return None
-            separated, _, _ = net._evaluate(fn, project, built.obj)
-            bound = overlay_donor_aliases.explicit_symbol_bindings(
-                grouped, header, separated, target, net.console(project).separate_overlay_reference)
-            if not bound or not bound[1].startswith(header):
-                return None
-            extra = '\n#ifndef PORT\n' + bound[1][len(header):] + '\n#endif\n'
-            variants = [grouped + '\n' + extra]
-            macro = _macro_variant(fn, grouped, header, separated, info, extra)
-            variants.extend(variant for variant in (macro,) if variant)
-            for prefer_decl in (True, False):
-                direct = _direct_variant(fn, grouped, header, separated, target, extra, prefer_decl=prefer_decl)
-                if direct and direct not in variants:
-                    variants.append(direct)
-            for variant in variants:
-                built = net._compile(project, header, variant, fn)
-                if built.ok and net._evaluate(fn, project, built.obj)[1] is True:
-                    return variant
+    grouped = _grouped_data(fn, source, header, candidate)
+    if grouped:
+        built = net._compile(project, header, grouped, fn)
+        if not built.ok:
+            return None
+        separated, _, _ = net._evaluate(fn, project, built.obj)
+        bound = overlay_donor_aliases.explicit_symbol_bindings(
+            grouped, header, separated, target, net.console(project).separate_overlay_reference)
+        if not bound or not bound[1].startswith(header):
+            return None
+        extra = '\n#ifndef PORT\n' + bound[1][len(header):] + '\n#endif\n'
+        variants = [grouped + '\n' + extra]
+        macro = _macro_variant(fn, grouped, header, separated, info, extra)
+        if macro:
+            variants.append(macro)
+        for prefer_decl in (True, False):
+            direct = _direct_variant(fn, grouped, header, separated, target, extra, prefer_decl=prefer_decl)
+            if direct and direct not in variants:
+                variants.append(direct)
+        for variant in variants:
+            built = net._compile(project, header, variant, fn)
+            if built.ok and net._evaluate(fn, project, built.obj)[1] is True:
+                return variant
     return None
-
 
 def retry(net, project, fn, source):
     """Return a rewritten saved source only after its complete module-aware judge passes."""
