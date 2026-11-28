@@ -156,6 +156,32 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
                         known.add(identity)
                 bank['vertices'] = sum(mesh['vertices'] for mesh in bank['meshes'])
                 bank['triangles'] = sum(mesh['triangles'] for mesh in bank['meshes'])
+            # Only inspect the longer menu path when an indexed image and its
+            # palette are present; a complete captured frame is still required.
+            from decompassets.n64 import indexed_bitstream_images
+            indexed_images = []
+            if any(any(kind == 2 and size == 320*240 and name.lower().endswith('.pic')
+                       and any(pkind == 1 and pname.lower() == name[:-4].lower()+'.pal' and psize == 1052
+                               for pname, pkind, _, psize in files)
+                       for name, kind, _, size in files)
+                   for _, files in indexed_bitstream_images.directories(image, check)):
+                indexed_images = indexed_bitstream_images.regions(image, snapshots, check=check)
+                if not indexed_images and not run.timed_out:
+                    log('Checking indexed images after a longer menu sequence.')
+                    late = {vi: Path(folder)/f'image-{vi}.ram' for vi in (5000, 8000)}
+                    inputs = ('600:START,608:,1200:START,1208:,1800:START,1808:,2400:START,2408:,'
+                              '3000:A,3008:,4500:A,4508:,6000:START,6008:')
+                    try:
+                        extended = emulator.run(rom, 8000, inputs=inputs, dumps=late,
+                                                timeout=120, expansion_pak=expansion)
+                        captures = [path.read_bytes() for path in late.values() if path.is_file()]
+                        indexed_images = indexed_bitstream_images.regions(image, captures, check=check)
+                        if extended.timed_out:
+                            expansion_failed = True
+                            log('Extended image observation timed out; completed snapshots are still included.')
+                    except emulator.EmulatorError as error:
+                        expansion_failed = True
+                        log(f'Extended image observation skipped: {error}')
             merged = {}
             for asset in packed:
                 key = asset['offset'], asset.get('layout')
@@ -201,7 +227,7 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
                 bases.setdefault(key, set()).add(asset['table_offset'])
             audio = {(asset['bank_offset'], asset.get('layout'), asset['offset'], asset['size']): asset for asset in sounds
                      if len(bases[asset['bank_offset'], asset.get('layout')]) == 1}
-            assets = list(unique.values()) + list(merged.values()) + list(audio.values()) + sprites + list(model_banks.values())
+            assets = list(unique.values()) + list(merged.values()) + list(audio.values()) + sprites + list(model_banks.values()) + indexed_images
         if run.timed_out:
             log('Runtime observation timed out; any completed snapshots are still included.')
         graphics = sum(a.get('kind') != 'audio' for a in assets)

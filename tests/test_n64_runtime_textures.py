@@ -497,3 +497,29 @@ def test_indexed_model_archive_triggers_bounded_late_observation(tmp_path, monke
     result = runtime_textures.observe(b'image', rom, sha1(rom.read_bytes()).hexdigest())
     assert {asset['offset'] for asset in result} == {1, 100}
     assert calls[-1][0] == 8000 and calls[-1][1]['timeout'] == 120
+
+
+def test_indexed_image_directory_triggers_bounded_observation(tmp_path, monkeypatch):
+    from decompassets.n64 import indexed_bitstream_images, runtime_burp_models, runtime_packed_graphics
+
+    rom = tmp_path/'game.z64'
+    rom.write_bytes(bytes.fromhex('80371240')+b'original')
+    monkeypatch.setattr(runtime_textures.emulator, 'installed', lambda: tmp_path)
+    calls = []
+    def run(path, vis, *, dumps, **kwargs):
+        calls.append((vis, kwargs))
+        for dump in dumps.values():
+            dump.write_bytes(b'late' if vis == 8000 else b'early')
+        return runtime_textures.emulator.Run(vis=vis)
+    monkeypatch.setattr(runtime_textures.emulator, 'run', run)
+    monkeypatch.setattr(detector, 'regions', lambda *_: [dict(offset=1, size=1, layout='texture')])
+    monkeypatch.setattr(runtime_packed_graphics, 'regions', lambda *args, **kwargs: [])
+    monkeypatch.setattr(runtime_burp_models, 'archives', lambda *args: iter([]))
+    monkeypatch.setattr(indexed_bitstream_images, 'directories', lambda *args: iter([
+        (0, [('screen.pic', 2, 0, 320*240), ('screen.pal', 1, 1, 1052)])]))
+    monkeypatch.setattr(indexed_bitstream_images, 'regions', lambda image, snapshots, **kwargs:
+                        [dict(offset=100, size=16, kind='image', layout='indexed-bitstream-image')]
+                        if b'late' in snapshots else [])
+    result = runtime_textures.observe(b'image', rom, sha1(rom.read_bytes()).hexdigest())
+    assert {asset['offset'] for asset in result} == {1, 100}
+    assert calls[-1][0] == 8000 and calls[-1][1]['timeout'] == 120
