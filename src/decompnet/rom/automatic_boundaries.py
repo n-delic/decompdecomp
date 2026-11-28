@@ -1348,9 +1348,9 @@ def recover_segment_switch_data(functions, data, image, order, tables, protected
                              or constant_prefix and start == 16)
                 if not (0<start<fn.size and start+table['entry_count']*4==fn.size and prefix_ok):
                     continue
-                data.append(DataSymbol(fn.name,fn.vram,fn.rom,start,'data'))
+                data.append(DataSymbol(fn.name,fn.vram,fn.rom,start,'data',boundary_proven=True))
                 data.append(DataSymbol(f"jtbl_{table['table_address']:08X}",table['table_address'],
-                                       table['rom_offset'],fn.size-start,'jtbl'))
+                                       table['rom_offset'],fn.size-start,'jtbl',boundary_proven=True))
                 removed.add(id(fn))
                 break
             if id(fn) in removed:

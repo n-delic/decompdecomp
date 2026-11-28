@@ -62,6 +62,15 @@ def test_preserve_does_not_restore_a_proven_data_range_as_code(tmp_path, monkeyp
     assert reimport_preserve.preserve(None, None, result, image, [row], lambda *_: None) == 1
 
 
+@pytest.mark.parametrize('case', ['partial', 'other_mapping', 'unproven'])
+def test_proven_data_overlap_blocks_only_its_own_mapping(tmp_path, monkeypatch, case):
+    result, image, row = fixture(tmp_path)
+    result.data = [split.DataSymbol('part', row['vram']+4+(0x1000 if case=='other_mapping' else 0),
+                                    row['rom_offset']+4, 4, 'jtbl', boundary_proven=case!='unproven')]
+    monkeypatch.setattr(runtime_staging, 'verify', lambda *args, **kwargs: True)
+    assert reimport_preserve.preserve(None, None, result, image, [row], lambda *_: None) == (case!='partial')
+
+
 @pytest.mark.parametrize('obstacle', ['none', 'referenced_fragment', 'old_fragment', 'proven_data', 'staging'])
 def test_preserve_restores_contiguous_called_code_misclassified_as_data(tmp_path, monkeypatch, obstacle):
     from decompnet.arch import mips_gaps, mips_references
