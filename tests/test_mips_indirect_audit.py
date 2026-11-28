@@ -59,6 +59,24 @@ def test_guarded_switch_follows_all_cases_only_with_explicit_mapping():
 
 
 @pytest.mark.parametrize('order', ['big', 'little'])
+def test_switch_with_prior_guard_to_the_same_default(order):
+    words = [0x2da10002, 0x33080005, 0x1100000c, 0, 0x1020000a,
+             0x000d6880, 0x3c018000, 0x002d0821, 0x8c2d1100, 0x01a00008, 0,
+             0x03e00008, 0, 0x03e00008, 0, 0x03e00008, 0]
+    image = bytearray(0x1200)
+    image[0x1000:0x1044] = b''.join(w.to_bytes(4, order) for w in words)
+    image[0x1100:0x1108] = b''.join(w.to_bytes(4, order) for w in (0x8000102c, 0x80001034))
+    ranges = [dict(rom_start=0x1100, rom_end=0x1108, vram=0x80001100)]
+    result = jump_table(image, 0x1000, 0x1044, 0x80001000, 0x1024, order, ranges)
+    assert result['state'] == 'validated' and result['entry_count'] == 2
+    assert extent(image, 0x1000, 0x1044, 0x80001000, order, table_ranges=ranges)['flow_closed']
+    for index, word in ((2, 0x1100000a), (1, 0x330d0005), (3, 0x25ad0001)):
+        changed = bytearray(image)
+        changed[0x1000+4*index:0x1004+4*index] = word.to_bytes(4, order)
+        assert jump_table(changed, 0x1000, 0x1044, 0x80001000, 0x1024, order, ranges) is None
+
+
+@pytest.mark.parametrize('order', ['big', 'little'])
 def test_switch_index_scaled_in_prior_branch_delay_slot(order):
     words = [0x14200004, 0x00047080, 0x3c014416, 0x44811000, 0,
              0x2c810002, 0x10200009, 0x3c018000, 0x002e0821, 0x8c2e1100,
