@@ -11,6 +11,14 @@ from ..rom.split import parse_function
 
 
 def run(net,slug,log=print,*,full_scan=False):
+    if full_scan:
+        from ..arch.audit_spool import CandidateSpool
+        with CandidateSpool() as spool:
+            return _run(net,slug,log,full_scan=True,candidate_store=spool)
+    return _run(net,slug,log,full_scan=False,candidate_store=None)
+
+
+def _run(net,slug,log,*,full_scan,candidate_store):
     proj=net.project_row(slug)
     if not net.is_rom(proj) or proj['arch']!='mips':
         raise NetworkError('Gap auditing currently needs a MIPS ROM project; other processors and object builds need a segment adapter.')
@@ -38,7 +46,7 @@ def run(net,slug,log=print,*,full_scan=False):
     result=audit(image,[vars(s) for s in segments],functions,big_endian=bool(proj['big_endian']),cpu=console.cpu_variant,
                  progress=getattr(log,'progress',lambda _:None),data_mappings=net.cfg(proj).get('audit_data_mappings',[]),
                  full_scan=full_scan,check=getattr(log,'check_cancel',lambda:None),
-                 entrypoints=entries,callback_checkpoint=callback_checkpoint)
+                 entrypoints=entries,callback_checkpoint=callback_checkpoint,candidate_store=candidate_store)
     if full_scan:
         from .code_audit_reviews import runtime_checkpoint
         rom_cfg=net.cfg(proj).get('rom',{})
@@ -59,7 +67,8 @@ def run(net,slug,log=print,*,full_scan=False):
                      'executed':bool(item.get('executed')),
                      **({'direct_call_site':item['direct_call_site']} if 'direct_call_site' in item else {}),
                      **({'execution_retrace':item['execution_retrace']} if item.get('executed') else {})})
-        for row in result['candidates']:
+        from ..arch.audit_spool import editable
+        for row in editable(result['candidates']):
             key=(row['rom_offset'],row['vram'],row['extent_bytes'])
             if key in indexed:
                 row['runtime_scope']={'scope':indexed[key]['scope'],

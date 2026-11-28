@@ -426,12 +426,13 @@ def _possible_consumers(cells,exact,indexed,strides):
 
 def consumers(image,functions,rows,order,ranges,mappings,unresolved=None,*,check=lambda:None,
               full_scan=False,progress=lambda _:None,checkpoint=None):
+    from .audit_spool import editable
     traced,limited=(calls(image,functions,order,full_scan=True,check=check,progress=progress,checkpoint=checkpoint)
                     if full_scan else calls(image,functions,order))
     exact,indexed=_consumer_index(traced,check)
     strides=sorted({stride for stride,_ in indexed})
     linked=set()
-    for row in rows:
+    for row in editable(rows):
         check()
         found=[]
         for ref in row['pointer_references']:

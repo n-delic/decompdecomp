@@ -160,13 +160,16 @@ def record(net,pid,result,image,*,check=lambda:None):
     if result.get('partial'):raise NetworkError('A partial range scan cannot replace the whole-project coverage audit.')
     result.setdefault('input_revision',revision(net,pid))
     identity=hashlib.sha256(image).hexdigest()
-    for i,r in enumerate(result['candidates']):
+    from ..arch.audit_spool import editable
+    for i,r in enumerate(editable(result['candidates'])):
         if not i % 128:check()
         facts=[identity,r['rom_offset'],r['vram'],r['gap_start'],r['gap_end'],r['extent_bytes']]
         r['review_id']=hashlib.sha256(json.dumps(facts).encode()).hexdigest()
     check()
     if len(result['candidates'])>PAGED_THRESHOLD:
         return _record_paged(net,pid,result,check)
+    if not isinstance(result['candidates'],list):
+        result['candidates']=list(result['candidates'])
     with net.project_store(pid).tx() as db:
         row=db.execute('SELECT value FROM settings WHERE key=?',(key(pid),)).fetchone()
         state=json.loads(row['value']) if row else {'reviews':{}}
