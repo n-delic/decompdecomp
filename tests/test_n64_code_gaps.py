@@ -70,6 +70,42 @@ def test_an_overlay_tail_placed_past_its_alignment_boundary_becomes_code():
     assert aligned_gaps(image, [(0x1000, 0x1010, 0x80001000), (0x1050, 0x1058, 0x80001050)]) == []  # one mapping
 
 
+def test_alignment_calls_to_a_known_bank_do_not_prove_a_gap_mapping():
+    fn = [0x27bdffe8, 0xafbf0010, 0x24020001, 0x8fbf0010, 0x03e00008, 0x27bd0018]
+    before = [0x0c00040c, 0x0c000412, 0x03e00008, 0]
+    image = image_with([(0x1000, before), (0x1020, fn), (0x1038, fn), (0x1050, [0x03e00008, 0]),
+                        (0x1100, fn), (0x1118, fn)])
+    spans = [(0x1000, 0x1010, 0x80001000), (0x1050, 0x1058, 0x80205050),
+             (0x1100, 0x1130, 0x80001030)]
+    deferred = []
+    assert not any(lo == 0x1010 for lo, _, _ in aligned_gaps(
+        image, spans, on_deferred=lambda lo, hi: deferred.append((lo, hi))))
+    assert (0x1010, 0x1050) in deferred
+
+
+def test_alignment_tie_is_left_for_review():
+    fn = [0x27bdffe8, 0xafbf0010, 0x24020001, 0x8fbf0010, 0x03e00008, 0x27bd0018]
+    before = [0x0c000420, 0x0c000426, 0x03e00008, 0]  # calls 0x80001080 and 0x80001098
+    image = image_with([(0x1000, before), (0x1030, fn), (0x1048, fn), (0x1070, fn), (0x1088, fn),
+                        (0x10f0, [0x03e00008, 0])])
+    spans = [(0x1000, 0x1010, 0x80001000), (0x10f0, 0x10f8, 0x80205000)]
+    assert aligned_gaps(image, spans) == []
+    messages = []
+    complete_gaps(image, [], spans, log=messages.append)
+    assert any('ambiguous alignment' in message for message in messages)
+
+
+def test_alignment_does_not_switch_to_a_weaker_offset_after_rejecting_known_calls():
+    fn = [0x27bdffe8, 0xafbf0010, 0x24020001, 0x8fbf0010, 0x03e00008, 0x27bd0018]
+    before = [0x0c000420, 0x0c000426, 0x0c00042c, 0x0c000450, 0x0c000456, 0x03e00008, 0]
+    image = image_with([(0x1000, before), (0x1060, fn), (0x1078, fn), (0x1090, fn),
+                        (0x10e0, fn), (0x10f8, fn), (0x1200, [0x03e00008, 0]),
+                        (0x1300, fn), (0x1318, fn)])
+    spans = [(0x1000, 0x101c, 0x80001000), (0x1200, 0x1208, 0x80205000),
+             (0x1300, 0x1330, 0x80001080)]
+    assert not any(lo == 0x101c for lo, _, _ in aligned_gaps(image, spans))
+
+
 def test_aligned_gap_search_checks_cancellation_before_scanning_code():
     def stop():
         raise RuntimeError('stopped')
