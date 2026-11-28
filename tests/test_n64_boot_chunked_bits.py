@@ -56,6 +56,12 @@ def test_overlapping_programs_keep_their_own_text_boundaries():
     assert boot_chunked_bits.code_start(second[4], bytes(second[6])) == second[5]
 
 
+def test_variant_runtime_bank_keeps_its_header_as_data():
+    bank = next(row for row in boot_chunked_bits.VARIANT_PROGRAMS if row[0] == 3)
+    assert boot_chunked_bits.code_start(bank[4], bytes(bank[6])) == 8
+    assert bank[6] < bank[2]
+
+
 def test_impossible_bss_is_dropped_without_changing_valid_segments():
     segments = [{'type': 'code', 'bss_size': 0x80000400}, {'type': 'code', 'bss_size': 0x1000}, [0x100]]
     boot_chunked_bits.drop_impossible_bss(segments)
