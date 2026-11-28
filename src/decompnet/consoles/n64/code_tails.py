@@ -10,6 +10,66 @@ from ...arch.mips import JR_RA, is_frame
 MAX_TAIL = 0x10000
 
 
+def _scheduled_restore(rom, frame, ret, pop, destinations):
+    """A straight epilogue may schedule independent instructions after the stack pop."""
+    import rabbitizer
+
+    for at in range(ret-8, max(frame,ret-28)-1, -4):
+        if int.from_bytes(rom[at:at+4], 'big') != pop:
+            continue
+        if rabbitizer.Instruction(int.from_bytes(rom[at-4:at], 'big')).hasDelaySlot():
+            continue
+        if any(at < target <= ret+4 for target in destinations):
+            continue
+        for pos in range(at+4,ret,4):
+            word = int.from_bytes(rom[pos:pos+4], 'big')
+            op = word >> 26
+            if (rabbitizer.Instruction(word).hasDelaySlot() or word == 0x42000018
+                    or op == 0 and word & 63 in (12,13)
+                    or (word >> 21) & 31 == 29 or (word >> 16) & 31 == 29
+                    or op == 0 and (word >> 11) & 31 == 29):
+                break
+        else:
+            return True
+    return False
+
+
+def _outside_transfer(rom, segments, start, end, address):
+    """Reject known transfers from another mapped body into the recovered interior."""
+    import struct
+
+    for lo, hi, vram in segments:
+        hi = min(hi,len(rom))
+        if lo < 0 or hi <= lo:
+            continue
+        view = memoryview(rom)[lo:lo+(hi-lo)//4*4]
+        for index, (word,) in enumerate(struct.iter_unpack('>I',view)):
+            offset = lo+index*4
+            pc = vram+offset-lo
+            if start <= offset < end and pc == address+offset-start:
+                continue
+            op = word >> 26
+            if op in (2,3):
+                target = ((pc+4)&0xf0000000) | ((word&0x3ffffff)<<2)
+            elif op in (1,4,5,6,7,20,21,22,23) or op == 17 and (word >> 21) & 31 == 8:
+                delta = word & 0xffff
+                target = pc+4+(delta-0x10000 if delta&0x8000 else delta)*4
+            else:
+                continue
+            if address < target < address+end-start:
+                return True
+    return False
+
+
+def _stored_interior(rom, address, size):
+    """A stored aligned address may name an entry the direct-flow graph cannot see."""
+    import struct
+
+    view = memoryview(rom)[:len(rom)//4*4]
+    return any(address < word < address+size and not word & 3
+               for word, in struct.iter_unpack('>I',view))
+
+
 def _called_leaf_tail(rom, start, end, vram, entry, limit, called):
     """Finish a called leaf cut just after its preceding return, if its control flow closes."""
     import rabbitizer
@@ -179,7 +239,17 @@ def complete(rom, segments, taken=(), *, called=(), allow_inferred_overlap=False
                 before = (at >= frame+8 and word(at-4) == pop
                           and not rabbitizer.Instruction(word(at-8)).hasDelaySlot()
                           and not destinations.intersection((at, at+4)))
-                if (delayed or before) and at+8>=highest:
+                scheduled = False
+                if not (delayed or before) and _scheduled_restore(rom,frame,at,pop,destinations):
+                    from ...arch.mips_gaps import extent
+
+                    flow = extent(rom,last,at+8,vram+last-start,'big')
+                    scheduled = (flow['direct_flow_closed'] and not flow['step_limit']
+                                 and flow['decoded_instructions']*4 == at+8-last
+                                 and not any(vram+last-start < target < vram+at+8-start for target in called)
+                                 and not _stored_interior(rom,vram+last-start,at+8-last)
+                                 and not _outside_transfer(rom,all_segments,last,at+8,vram+last-start))
+                if (delayed or before or scheduled) and at+8>=highest:
                     recovered=at+8
                 break
         new_end=max(end,recovered or end)

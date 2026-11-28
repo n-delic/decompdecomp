@@ -222,3 +222,38 @@ def test_shared_epilogue_may_branch_to_stack_restore_but_not_skip_it():
     assert complete(rom, [(0, 12, 0x80001000)]) == [(0, len(rom), 0x80001000)]
     skips_restore = image([0x10000002, 0, 0x27bd0018, 0x03e00008, 0])
     assert complete(skips_restore, [(0, 12, 0x80001000)]) == [(0, 12, 0x80001000)]
+
+
+@pytest.mark.parametrize('case', ['valid', 'stack_use', 'branch_over_restore', 'delay_before_restore',
+                                  'unbalanced', 'stored_interior'])
+def test_frame_tail_with_scheduled_stack_restore(case):
+    body = [0x24020001, 0x27bd0018, 0x00001025, 0xac6e0000, 0x03e00008, 0]
+    if case == 'stack_use':
+        body[2] = 0x8fa20000
+    elif case == 'branch_over_restore':
+        body[0:1] = [0x10000002, 0]
+    elif case == 'delay_before_restore':
+        body[0:1] = [0x10000001]
+    elif case == 'unbalanced':
+        body[1] = 0x27bd0020
+    rom = image(body)
+    if case == 'stored_interior':
+        rom += struct.pack('>I',0x80001010)
+    segment = (0,12,0x80001000)
+    assert complete(rom,[segment]) == ([(0,len(rom),segment[2])] if case == 'valid' else [segment])
+
+
+@pytest.mark.parametrize('target, blocked', [(0x80001008,False),(0x8000100c,True),(0x80001014,False)])
+def test_external_jump_into_recovered_body_is_rejected(target, blocked):
+    from decompnet.consoles.n64.code_tails import _outside_transfer
+
+    jump = 0x08000000 | ((target >> 2) & 0x3ffffff)
+    rom = struct.pack('>5I',jump,0,0,0,0)
+    assert _outside_transfer(rom,[(0,8,0x80001000)],8,20,0x80001008) == blocked
+
+
+def test_external_branch_into_recovered_body_is_rejected():
+    from decompnet.consoles.n64.code_tails import _outside_transfer
+
+    rom = struct.pack('>5I',0x10000002,0,0,0,0)
+    assert _outside_transfer(rom,[(0,8,0x80001000)],8,20,0x80001008)
