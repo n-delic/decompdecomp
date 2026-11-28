@@ -348,7 +348,8 @@ def test_runtime_bank_replaces_unresolved_static_controls(monkeypatch):
     unresolved = dict(kind='audio', audio_kind='unresolved bank', offset=100)
     unrelated = dict(kind='audio', audio_kind='unresolved bank', offset=101)
     observed = dict(kind='audio', audio_kind='sample bank', bank_offset=100, table_offset=200, offset=100)
-    monkeypatch.setattr(n64, 'regions', lambda *args, **kwargs: [unresolved, unrelated])
+    other_sample = dict(kind='audio', audio_kind='sample bank', offset=201, table_offset=200)
+    monkeypatch.setattr(n64, 'regions', lambda *args, **kwargs: [unresolved, unrelated, other_sample])
     monkeypatch.setattr(runtime_textures, 'observe', lambda *args, **kwargs: [observed])
     result = Nintendo64().asset_regions(b'image', context={'runtime_rom': 'game'})
-    assert result == [unrelated, observed]
+    assert result == [unrelated, other_sample, observed]

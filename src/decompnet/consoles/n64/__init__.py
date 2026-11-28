@@ -124,9 +124,8 @@ class Nintendo64(Console):
                                                 status=evidence.get('runtime_observation'),
                                                 progress=kwargs.get('progress', lambda _: None))
             banks = {a['bank_offset'] for a in observed if a.get('audio_kind') == 'sample bank'}
-            tables = {a['table_offset'] for a in observed if a.get('audio_kind') == 'sample bank'}
-            assets = [a for a in assets if not (a.get('audio_kind') == 'unresolved bank' and a['offset'] in banks
-                      or a.get('audio_kind') == 'sample bank' and a.get('table_offset') in tables)]
+            assets = [a for a in assets if not (a.get('audio_kind') in ('unresolved bank', 'sample bank')
+                                                and a['offset'] in banks)]
             assets += observed
         return assets
 
