@@ -38,6 +38,7 @@ mod mips_batch;
 mod rom_project;
 mod verifier;
 mod window;
+mod window_db;
 
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
@@ -89,6 +90,7 @@ struct Config {
     window_reader: Option<String>,
     window_reads: Vec<window::Read>,
     window_reader_limit: Duration,
+    window_db: Option<String>,
     /// Tools the agent may leave behind (release_function): after `ack_deadline` the agent hears "accepted" and
     /// moves on while the call keeps running in the app. Kept in `journal` until the app answers, so a restart
     /// loses none; the agent's later calls to the app wait for it, so they see it done; the app's answer comes
@@ -119,6 +121,7 @@ impl Config {
             window_reader: None,
             window_reads: Vec::new(),
             window_reader_limit: Duration::from_secs(10),
+            window_db: None,
             ack_tools: HashSet::new(),
             ack_deadline: Duration::from_secs(3),
             journal: None,
@@ -164,6 +167,7 @@ impl Config {
                         .collect::<Result<_, _>>()?
                 }
                 "--window-reader-limit" => config.window_reader_limit = seconds(value()?)?,
+                "--window-db" => config.window_db = Some(value()?),
                 "--ack-tools" => {
                     config.ack_tools = value()?.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect()
                 }
@@ -1180,12 +1184,19 @@ async fn gateway_main(mut args: Vec<String>) {
             }
         };
         let port = bound.local_addr().expect("bound address").port();
+        let window_secret = std::env::var("DECOMP_GATEWAY_WINDOW_SECRET").ok();
+        let db = window_db::WindowDb::from_config(
+            config.window_db.as_deref(),
+            config.state.as_deref(),
+            window_secret,
+        );
         let config = window::Config {
             upstream: upstream.trim_end_matches('/').to_string(),
             reader: config.window_reader.clone().map(|r| r.trim_end_matches('/').to_string()),
             reads: config.window_reads.clone(),
             reader_limit: config.window_reader_limit,
             head_limit: config.upstream_limit,
+            db,
         };
         let proxy = match window::Window::new(config, port) {
             Ok(proxy) => Arc::new(proxy),

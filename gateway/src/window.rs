@@ -59,7 +59,7 @@ impl Read {
 }
 
 /// A query string's pairs, percent-decoded the way the app reads them.
-fn pairs(query: &str) -> Vec<(String, String)> {
+pub(crate) fn pairs(query: &str) -> Vec<(String, String)> {
     query
         .split('&')
         .filter(|p| !p.is_empty())
@@ -103,6 +103,8 @@ pub struct Config {
     pub reader_limit: Duration,
     /// How long the app may take to start its response.
     pub head_limit: Duration,
+    /// Direct read-only SQLite answers for high-frequency window GETs (window_db.rs).
+    pub db: Option<crate::window_db::WindowDb>,
 }
 
 pub struct Window {
@@ -112,6 +114,7 @@ pub struct Window {
     port: u16,
     upstream_port: u16,
     pub proxied: AtomicU64,
+    pub db_read: AtomicU64,
     pub read: AtomicU64,
     pub passed: AtomicU64,
 }
@@ -141,6 +144,7 @@ impl Window {
             port,
             upstream_port,
             proxied: AtomicU64::new(0),
+            db_read: AtomicU64::new(0),
             read: AtomicU64::new(0),
             passed: AtomicU64::new(0),
         })
@@ -151,6 +155,7 @@ impl Window {
             "port": self.port,
             "reads": self.config.reads.iter().map(|r| r.path.clone()).collect::<Vec<_>>(),
             "proxied": self.proxied.load(Ordering::Relaxed),
+            "read_by_db": self.db_read.load(Ordering::Relaxed),
             "read_by_reader": self.read.load(Ordering::Relaxed),
             "passed_to_app": self.passed.load(Ordering::Relaxed),
         })
@@ -192,6 +197,17 @@ impl Window {
         }
         let query = pairs(uri.query().unwrap_or(""));
         self.config.reads.iter().any(|r| r.matches(uri.path(), &query))
+    }
+
+    /// Direct read-only SQLite answer, or None: falls back to the reader/app.
+    async fn from_db(&self, method: &Method, uri: &Uri, headers: &HeaderMap) -> Option<Response> {
+        let db = self.config.db.clone()?;
+        let (method, uri, headers) = (method.clone(), uri.clone(), headers.clone());
+        let work = tokio::task::spawn_blocking(move || db.answer(&method, &uri, &headers));
+        let value = tokio::time::timeout(self.config.reader_limit, work).await.ok()?.ok()??;
+        let mut response = (StatusCode::OK, value.to_string()).into_response();
+        response.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        Some(response)
     }
 
     /// The reader's whole answer, or None: the app answers instead.
@@ -281,6 +297,10 @@ pub async fn handle(State(window): State<Arc<Window>>, request: Request) -> Resp
     };
     let headers = window.forwarded(&parts.headers, &host, &app_host);
     window.proxied.fetch_add(1, Ordering::Relaxed);
+    if let Some(answer) = window.from_db(&parts.method, &parts.uri, &parts.headers).await {
+        window.db_read.fetch_add(1, Ordering::Relaxed);
+        return answer;
+    }
     if window.allowed(&parts.method, &parts.uri) {
         if let Some(answer) = window.from_reader(&parts.uri, &headers, (&host, &app_host)).await {
             window.read.fetch_add(1, Ordering::Relaxed);
@@ -303,6 +323,7 @@ mod tests {
                 reads: reads.iter().filter_map(|r| Read::parse(r)).collect(),
                 reader_limit: Duration::from_secs(1),
                 head_limit: Duration::from_secs(1),
+                db: None,
             },
             9000,
         )

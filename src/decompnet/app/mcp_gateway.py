@@ -306,9 +306,13 @@ class Gateway:
         `WINDOW <port>` after it with a window listener)."""
         window_port = (self.window_port or 0) if window_port is None else window_port
         errors = open(self.log_path, "ab") if self.log_path else subprocess.DEVNULL  # noqa: SIM115 (kept by the child)
+        env = dict(os.environ)
+        env.pop("DECOMP_GATEWAY_WINDOW_SECRET", None)
+        if self.window and self.window.get("secret"):
+            env["DECOMP_GATEWAY_WINDOW_SECRET"] = str(self.window["secret"])
         try:
             process = subprocess.Popen(self._command(port, window_port), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                       stderr=errors, close_fds=True,
+                                       stderr=errors, close_fds=True, env=env,
                                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         finally:
             if errors is not subprocess.DEVNULL:
@@ -469,7 +473,7 @@ def _saved_port(path: Path | None, *taken: int) -> int:
 
 
 def start(app_port: int, log_path: Path | None = None, port_file: Path | None = None, reader=None,
-          window: bool = False, *, executable: Path | None = None) -> Gateway | None:
+          window: bool = False, *, window_secret: str | None = None, executable: Path | None = None) -> Gateway | None:
     """Start the gateway in front of the app's /mcp. Return None when it is explicitly disabled.
 
     `port_file` keeps the gateway's port across app starts: helpers connected by hand keep a working address.
@@ -483,6 +487,7 @@ def start(app_port: int, log_path: Path | None = None, port_file: Path | None = 
     from .window_reads import GATEWAY_READS
     window_reader = getattr(reader, "window_url", None) if reader is not None else None
     window_spec = ({"upstream": f"http://127.0.0.1:{app_port}", "reader": window_reader, "reads": list(GATEWAY_READS)}
+                   | ({"secret": window_secret} if window_secret else {})
                    if window and window_wanted() else None)
     gateway = Gateway(exe, f"http://127.0.0.1:{app_port}/mcp", log_path,
                       reader=reader.url if reader is not None else None, read_tools=READER_TOOLS,
