@@ -65,6 +65,9 @@ _LITERALS = (
 
 
 _TABLES = (
+    # A loaded bank starts with a pointer/configuration table before its first frame.
+    ('0000000000000000801f5a1000000000801f4a40801f59fc', 512,
+     'd9efcf8ed247c3b292e3f66a8dd92fde8af05655a762fa0239dc5e0446970595'),
     ('0000000200050007000a000c000f0011', 16384,
      '2b4b0e420eda178e6dd07b52e107f1ba73fed47a2ba607fa8f9705fdbfc99aed'),
     ('017c0197000001000000000e001c002a', 33436,
