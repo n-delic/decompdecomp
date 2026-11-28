@@ -72,10 +72,10 @@ def _auto_addresses(texts, defined) -> dict[str, int]:
     its name carries, so the standalone link can resolve them."""
     found = {}
     for text in texts:
-        for word in set(re.findall(r"\b[A-Za-z]\w*_[0-9A-Fa-f]{1,8}(?:_code_[0-9A-Fa-f]{8}|_)?\b", text)):
+        for word in set(re.findall(r"\b[A-Za-z]\w*_[0-9A-Fa-f]{1,8}(?:_code_[0-9A-Fa-f]{8}(?:_[0-9A-Fa-f]+)?|_)?\b", text)):
             # Inferred overlay scopes append their segment name after the
             # address; the suffix names a scope, not a second address.
-            base = re.sub(r'_code_[0-9A-Fa-f]{8}$', '', word).removesuffix('_')
+            base = re.sub(r'_code_[0-9A-Fa-f]{8}(?:_[0-9A-Fa-f]+)?$', '', word).removesuffix('_')
             if (m := AUTO_NAME.fullmatch(base)) and word not in defined:
                 found.setdefault(word, int(m.group(1), 16))
     return found
