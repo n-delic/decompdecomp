@@ -209,9 +209,9 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
                         log(f'Extended image observation skipped: {error}')
             # The submitted task, not an arbitrary later retrace, supplies the
             # palette: the game may reuse its memory before the next snapshot.
-            from decompassets.n64 import runtime_deflate_ci8, runtime_lzw_textures
+            from decompassets.n64 import runtime_deflate_ci8, runtime_lzw_textures, runtime_variable_lz
             frame_assets = []
-            recognizers = [module for module in (runtime_lzw_textures, runtime_deflate_ci8)
+            recognizers = [module for module in (runtime_lzw_textures, runtime_deflate_ci8, runtime_variable_lz)
                            if module.has_resources(image, check)]
             if recognizers and not run.timed_out:
                 log('Checking submitted graphics frames for compressed textures.')

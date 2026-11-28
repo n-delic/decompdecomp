@@ -625,7 +625,8 @@ def test_edl_meshes_merge_between_runtime_captures(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize(('module_name', 'layout'), [('runtime_lzw_textures', 'runtime-lzw-textures'),
-                                                   ('runtime_deflate_ci8', 'runtime-deflate-ci8')])
+                                                   ('runtime_deflate_ci8', 'runtime-deflate-ci8'),
+                                                   ('runtime_variable_lz', 'runtime-variable-lz-ci4')])
 def test_compressed_texture_observation_uses_submitted_tasks_and_keeps_palettes(tmp_path, monkeypatch, module_name, layout):
     from decompassets import n64
     from decompassets.n64 import runtime_packed_graphics
