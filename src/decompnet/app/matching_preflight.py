@@ -153,6 +153,8 @@ def _run(net, proj, fn, log, check, max_profiles):
                 if feedback is None:
                     old = store.one('SELECT feedback FROM reuse_trials WHERE function_id=? AND signature=?', fn['id'], probe_key)
                     feedback = old['feedback'] if old else None
+                if feedback is not None and named_since(net, proj, json.loads(feedback)):
+                    feedback = None
                 if feedback is not None:
                     item = json.loads(feedback)
                 else:
@@ -332,6 +334,18 @@ def _run(net, proj, fn, log, check, max_profiles):
                 log('Compiler preflight found a better source/profile hypothesis: '+' '.join(best['flags'])+
                     '. Partial results need review; exact results also respect automatic compiler settings.')
     return result
+
+
+def named_since(net, proj, item):
+    """Whether a kept "not a known symbol" verdict names only symbols the project has now.
+
+    Such a verdict was judged with an older symbol table (a permuter worker that missed a rename), while its cache key
+    is made from the current one, so it was replayed on every later pass."""
+    link, symbols = item.get('link'), getattr(net, 'symbols', None)
+    if not link or symbols is None:
+        return False
+    table = symbols(proj['id'])
+    return all(table.resolve(name) is not None for name in link['symbols'])
 
 
 def combine(probes, index, own, flags, source, improvers):

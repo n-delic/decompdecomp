@@ -410,6 +410,27 @@ def _worker_logging():
     log.info('Permuter worker starting: %s', build_info.label())
 
 
+def follow_symbol_edits(net) -> None:
+    """Rebuild the worker engine's symbol caches once a project's names change in the app.
+
+    The worker has an engine of its own, and a rename in the app drops only the app's cache. The worker then judged
+    the renamed saved C against the old names, so the Deep Permuter stopped with "Resolve the addresses of
+    <the new name>" until the worker was replaced."""
+    read, seen = net.symbols, {}
+
+    def symbols(project_id: int):
+        store = net.project_store(project_id)
+        # (read before the table is built, so a rename during the build is seen by the next call)
+        now = (store.read_version("scope_symbols"), store.read_version("naming"))
+        if seen.get(project_id) != now:
+            seen[project_id] = now
+            for cache in ("_syms", "_xrefs", "_asm_names"):
+                getattr(net, cache, {}).pop(project_id, None)
+        return read(project_id)
+
+    net.symbols = symbols
+
+
 def child(db_path: str, workspace: str) -> None:
     """Own one engine and its permuter; stdout carries only framed JSON replies."""
     from .engine import RomNetwork
@@ -419,6 +440,7 @@ def child(db_path: str, workspace: str) -> None:
     from .. import thread_cpu
     thread_cpu.start_worker('permuter')
     net = RomNetwork(db_path, Path(workspace))
+    follow_symbol_edits(net)
     permuter = net.permuter = Permuter(net)
     output_lock = threading.Lock()
     repair_stops: dict[int, threading.Event] = {}
