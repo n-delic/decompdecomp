@@ -2,6 +2,7 @@
 
 import json
 import re
+from collections import Counter, defaultdict
 
 from ...app import overlay_donor_aliases
 from ...app.function_names import rename_identifiers
@@ -105,6 +106,52 @@ def _data_variant(fn, source, header, candidate, target):
     return '\n'.join(declarations) + '\n#ifdef PORT\n' + port + '\n#else\n' + rom + '\n#endif\n' + source
 
 
+def _direct_variant(fn, source, header, candidate, target, extra):
+    """Separate direct placeholder calls only when every call has one relocation."""
+    span = csource.find(source, fn['name'])
+    if span is None:
+        return None
+    clean = csource._blank(source)
+    pattern = r'\b(?:func_00000000|func_80000000|gl_func_00000000)(?=\s*\()'
+    calls = list(re.finditer(pattern, clean[span[0]:span[1]]))
+    calls = [(span[0] + m.start(), span[0] + m.end(), m.group()) for m in calls]
+    if not calls:
+        return None
+    counts = Counter(symbol for _, _, symbol in calls)
+    grouped = defaultdict(list)
+    for reloc in candidate.relocs:
+        if reloc.type == 4 and reloc.symbol in counts:
+            grouped[reloc.symbol].append(reloc)
+    if any(len(grouped[symbol]) != count for symbol, count in counts.items()):
+        return None
+    expected = {(r.offset, r.type): r for r in target.relocs}
+    combined = header + '\n' + source
+    clean_combined = csource._blank(combined)
+    bindings, declarations = {}, []
+    for symbol in counts:
+        ordered = sorted(grouped[symbol], key=lambda r: r.offset)
+        wanted = [expected.get((r.offset, r.type)) for r in ordered]
+        if any(r is None or not re.fullmatch(r'[A-Za-z_]\w*', r.symbol) for r in wanted):
+            return None
+        pattern = (r'(?m)^[ \t]*extern[ \t]+[^;{}#\n]+\b' + re.escape(symbol)
+                   + r'[ \t]*\([^;{}#\n]*\)[ \t]*;')
+        declaration = re.search(pattern, clean_combined)
+        prototype = combined[declaration.start():declaration.end()] if declaration else f'extern int {symbol}();'
+        bindings[symbol] = iter(r.symbol for r in wanted)
+        declarations.extend(rename_identifiers(prototype, {symbol: r.symbol}) for r in wanted)
+    replacements = []
+    for index, (start, end, symbol) in enumerate(calls, 1):
+        name = f'decomp_overlay_direct_{index}'
+        if re.search(r'\b' + re.escape(name) + r'\b', clean_combined):
+            return None
+        replacements.append((start, end, name, symbol, next(bindings[symbol])))
+    for start, end, name, _, _ in reversed(replacements):
+        source = source[:start] + name + source[end:]
+    port = '\n'.join(f'#define {name} {symbol}' for _, _, name, symbol, _ in replacements)
+    rom = '\n'.join(f'#define {name} {binding}' for _, _, name, _, binding in replacements)
+    return '\n'.join(sorted(set(declarations))) + '\n#ifdef PORT\n' + port + '\n#else\n' + rom + '\n#endif\n' + source + '\n' + extra
+
+
 def retry(net, project, fn, source):
     """Return a rewritten saved source only after its complete module-aware judge passes."""
     try:
@@ -131,6 +178,9 @@ def retry(net, project, fn, source):
         macro = _macro_variant(fn, source, header, candidate, info, extra)
         if macro:
             variants.append(macro)
+        direct = _direct_variant(fn, source, header, candidate, target, extra)
+        if direct:
+            variants.append(direct)
         data = _data_variant(fn, source, header, candidate, target)
         if data:
             variants.append(data + '\n' + extra)

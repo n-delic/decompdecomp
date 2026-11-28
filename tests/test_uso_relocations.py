@@ -1469,6 +1469,27 @@ def test_reimport_data_retry_requires_a_site_for_each_placeholder_relocation():
     assert _data_variant(fn, source, header, candidate, target) is None
 
 
+def test_reimport_direct_retry_separates_each_placeholder_and_preserves_port_calls():
+    from types import SimpleNamespace
+
+    from decompnet.consoles.n64.reimport_bindings import _direct_variant
+
+    fn = {'name': 'work'}
+    source = 'int work(void) { return func_00000000(1) + func_00000000(2); }'
+    header = 'extern int func_00000000();'
+    candidate = SimpleNamespace(relocs=[SimpleNamespace(offset=4, type=4, symbol='func_00000000'),
+                                        SimpleNamespace(offset=12, type=4, symbol='func_00000000')])
+    target = SimpleNamespace(relocs=[SimpleNamespace(offset=4, type=4, symbol='uso_1_sym_2'),
+                                     SimpleNamespace(offset=12, type=4, symbol='uso_1_sym_3')])
+    result = _direct_variant(fn, source, header, candidate, target, '')
+    assert '#define decomp_overlay_direct_1 func_00000000' in result
+    assert '#define decomp_overlay_direct_1 uso_1_sym_2' in result
+    assert '#define decomp_overlay_direct_2 uso_1_sym_3' in result
+    assert 'decomp_overlay_direct_1(1)' in result and 'decomp_overlay_direct_2(2)' in result
+    candidate.relocs.pop()
+    assert _direct_variant(fn, source, header, candidate, target, '') is None
+
+
 def test_reimport_binding_retry_returns_only_exact_result(monkeypatch):
     import json
     from types import SimpleNamespace
