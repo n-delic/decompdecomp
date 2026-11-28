@@ -195,3 +195,16 @@ def test_an_offset_reference_that_holds_no_case_targets_is_not_a_table():
     net = SimpleNamespace(symbols=lambda _: SimpleNamespace(by_name={}), cfg=lambda _: {},
                           reader=lambda *_: _reader((0x3FF00000, 0x3FF00000)), _rom=lambda _: (b"", []))
     assert draft_data.read(net, {"id": 1}, {"asm": asm}) == [".section .rodata"]
+
+
+def test_a_table_longer_than_the_usual_cap_is_read_as_far_as_the_range_check_says():
+    # A dispatch over entity kinds: the table's address is kept in a saved register, so only the check bounds it.
+    words = [CASES[0]] * 1049
+    net = SimpleNamespace(symbols=lambda _: SimpleNamespace(by_name={}), cfg=lambda _: {},
+                          reader=lambda *_: _reader(words))
+    asm = ASM + "lui $v0, %hi(jtbl_800E1DE8)\naddiu $s2, $v0, %lo(jtbl_800E1DE8)\n"
+    lines = draft_data.read(net, {"id": 1}, {"asm": asm + "sltiu $v0, $v1, 0x419\n"})
+    assert sum(line.startswith(".word") for line in lines) == 1049
+    lines = draft_data.read(net, {"id": 1}, {"asm": asm})
+    assert sum(line.startswith(".word") for line in lines) == draft_data.MAX_CASES
+    assert draft_data.case_limit("sltiu $v0, $v1, 0x7FFF\n") == draft_data.MAX_CASES
