@@ -48,6 +48,37 @@ def _local_calls(info):
     return {(at, index): offset for at, index, offset in info.get('local_calls', ())}
 
 
+def rebind_native_calls(fn, source):
+    """Replace unambiguous old raw-address calls with their newly proven loader bindings."""
+    from ...app.function_names import rename_identifiers
+
+    info = getattr(fn, 'uso', None) or {}
+    if not info.get('native') or not isinstance(info.get('section'), int):
+        return source
+    local = _local_calls(info)
+    replacements, ambiguous = {}, set()
+    for at, kind, index in info.get('relocs') or ():
+        if kind != 4 or at < 0 or at % 4 or at // 4 >= len(fn.lines):
+            continue
+        word = fn.lines[at // 4].word
+        if word >> 26 != 3:
+            continue
+        address = ((fn.vram + at + 4) & 0xF0000000) | ((word & _CALL_MASK) << 2)
+        binding = (local_alias(info['section'], index, local[(at, index)]) if (at, index) in local
+                   else alias(info['section'], index))
+        for prefix in ('D_', 'func_'):
+            name = f'{prefix}{address:08X}'
+            if name == fn.name:
+                continue
+            if name in replacements and replacements[name] != binding:
+                ambiguous.add(name)
+            else:
+                replacements[name] = binding
+    for name in ambiguous:
+        replacements.pop(name, None)
+    return rename_identifiers(source, replacements) if replacements else source
+
+
 @dataclass
 class Target(RomTarget):
     uso: dict | None = None

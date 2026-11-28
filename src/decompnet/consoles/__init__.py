@@ -339,6 +339,10 @@ class Console:
         """Optionally stage old entries that a new split missed; other consoles need an adapter."""
         return 0
 
+    def rebind_reimport_source(self, fn, source):
+        """Optionally adapt saved source to newly established loader bindings before rejudging."""
+        return source
+
     def import_table_ranges(self, image, segments):
         """Additional load mappings for jump-table evidence during ROM import."""
         return ()

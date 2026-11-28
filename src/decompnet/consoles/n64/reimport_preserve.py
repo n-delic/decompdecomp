@@ -303,19 +303,23 @@ def _matched_module_entries(result, image, rows):
         try:
             meta = json.loads(row.get('meta') or '{}')['uso']
             section, start, size = meta['section'], meta['start'], meta['size']
+            if type(section) is not int:
+                continue
             bank_start = result.analysis_banks[str(section)]
-            unit = row['unit']
-            bank = next(s for s in result.segments if s.name == unit and s.rom_start == bank_start)
+            banks = [s for s in result.segments if s.name in (f'donor_uv_{section:X}', f'donor_uso_{section:X}')
+                     and s.rom_start == bank_start]
+            if len(banks) != 1:
+                continue
+            bank = banks[0]
         except (KeyError, TypeError, ValueError, StopIteration):
             continue
         lo, vram, target = row.get('rom_offset'), row.get('vram'), row.get('target')
-        if (type(section) is not int or unit not in (f'donor_uv_{section:X}', f'donor_uso_{section:X}')
-                or type(bank_start) is not int or type(start) is not int or type(size) is not int
+        if (type(bank_start) is not int or type(start) is not int or type(size) is not int
                 or start < 0 or size <= 0 or size % 4 or vram != start or row.get('size') != size
                 or lo != bank_start + start or lo + size > bank.rom_end or not isinstance(target, bytes)
                 or target != image[lo:lo + size] or any(a < lo + size and lo < b for a, b in ranges)):
             continue
-        fn = split.function_from_bytes(row['name'], target, lo, vram, unit)
+        fn = split.function_from_bytes(row['name'], target, lo, vram, bank.name)
         fn.uso = meta
         result.functions.append(fn)
         names.add(row['name'])

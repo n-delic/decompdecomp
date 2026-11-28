@@ -233,8 +233,11 @@ def test_matched_module_entry_is_preserved_only_with_unchanged_unoccupied_bank()
     assert _matched_module_entries(restored, image, [row]) == 1
     assert restored.functions[0].uso == meta['uso']
     assert restored.functions[0].rom == 0x110
+    renamed = result()
+    assert _matched_module_entries(renamed, image, [row | {'unit': 'exact_match_123'}]) == 1
+    assert renamed.functions[0].segment == 'donor_uv_40'
     for altered in (row | {'status': 'open'}, row | {'target': bytes(8)}, row | {'gone_mark': 'removed'},
-                    row | {'vram': 0x14}, row | {'unit': 'donor_uv_41'}):
+                    row | {'vram': 0x14}, row | {'meta': json.dumps({'uso': meta['uso'] | {'section': 0x41}})}):
         assert _matched_module_entries(result(), image, [altered]) == 0
     occupied = result()
     occupied.functions.append(function_from_bytes('new', target, 0x110, 0x10, 'donor_uv_40'))

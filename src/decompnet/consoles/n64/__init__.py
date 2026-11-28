@@ -296,6 +296,11 @@ class Nintendo64(Console):
         info = getattr(fn, 'uso', None)
         return {'uso': info} if info is not None else {}
 
+    def rebind_reimport_source(self, fn, source):
+        from .uso_match import rebind_native_calls
+
+        return rebind_native_calls(fn, source)
+
     def separate_overlay_reference(self, binding, number):
         from .uso_match import separate_reference
 
