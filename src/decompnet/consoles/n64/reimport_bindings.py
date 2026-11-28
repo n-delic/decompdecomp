@@ -106,7 +106,7 @@ def _data_variant(fn, source, header, candidate, target):
     return '\n'.join(declarations) + '\n#ifdef PORT\n' + port + '\n#else\n' + rom + '\n#endif\n' + source
 
 
-def _direct_variant(fn, source, header, candidate, target, extra, *, prefer_decl=True):
+def _direct_variant(fn, source, header, candidate, target, extra, *, prefer_decl=True, nested_first=False):
     """Separate direct placeholder calls only when every call has one relocation."""
     span = csource.find(source, fn['name'])
     if span is None:
@@ -128,6 +128,21 @@ def _direct_variant(fn, source, header, candidate, target, extra, *, prefer_decl
     combined = header + '\n' + source
     clean_combined = csource._blank(combined)
     bindings, declarations, source_declarations = {}, [], {}
+    closing = {}
+    if nested_first:
+        for start, end, _ in calls:
+            opening = clean.find('(', end, span[1])
+            depth = 0
+            for at in range(opening, span[1]):
+                if clean[at] == '(':
+                    depth += 1
+                elif clean[at] == ')':
+                    depth -= 1
+                    if depth == 0:
+                        closing[start] = at
+                        break
+            if start not in closing:
+                return None
     for symbol in counts:
         ordered = sorted(grouped[symbol], key=lambda r: r.offset)
         wanted = [expected.get((r.offset, r.type)) for r in ordered]
@@ -138,7 +153,10 @@ def _direct_variant(fn, source, header, candidate, target, extra, *, prefer_decl
                    + r'[ \t]*\([^;{}#\n]*\)[ \t]*;')
         declaration = re.search(pattern, clean_combined) if prefer_decl else None
         prototype = combined[declaration.start():declaration.end()] if declaration else f'extern int {symbol}();'
-        bindings[symbol] = iter(r.symbol for r in wanted)
+        occurrences = [call for call in calls if call[2] == symbol]
+        if nested_first:
+            occurrences.sort(key=lambda call: closing[call[0]])
+        bindings.update((call[0], r.symbol) for call, r in zip(occurrences, wanted))
         copies = [rename_identifiers(prototype, {symbol: r.symbol}) for r in wanted]
         if declaration and declaration.start() >= len(header) + 1:
             source_declarations[symbol] = (pattern, copies)
@@ -149,7 +167,7 @@ def _direct_variant(fn, source, header, candidate, target, extra, *, prefer_decl
         name = f'decomp_overlay_direct_{index}'
         if re.search(r'\b' + re.escape(name) + r'\b', clean_combined):
             return None
-        replacements.append((start, end, name, symbol, next(bindings[symbol])))
+        replacements.append((start, end, name, symbol, bindings[start]))
     for start, end, name, _, _ in reversed(replacements):
         source = source[:start] + name + source[end:]
     for pattern, copies in source_declarations.values():
@@ -306,9 +324,11 @@ def retry(net, project, fn, source):
         if macro:
             variants.append(macro)
         for prefer_decl in (True, False):
-            direct = _direct_variant(fn, source, header, candidate, target, extra, prefer_decl=prefer_decl)
-            if direct and direct not in variants:
-                variants.append(direct)
+            for nested_first in (False, True):
+                direct = _direct_variant(fn, source, header, candidate, target, extra,
+                                         prefer_decl=prefer_decl, nested_first=nested_first)
+                if direct and direct not in variants:
+                    variants.append(direct)
         data = _data_variant(fn, source, header, candidate, target)
         if data:
             variants.append(data + '\n' + extra)
@@ -338,9 +358,11 @@ def retry(net, project, fn, source):
             if macro:
                 variants.append(macro)
             for prefer_decl in (True, False):
-                direct = _direct_variant(fn, split, header, separated, target, extra, prefer_decl=prefer_decl)
-                if direct and direct not in variants:
-                    variants.append(direct)
+                for nested_first in (False, True):
+                    direct = _direct_variant(fn, split, header, separated, target, extra,
+                                             prefer_decl=prefer_decl, nested_first=nested_first)
+                    if direct and direct not in variants:
+                        variants.append(direct)
             for variant in variants:
                 built = net._compile(project, header, variant, fn)
                 if built.ok and net._evaluate(fn, project, built.obj)[1] is True:
