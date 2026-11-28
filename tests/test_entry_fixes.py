@@ -354,3 +354,25 @@ def test_shared_frame_accepts_later_ra_save_before_first_transfer():
     assert ef.decide([head, tail, caller], word_at=prior)['tail'].kind == 'join_previous'
     outside = entry('outside', 0x80003000, [j(start+28), NOP, JR_RA, NOP], [(0, 4, start+28)])
     assert 'tail' not in ef.decide([head, tail, caller, outside], word_at=prior)
+
+
+def test_decide_rust_parity(monkeypatch):
+    from decompnet.app import mcp_gateway
+    if mcp_gateway.program() is None:
+        return
+    prev = entry('prev', 0x80000000, [JR_RA, NOP])
+    trimmed = entry('trimmed', 0x80000008, [addiu(SP, SP, 0x20), addiu(SP, SP, -0x20), JR_RA, addiu(SP, SP, 0x20)])
+    pad = entry('pad', 0x80000024, [addiu(SP, SP, 0x20)])
+    after_pad = entry('after_pad', 0x80000028, [addiu(SP, SP, -0x20), JR_RA, addiu(SP, SP, 0x20)])
+    entries = [prev, trimmed, pad, after_pad]
+    py_fixes = ef.decide(entries)
+    rust_fixes = ef.decide_rust(entries)
+    assert rust_fixes is not None
+    assert set(rust_fixes) == set(py_fixes)
+    for name in py_fixes:
+        assert (rust_fixes[name].kind, rust_fixes[name].at, rust_fixes[name].confidence) == (
+            py_fixes[name].kind, py_fixes[name].at, py_fixes[name].confidence
+        )
+    # Fallback when gateway binary is unavailable
+    monkeypatch.setattr(mcp_gateway, 'program', lambda: None)
+    assert ef.decide_rust(entries) is None

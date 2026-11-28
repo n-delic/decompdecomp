@@ -43,7 +43,9 @@ Each threshold was checked on real games: a matched function's extent is proven 
 one is a false positive. Over 30,339 matched functions of 36 N64 games (built with several compilers), read as if
 unmatched, none is flagged (41,252 of 93 N64 games with the lost-value, empty-function and retained-tail rules); on
 the game above 25 of the 28 are fixed, and the rest but one with those rules (docs/learnings/finding/automatic-boundary-fixes.md)."""
+import json
 import struct
+import subprocess
 from dataclasses import dataclass, field
 
 import rabbitizer
@@ -633,3 +635,64 @@ def _end(e, words, pointed, flow):
                        'two compiled functions, so it is left for review.')
         return Fix(e.name, S, 'split_end', E, confidence, evidence, warning)
     return None
+
+
+def decide_rust(entries, *, big_endian=True, rom_path=None, image=None, segments=(), reviewed=frozenset(), stored_addrs=None):
+    """Run `decomp-mcp-gateway entry-fixes` when available; return None on missing binary or error."""
+    from . import mcp_gateway
+    exe = mcp_gateway.program()
+    if exe is None:
+        return None
+    payload = {
+        'entries': [
+            {
+                'name': e.name,
+                'vram': e.vram,
+                'code_hex': e.code.hex(),
+                'relocs': [list(r) for r in e.relocs],
+                'status': e.status,
+            }
+            for e in entries
+            if len(e.code) >= 4
+        ],
+        'big_endian': bool(big_endian),
+        'segments': [
+            {'vram': s.vram, 'rom_start': s.rom_start, 'rom_end': s.rom_end}
+            for s in segments
+        ],
+        'reviewed': sorted(reviewed),
+    }
+    if rom_path is not None:
+        payload['rom_path'] = str(rom_path)
+    elif image is not None:
+        payload['image_hex'] = bytes(image).hex()
+    if stored_addrs is not None:
+        payload['stored_addrs'] = list(stored_addrs)
+    try:
+        proc = subprocess.run(
+            [str(exe), 'entry-fixes'],
+            input=json.dumps(payload),
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        raw = json.loads(proc.stdout)
+    except ValueError:
+        return None
+    return {
+        name: Fix(
+            name=item['name'],
+            vram=item['vram'],
+            kind=item['kind'],
+            at=item['at'],
+            confidence=item['confidence'],
+            evidence=item['evidence'],
+            warning=item['warning'],
+        )
+        for name, item in raw.items()
+    }

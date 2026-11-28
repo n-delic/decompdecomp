@@ -21,6 +21,7 @@ mod hosted;
 mod native;
 mod rom_judge;
 mod desktop_judge;
+mod entry_fixes;
 mod mips_link;
 mod mips_elf;
 mod mips_ecoff;
@@ -1080,6 +1081,9 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.as_slice() == ["desktop-judge"] {
         std::process::exit(desktop_judge::serve());
+    }
+    if args.as_slice() == ["entry-fixes"] {
+        std::process::exit(entry_fixes::serve());
     }
     gateway_main(args);
 }

@@ -958,7 +958,17 @@ def entry_findings(net, proj, *, layout=None, mapped=None, check=lambda: None):
         return None
     # Tails a reviewed adjustment kept for review: confirmed when other code points at their first word.
     reviewed={r['name'] for r in live if (m:=json.loads(r['meta'] or '{}')).get('boundary_tail_review') and not m.get('boundary_override')}
-    found=entry_fixes.decide(entries,big_endian=bool(proj['big_endian']),word_at=word_at,stored=_Stored(image,proj['big_endian'],check),reviewed=reviewed)
+    rom_path = (Path(proj['root']) / net.cfg(proj)['rom']['file']) if mapped is None else None
+    found = entry_fixes.decide_rust(
+        entries,
+        big_endian=bool(proj['big_endian']),
+        rom_path=rom_path,
+        image=image if mapped is not None else None,
+        segments=segments,
+        reviewed=reviewed,
+    )
+    if found is None:
+        found=entry_fixes.decide(entries,big_endian=bool(proj['big_endian']),word_at=word_at,stored=_Stored(image,proj['big_endian'],check),reviewed=reviewed)
     rows={r['name']:r for r in live}
     for name,fix in found.items():
         row=rows[name];meta=json.loads(row['meta'] or '{}')
