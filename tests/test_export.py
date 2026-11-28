@@ -886,9 +886,9 @@ def test_export_keeps_backward_delay_slot_address_high(platform):
     result = console.export_asm(text)
     assert '.word 0x3C01800C' in result
     assert console.export_asm(result) == result
-    assert console.export_asm(text.replace('0x67104 &', '0x67105 &')) == text.replace('0x67104 &', '0x67105 &')
+    assert 'lui $at, %hi(D_80057698 + 0x67104)' in console.export_asm(text.replace('0x67104 &', '0x67105 &'))
     forward = text.replace(words[1].to_bytes(4, order).hex(), (0x14400001).to_bytes(4, order).hex())
-    assert console.export_asm(forward) == forward
+    assert 'lui $at, %hi(D_80057698 + 0x67104)' in console.export_asm(forward)
 
 
 def test_foreign_scoped_local_labels_are_not_exported_twice(tmp_path):
@@ -905,3 +905,28 @@ def test_foreign_scoped_local_labels_are_not_exported_twice(tmp_path):
     assert '.L80001010_code_80001000' not in foreign.read_text()
     assert 'alabel .L80001010_code_80001000' in own.read_text()
     assert '.word 0' in foreign.read_text()
+
+
+@pytest.mark.parametrize(('platform', 'endian'), [('n64', 'big'), ('ps2', 'little'), ('ps1', 'little')])
+def test_export_preserves_large_mips_relocation_addends(tmp_path, platform, endian):
+    from decompnet.consoles import get
+
+    if toolchains.installed('binutils-mips') is None:
+        pytest.skip('needs pinned MIPS binutils')
+    source = ('.text\n.set noreorder\n.globl entry\nentry:\n'
+              'lui $22, %hi(D_800DD880 + 0x5A604)\n'
+              'addiu $22, $22, %lo(D_800DD880 + (0x5A604 & 0xFFFF))\n')
+    fixed = get(platform).export_asm(source)
+    assert '%lo(D_800DD880 + 0x5A604)' in fixed
+    (tmp_path/'entry.s').write_text(fixed)
+    (tmp_path/'game.ld').write_text('D_800DD880 = 0x800DD880;\nSECTIONS { . = 0x80000000; .text : { *(.text) } }\n')
+    tools = toolchains.binary('binutils-mips').parent
+    flag = '-EB' if endian == 'big' else '-EL'
+    subprocess.run([str(tools/'mips-ps2-decompals-as'), flag, '-mips2', '-o', 'entry.o', 'entry.s'],
+                   cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run([str(tools/'mips-ps2-decompals-ld'), flag, '-T', 'game.ld', '-o', 'game.elf', 'entry.o'],
+                   cwd=tmp_path, check=True, capture_output=True)
+    with (tmp_path/'game.elf').open('rb') as stream:
+        data = ELFFile(stream).get_section_by_name('.text').data()
+    assert int.from_bytes(data[:4], endian) == 0x3C168013
+    assert int.from_bytes(data[4:8], endian) == 0x26D67E84

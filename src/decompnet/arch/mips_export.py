@@ -9,6 +9,17 @@ _INSTRUCTION = re.compile(
 _HI = re.compile(r"^lui\s+\$\w+,\s*%hi\(\s*(D_[0-9a-f]{8})\s*\+\s*(0x[0-9a-f]+)\s*\)\s*$", re.I)
 
 
+def full_low_addends(text: str) -> str:
+    """Keep the full addend on LO16 relocations so GNU ld pairs their HI16 correctly.
+
+    Masking an addend does not change its low half, but changes the addend GNU
+    ld uses to apply the high-half carry. Splat emits this mask for large data
+    offsets, causing an otherwise correct original function to rebuild wrongly.
+    """
+    return re.sub(r'%lo\(([^()\n]+)\+\s*\((0x[0-9a-f]+)\s*&\s*0xffff\)\)',
+                  r'%lo(\1+ \2)', text, flags=re.I)
+
+
 def backward_delay_highs(text: str, big_endian: bool) -> str:
     """Preserve a loop delay-slot high half whose matching low half precedes it.
 

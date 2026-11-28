@@ -476,7 +476,7 @@ class Console:
         """ROM mode's export: a file of spimdisasm's assembly as GNU as reads it. What it can't read as spimdisasm
         writes it (coprocessor 2's instructions), or would place elsewhere (8-byte data), becomes the raw words it is."""
         from ..arch.mips import raw_cop2, raw_doubles  # (splat's consoles are MIPS)
-        from ..arch.mips_export import backward_delay_highs
+        from ..arch.mips_export import backward_delay_highs, full_low_addends
 
         # Inferred code can include link instructions whose source is also their destination.
         # GNU as rejects them; the rebuild still needs the original bytes.
@@ -491,7 +491,8 @@ class Console:
 
         text = re.sub(r"^(\s*/\*\s*[0-9A-Fa-f]+\s+[0-9A-Fa-f]{8}\s+([0-9A-Fa-f]{8})\s*\*/[ \t]*)[^\n]+",
                       link_word, text, flags=re.M)
-        return raw_doubles(raw_cop2(backward_delay_highs(text, self.big_endian), self.big_endian), self.big_endian)
+        text = full_low_addends(backward_delay_highs(text, self.big_endian))
+        return raw_doubles(raw_cop2(text, self.big_endian), self.big_endian)
 
     def find_gp(self, image: bytes, program: bytes, segments: list) -> int:
         """$gp as the game sets it, when splat didn't say (0: the game keeps no data $gp-relative)."""
