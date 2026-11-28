@@ -1535,6 +1535,23 @@ def test_reimport_groups_repeated_data_aliases_and_preserves_port_expressions():
                          candidate) is None
 
 
+def test_reimport_direct_retry_can_bind_nested_calls_inside_first():
+    from types import SimpleNamespace
+
+    from decompnet.consoles.n64.reimport_bindings import _direct_variant
+
+    fn = {'name': 'work'}
+    source = 'int work(void) { return func_00000000(1) + func_00000000(func_00000000(2)); }'
+    candidate = SimpleNamespace(relocs=[SimpleNamespace(offset=i, type=4, symbol='func_00000000') for i in (4, 8, 12)])
+    target = SimpleNamespace(relocs=[SimpleNamespace(offset=i, type=4, symbol=f'uso_1_sym_{n}')
+                                     for i, n in ((4, 1), (8, 2), (12, 3))])
+    result = _direct_variant(fn, source, 'extern int func_00000000();', candidate, target, '', nested_first=True)
+    assert '#define decomp_overlay_direct_1 uso_1_sym_1' in result
+    assert '#define decomp_overlay_direct_2 uso_1_sym_3' in result
+    assert '#define decomp_overlay_direct_3 uso_1_sym_2' in result
+    assert '#define decomp_overlay_direct_2 func_00000000' in result
+
+
 def test_reimport_binding_retry_returns_only_exact_result(monkeypatch):
     import json
     from types import SimpleNamespace
