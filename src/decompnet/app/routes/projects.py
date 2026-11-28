@@ -1336,8 +1336,6 @@ def register(app: App) -> None:
 
         with net.progress.view():
             net.project_row(slug)
-        if slug in net.links:
-            raise ValueError('Run cross-game checks on the room host.')
         check = Job()
         check.promote()
         check.ordered.set()

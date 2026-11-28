@@ -316,6 +316,7 @@ class AutopilotMixin:
         fn = self.project_store(proj['id']).one("SELECT * FROM functions WHERE id=?", fn["id"])
         if fn is None or fn["status"] != "open":
             raise NetworkError("This function is no longer open. Read the updated project before trying another draft.")
+        before = fn["best_score"]
         if not exact_only:
             now = time.time()
             store = self.project_store(proj['id'])
@@ -349,6 +350,24 @@ class AutopilotMixin:
             self._record(fn, agent, d.score, source, ctx["version"], matched=d.bytes_match,
                          effective_settings=getattr(result, 'effective_settings', None),
                          before_record=before_record, **({"exact_inputs":exact_inputs} if exact_only else {}))
+            if (link := self.links.get(proj["slug"])) is not None:
+                if d.bytes_match:
+                    from .. import deep_room, room_matches
+                    evidence = room_matches.packet(self, proj["slug"], fn["name"], source)
+                    sent = False
+                    if not deep_room.offline(link):
+                        try:
+                            room_matches.send(link, agent, fn["name"], source, evidence=evidence)
+                            sent = True
+                        except NetworkError as error:
+                            if not deep_room.unavailable(error):
+                                raise
+                            link.error = str(error)
+                    if not sent:
+                        room_matches.save(self, proj["slug"], 'client', agent, fn["name"], source, evidence,
+                                          link.url + '/' + link.room)
+                elif before is None or d.score < before:
+                    threading.Thread(target=lambda: self._report(link, agent, fn["name"], source, d.score), daemon=True).start()
             from decomprepair.repair_localisation import bind
 
             from ...source_lines import mismatches

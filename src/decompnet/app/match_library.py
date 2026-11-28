@@ -590,7 +590,7 @@ class Library:
         from .twins import Print, _declared, apply, renames, rom_renames, transfer_min_bytes
         net=self.net
         fork=bool(net.fork_slug(proj['slug']))
-        if proj['slug'] in net.links:return 0
+        if proj['slug'] in net.links and not getattr(job, 'cross_exhaustive', False):return 0
         bounded=job is not None and hasattr(job,'reuse_limit')
         processor,big=machine(net,proj)
         agent,_=net.local_agent('autopilot')

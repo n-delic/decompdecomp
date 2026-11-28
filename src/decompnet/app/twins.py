@@ -1133,7 +1133,7 @@ class Twins:
                 if job is not None and (job.stop.is_set() or (hasattr(job,'reuse_limit') and exhausted(job))):return matched
                 matched+=reuse_partial(self,proj,wanted,mine,job,projects=[other],budget_state=partial_state)
             return matched
-        if not (fork or self.net.is_rom(proj)) or slug in self.net.links:
+        if not (fork or self.net.is_rom(proj)) or (slug in self.net.links and not getattr(job, 'cross_exhaustive', False)):
             return 0
         from .free_candidates import exhausted
         bounded = job is not None and hasattr(job, 'reuse_limit')

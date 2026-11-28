@@ -463,10 +463,10 @@ def step_report(net, proj) -> dict:
     return {'steps': sorted(out, key=lambda r: -r['matched']), 'close': listed}
 
 
-def destination_supported(net, proj):
+def destination_supported(net, proj, *, manual: bool = False):
     # Project mode still needs object-relocation alignment and per-file source adaptation.
     slug = proj['slug']
-    return not net.fork_slug(slug) and net.is_rom(proj) and proj['arch'] == 'mips' and slug not in net.links
+    return not net.fork_slug(slug) and net.is_rom(proj) and proj['arch'] == 'mips' and (manual or slug not in net.links)
 
 
 def donor_projects(net, proj):
@@ -663,10 +663,10 @@ def run(twins, slug: str, job, *, function_ids=None) -> int:
 
     net = twins.net
     proj = net.project_row(slug)
-    if not destination_supported(net, proj):
+    manual = bool(getattr(job, 'cross_exhaustive', False))
+    if not destination_supported(net, proj, manual=manual):
         return 0
     cfg = net.cfg(proj)
-    manual = getattr(job, 'cross_exhaustive', False)
     supported_compilers = {c.id for c in net.console(proj).compilers_for(cfg)}
     others = donor_projects(net, proj)
     from . import free_candidates

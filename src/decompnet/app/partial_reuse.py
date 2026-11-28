@@ -31,7 +31,7 @@ def run(twins, proj, wanted, mine, job=None, *, projects=None, budget_state=None
     """Automatic passes try at most 64 donors; manual passes check every eligible donor until stopped."""
     from .shared_reuse import compatible
     net = twins.net
-    if proj['slug'] in net.links:
+    if proj['slug'] in net.links and not getattr(job, 'cross_exhaustive', False):
         return 0
     agent, _ = net.local_agent('autopilot')
     target_machine = machine(net, proj)

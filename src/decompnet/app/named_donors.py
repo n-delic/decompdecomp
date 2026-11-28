@@ -107,7 +107,7 @@ def run(twins,slug,job=None,*,only=None):
     from .twins import Job
     net=twins.net
     proj=net.project_row(slug)
-    if slug in net.links:
+    if slug in net.links and not getattr(job, 'cross_exhaustive', False):
         return 0
     job=job if job is not None else Job()
     free_candidates.budget(job)

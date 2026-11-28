@@ -101,7 +101,7 @@ def run(twins, slug, job):
     net = twins.net
     proj = net.project_row(slug)
     # Object-project templates need per-file source context; other processors need their own template reader.
-    if not net.is_rom(proj) or proj['arch'] != 'mips' or net.fork_slug(slug) or slug in net.links:
+    if not net.is_rom(proj) or proj['arch'] != 'mips' or net.fork_slug(slug) or (slug in net.links and not getattr(job, 'cross_exhaustive', False)):
         return 0
     budget(job)
     if exhausted(job):

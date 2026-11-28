@@ -42,7 +42,7 @@ def run(twins, slug, job):
                        float('inf') if manual else similar_matches.MAX_ATTEMPTS)
         job._similar_budget = phase
     try:
-        if getattr(job, '_parallel_donors', False):
+        if getattr(job, '_parallel_donors', False) and slug not in twins.net.links:
             return parallel(twins, slug, phase)
         return similar_matches.run(twins, slug, phase)
     finally:
@@ -126,7 +126,7 @@ def parallel(twins, slug, job):
 
     net = twins.net
     proj = net.project_row(slug)
-    if not similar_matches.destination_supported(net, proj):
+    if not similar_matches.destination_supported(net, proj, manual=bool(getattr(job, 'cross_exhaustive', False))):
         return 0
     if job.stop.is_set():
         return 0
