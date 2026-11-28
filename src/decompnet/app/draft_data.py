@@ -7,7 +7,10 @@ MAX_SYMBOLS = 16  # constants and strings; jump tables don't count (below)
 MAX_BYTES = 4096
 MAX_TOTAL = 16384
 MAX_TABLES = 64
-MAX_CASES = 256
+MAX_CASES = 256  # a table nothing but its words bounds
+# A table whose size the function's own range check names may be longer: an N64 dispatch over entity kinds had
+# 1,049 entries, and cut at 256 its draft had 9 of the switch's 74 calls.
+MAX_CHECKED_CASES = 4096
 # `lw $v0, %lo(D_80183198)($at)` followed by `jr $v0`: a dispatch through a table the symbol list calls data.
 _DISPATCH = re.compile(r'\blw\s+(\$\w+),\s*%lo\((D_[0-9A-Fa-f]{8})\)\(\$\w+\)[^\n]*\n(?:[^\n]*\n){0,2}?[^\n]*\bjr\s+\1(?!\w)')
 # A table the disassembler spelled from a symbol it lies inside (`%lo(func_80001500 + 0x20)`): the splitter filed
@@ -16,6 +19,12 @@ _OFFSET_REF = re.compile(r'%(?:hi|lo)\(\s*([A-Za-z_]\w*)\s*\+\s*(0x[0-9A-Fa-f]+|
 _TABLE_JUMP = re.compile(r'\bjr\s+\$(?!ra\b|31\b)\w+')
 _RANGE_CHECK = re.compile(r'\bsltiu\s+\$\w+,\s*\$\w+,\s*(0x[0-9A-Fa-f]+|\d+)')
 DISPATCH_WINDOW = 10  # lines before a `jr` that load its table's address and check its index
+
+
+def case_limit(asm):
+    """How many entries a table of this function may be read for: MAX_CASES, or the largest range check above it."""
+    checks = (int(bound, 0) for bound in _RANGE_CHECK.findall(asm))
+    return max([MAX_CASES, *(bound for bound in checks if bound <= MAX_CHECKED_CASES)])
 
 
 def offset_dispatches(asm):
@@ -57,7 +66,7 @@ def jump_table_extent(name, reader, instruction_addresses, endian, max_cases=MAX
         return None
     address = int(match[1], 16)
     cases = 0
-    while cases < min(max_cases, MAX_CASES):
+    while cases < min(max_cases, MAX_CHECKED_CASES):
         word = reader(address + 4 * cases, 4)
         if word is None or len(word) != 4 or case_target(struct.unpack(endian + 'I', word)[0], instruction_addresses) is None:
             break
@@ -100,7 +109,7 @@ def guarded_table_sizes(asm):
             continue
         name = 'jtbl_' + name[2:] if name.startswith('D_') else name
         bound = int(size, 16 if size.lower().startswith("0x") else 10)
-        if 2 <= bound <= MAX_CASES:
+        if 2 <= bound <= MAX_CHECKED_CASES:
             bounds.setdefault(name, set()).add(bound)
     return {name: sizes.pop() for name, sizes in bounds.items() if len(sizes) == 1}
 
@@ -163,7 +172,7 @@ def offset_tables(net, proj, fn, syms, asm, instruction_addresses, endian):
         if reader is None:
             reader = net.reader(proj, fn)
             beside = beside_code_reader(lambda: net._rom(proj)[0], fn, reader)
-        limit = bound if bound and 2 <= bound <= MAX_CASES else MAX_CASES
+        limit = bound if bound and 2 <= bound <= MAX_CHECKED_CASES else MAX_CASES
         for candidate in (beside, *delta_readers(net, proj, fn)):
             if extent := jump_table_extent(name, candidate, instruction_addresses, endian, limit):
                 data = candidate(*extent)
@@ -191,6 +200,7 @@ def read(net, proj, fn):
     names = [name for name in names if name not in dispatched.values()] + sorted(dispatched)
     names.sort(key=lambda name: not name.startswith('jtbl_'))
     bounds = guarded_table_sizes(asm)
+    longest = case_limit(asm)
     count = tables = 0
     beside = []
     found_readers = {}
@@ -206,7 +216,7 @@ def read(net, proj, fn):
             if reader is None:
                 reader = net.reader(proj, fn)
             for candidate in (table_reader(), *delta_readers(net, proj, fn)):
-                if extent := jump_table_extent(name, candidate, instruction_addresses, endian, bounds.get(name, MAX_CASES)):
+                if extent := jump_table_extent(name, candidate, instruction_addresses, endian, bounds.get(name, longest)):
                     symbol = SimpleNamespace(address=extent[0], size=extent[1], kind='jtbl')
                     found_readers[name] = candidate
                     break
@@ -216,7 +226,7 @@ def read(net, proj, fn):
         string = name.startswith('STR_') or symbol.kind == 'string'
         constant = name.startswith(('RO_', 'FLT_', 'DBL_')) or symbol.kind == 'rodata'
         size = symbol.size or (4 if name.startswith('FLT_') else 8 if name.startswith('DBL_') else 0)
-        if not (table or string or constant) or not 0 < size <= MAX_BYTES:
+        if not (table or string or constant) or not 0 < size <= (4 * MAX_CHECKED_CASES if table else MAX_BYTES):
             continue
         if table and tables >= MAX_TABLES:
             continue
