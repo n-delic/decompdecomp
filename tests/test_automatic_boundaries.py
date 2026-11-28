@@ -428,6 +428,15 @@ def test_an_alignment_hole_stays_out_of_pieces_that_do_not_join():
     assert [(f.vram,f.size) for f in result]==[(BASE,12),(BASE+16,16)]
 
 
+def test_partition_rejects_a_function_start_inside_an_unowned_gap():
+    from decompnet.rom.automatic_boundaries import _owned_partition
+
+    _, functions, _ = fixture(BODY[:3] + [0] + BODY[4:], cuts=(0, 12, 32))
+    functions[1] = replace(functions[1], vram=BASE+16, rom=16, lines=functions[1].lines[1:])
+    assert _owned_partition(functions, {0, 12, 16, 32}, {(12, 16)}) == [(0, 12), (16, 32)]
+    assert _owned_partition(functions, {0, 12, 20, 32}, set()) is None
+
+
 def test_a_piece_whose_frame_comes_after_scheduled_loads_joins_its_tail():
     words=[0x03e00008,0,0x3c028010,0x904202a0]+BODY  # a return, then loads ahead of the next frame
     image,functions,segments=fixture(words,cuts=(0,8,24,48))

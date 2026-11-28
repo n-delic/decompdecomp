@@ -215,6 +215,7 @@ def find(rom, boot_ranges):
         boot_chunked_bits,
         boot_compact_mio,
         boot_erz,
+        boot_flag_lz,
         boot_huffman,
         boot_lzss,
         boot_paired_rle,
@@ -227,7 +228,7 @@ def find(rom, boot_ranges):
     )
     return (boot_compact_mio.find(rom, boot_ranges) or boot_raw_deflate.find(rom, boot_ranges) or boot_brs.find(rom, boot_ranges)
             or boot_byte_lz.find(rom, boot_ranges) or boot_chunked_bits.find(rom, boot_ranges)
-            or boot_lzss.find(rom, boot_ranges) or boot_huffman.find(rom, boot_ranges) or boot_refpack.find(rom, boot_ranges)
+            or boot_lzss.find(rom, boot_ranges) or boot_flag_lz.find(rom, boot_ranges) or boot_huffman.find(rom, boot_ranges) or boot_refpack.find(rom, boot_ranges)
             or boot_two_bit.find(rom, boot_ranges) or boot_rnc2.find(rom, boot_ranges) or boot_erz.find(rom, boot_ranges)
             or boot_rnx.find(rom, boot_ranges) or boot_paired_rle.find(rom, boot_ranges) or boot_xor.find(rom, boot_ranges))
 

@@ -20,6 +20,13 @@ def _has_delay_slot(word):
     return rabbitizer.Instruction(word).hasDelaySlot()
 
 
+def _owned_partition(group, cuts, padding):
+    """Reject a partition that begins a function in an unowned alignment gap."""
+    ordered = sorted(cuts)
+    spans = [(a, b) for a, b in zip(ordered, ordered[1:]) if (a, b) not in padding]
+    return spans if all(any(fn.rom <= a < fn.rom + fn.size for fn in group) for a, _ in spans) else None
+
+
 def _restore_original_delay_slots(functions, original_entries, image, order):
     """Keep an original transfer's delay word even when it is also a separate entry."""
     out = []
@@ -415,12 +422,17 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
             if end-8 in lines and lines[end-8].word==JR_RA:
                 if (following:=seed(end)) is not None:heapq.heappush(pending,following)
         if not accepted:result.extend(group);continue
-        changed+=len(accepted)
         names={f.rom:f.name for f in group};by_start={f.rom:f for f in group}
         labels=set().union(*(f.labels for f in group))
-        ordered=sorted(cuts)
-        for start,end in zip(ordered,ordered[1:]):
-            if (start,end) in padding:continue
+        # A proposed cut can land inside an unowned alignment hole. Do not
+        # invent an owner for it: retain the original group for review.
+        spans = _owned_partition(group, cuts, padding)
+        if spans is None:
+            log(f'Kept original boundaries near 0x{lo+mapping:08X}: a proposed split crosses unowned alignment.')
+            result.extend(group)
+            continue
+        changed+=len(accepted)
+        for start,end in spans:
             source=by_start.get(start) or next(f for f in group if f.rom<=start<f.rom+f.size)
             name=names.get(start,f'func_{start+mapping:08X}')
             body=[replace(lines[at]) for at in range(start,end,4)]
