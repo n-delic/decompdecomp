@@ -1,5 +1,6 @@
 """A runtime-observed code bank can live inside a split's unowned data tail."""
 import copy
+from types import SimpleNamespace
 
 import pytest
 
@@ -60,3 +61,41 @@ def test_only_verified_runtime_bodies_can_split_a_mapped_data_tail(tmp_path):
     assert [(s['start'], s['vram']) for s in segments if isinstance(s, dict) and s.get('name', '').startswith('code_')] == [
         (0x1100, 0x80020100), (0x1180, 0x80020180), (0x1200, 0x80020200)]
     assert any(s.get('type') == 'bin' and s.get('start') == 0x1224 for s in segments if isinstance(s, dict))
+
+
+@pytest.mark.parametrize(('verified', 'occupied'), [(True, False), (False, False), (True, True)])
+def test_initial_import_stages_runtime_data_without_changing_a_rejected_split(tmp_path, monkeypatch, verified, occupied):
+    import yaml
+
+    from decompnet.consoles.n64 import emulator, runtime_staging
+    from decompnet.rom import split
+
+    image, cfg, ram = fixture()
+    path = tmp_path / 'game.yaml'
+    original = yaml.safe_dump(cfg)
+    path.write_text(original)
+    cartridge = tmp_path / 'cart.z64'
+    cartridge.write_bytes(image)
+    monkeypatch.setattr(emulator, 'installed', lambda: tmp_path)
+
+    def observe(_rom, _vis, *, dumps, **_kwargs):
+        selected = dict(list(dumps.items())[:2])
+        for output in selected.values():
+            output.write_bytes(ram)
+        return SimpleNamespace(dumps=selected), False
+
+    monkeypatch.setattr(emulator, 'run_for_observation', observe)
+    monkeypatch.setattr(runtime_staging, '_inputs', lambda *_args: None)
+    monkeypatch.setattr(split, '_splat', lambda *_args, **_kwargs: '')
+    known = {(0x1000, 0x80001000): (0x80, image[0x1000:0x1080])}
+    if occupied:
+        known[(0x1400, 0x80001400)] = (0x10, image[0x1400:0x1410])
+    monkeypatch.setattr(runtime_staging, '_functions', lambda _root: known)
+    monkeypatch.setattr(runtime_staging, 'verify', lambda *_args, **_kwargs: verified)
+    result = runtime_data.recover_import(path, cartridge, cartridge, lambda *_: None)
+    assert len(result) == (3 if verified and not occupied else 0)
+    if not verified or occupied:
+        assert path.read_text() == original
+    else:
+        segments = yaml.safe_load(path.read_text())['segments']
+        assert any(isinstance(s, dict) and s.get('start') == 0x1100 and s.get('vram') == 0x80020100 for s in segments)
