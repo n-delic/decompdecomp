@@ -515,6 +515,37 @@ def test_controller_pak_b_prompt_is_tried_when_other_paths_find_nothing(tmp_path
     assert calls[-1]['inputs'].startswith('120:B')
 
 
+def test_controller_pak_path_is_also_used_for_submitted_texture_frames(tmp_path, monkeypatch):
+    from decompassets.n64 import runtime_lsb_lz, runtime_packed_graphics
+
+    rom = tmp_path / 'game.z64'
+    rom.write_bytes(bytes.fromhex('80371240') + b'original')
+    monkeypatch.setattr(runtime_textures.emulator, 'installed', lambda: tmp_path)
+    monkeypatch.setattr(detector, 'regions', lambda *_: [])
+    monkeypatch.setattr(runtime_packed_graphics, 'regions', lambda *args, **kwargs: [])
+    monkeypatch.setattr(runtime_lsb_lz, 'has_resources', lambda *_: True)
+    calls = []
+
+    def run(path, vis, *, dumps=None, frame_dumps=None, **kwargs):
+        inputs = kwargs.get('inputs', '')
+        for dump in (dumps or {}).values():
+            dump.write_bytes(b'ram')
+        for dump in (frame_dumps or {}).values():
+            dump.write_bytes(b'pak' if inputs.startswith('120:B') else b'other')
+            Path(str(dump)+'.task').write_bytes(b'task')
+        if frame_dumps:
+            calls.append(inputs)
+        return runtime_textures.emulator.Run(vis=vis,frame_dumps=frame_dumps or {})
+
+    monkeypatch.setattr(runtime_textures.emulator, 'run', run)
+    monkeypatch.setattr(runtime_lsb_lz, 'regions', lambda image, frames, **kwargs:
+                        [dict(offset=100,size=16,kind='image',layout=runtime_lsb_lz.LAYOUT)]
+                        if frames and frames[0][0] == b'pak' else [])
+    result = runtime_textures.observe(b'image',rom,sha1(rom.read_bytes()).hexdigest())
+    assert any(asset.get('layout') == runtime_lsb_lz.LAYOUT for asset in result)
+    assert len(calls) == 3 and calls[-1].startswith('120:B')
+
+
 
 def test_zlib_model_meshes_merge_between_runtime_captures(tmp_path, monkeypatch):
     from decompassets.n64 import runtime_packed_graphics
@@ -648,6 +679,7 @@ def test_edl_meshes_merge_between_runtime_captures(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize(('module_name', 'layout'), [('runtime_lzw_textures', 'runtime-lzw-textures'),
+                                                   ('runtime_lsb_lz', 'runtime-lsb-lz-ci4'),
                                                    ('runtime_deflate_ci8', 'runtime-deflate-ci8'),
                                                    ('runtime_variable_lz', 'runtime-variable-lz-ci4')])
 def test_compressed_texture_observation_uses_submitted_tasks_and_keeps_palettes(tmp_path, monkeypatch, module_name, layout):
