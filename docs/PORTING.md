@@ -194,9 +194,13 @@ uses WebAssembly in the browser and wasm2c for desktop builds. It can play and e
 today. **N64ModernRuntime** also offers experimental desktop Play with RT64 on macOS when the adapter is installed.
 The direct C mode shows each runtime's outstanding 64-bit port prerequisites.
 
-For a source checkout on a Mac, install full Xcode and its Metal Toolchain in Components, then run
-`uv run python tools/build_rt64_adapter.py` and refresh Porting. The script builds pinned public source revisions
-and saves the adapter under the decompdecomp toolchains directory. A local macOS bundle can carry those files
+On a Mac with full Xcode and its Metal Toolchain (installed in Xcode's Components settings: decompdecomp never
+installs them), the app builds the adapter itself in the background about a minute after it starts
+(`app/rt64_autobuild.py`, the row "Building the RT64 adapter" in Background work, with Stop). It builds once, and
+again only when the pinned sources or the adapter's code change; a failed build is remembered for that change and
+not retried at every start. `DECOMP_RT64_AUTOBUILD=0` turns it off. The same build by hand:
+`uv run python tools/build_rt64_adapter.py`, then refresh Porting. It builds pinned public source revisions
+(`consoles/n64/rt64_build.py`) and saves the adapter under the decompdecomp toolchains directory. A local macOS bundle can carry those files
 when built with `DECOMP_RT64_BUNDLE_DIR`. In Porting, select **N64 compatibility**, then **N64ModernRuntime**,
 and click **Play**. The adapter uses N64ModernRuntime's VI state and RT64's Metal renderer. The compatibility host
 continues to run game threads, input, audio and saves. It sends RT64 a word-swapped RDRAM snapshot and retains the

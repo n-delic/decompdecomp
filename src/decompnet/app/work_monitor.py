@@ -4,7 +4,7 @@ import threading
 import time
 
 from ..network import NetworkError
-from . import native_library, workers
+from . import native_library, rt64_autobuild, workers
 from .thread_activity import Sampler
 
 
@@ -35,6 +35,8 @@ class Monitor:
                              detail=str(detail or ''), stoppable=stoppable, cpu_percent=None))
         if compiling := native_library.compiler.snapshot():
             add('native', 'library', 'Compiling the repair library', compiling['state'], detail=compiling['detail'])
+        if building := rt64_autobuild.build.snapshot():
+            add('native', 'rt64', 'Building the RT64 adapter', building['state'], detail=building['detail'])
         startup = getattr(self.net, 'startup', None)
         startup_tasks = startup.snapshot() if startup is not None else []
         for task in startup_tasks:
@@ -145,7 +147,7 @@ class Monitor:
             from . import purpose_work
             purpose_work.stop(key)
         elif kind == 'native':
-            native_library.compiler.stop()
+            (rt64_autobuild.build if key == 'rt64' else native_library.compiler).stop()
         elif kind == 'startup':
             startup = getattr(self.net, 'startup', None)
             if startup is None or not startup.cancel(key):

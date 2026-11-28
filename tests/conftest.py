@@ -22,6 +22,7 @@ os.environ["DECOMP_HOME"] = tempfile.mkdtemp(prefix="decomp-tests-")
 # never runs one (agents.detect)
 os.environ["DECOMP_DETECT_AGENTS"] = "off"
 os.environ["DECOMP_AUTO_TOOLS"] = "off"  # no test downloads a tool (permute.ensure_available)
+os.environ["DECOMP_RT64_AUTOBUILD"] = "0"  # nor builds the RT64 adapter in the background
 os.environ["DECOMP_NATIVE_LIBRARY"] = "0"  # nor compiles the shared test environment's repair library
 # nothing a test runs opens a window on the user's screen (app/window.py), a browser tab (webbrowser), or a tray icon
 os.environ["DECOMP_WINDOW"] = "0"

@@ -334,6 +334,8 @@ def _start(args,home,internal,state_file,log,restarted,headless):
     ready()
     from . import native_library
     native_library.compiler.start()  # the rest of the repair library, in the background
+    from . import rt64_autobuild
+    rt64_autobuild.build.start()  # macOS: the RT64 adapter for N64ModernRuntime's Play, once per change
     try:
         Server(server_config(app), quit_app).run(sockets=[sock])
     except Exception:  # quit_app ends the process at once: say why first, or the app just vanishes
