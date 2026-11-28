@@ -591,6 +591,7 @@ merged scheduler target into dispatch, cleanup, and interrupt-mask entries befor
 Implemented: N64 ROM imports name and set aside exact libultra matrix conversion, cache maintenance,
 and scheduler queue-pop assembly variants as SDK code before agents can claim them. The Deep Permuter also
 checks existing local ROM projects for these signatures before searching C candidates.
+The exact whole-cache writeback routine also recognises a build that uses a different scratch register.
 Six short or relocated 64-bit conversion helpers are also identified in their verified original and expanded
 images; their complete linked bodies and constant data were checked against the pinned SDK source build.
 

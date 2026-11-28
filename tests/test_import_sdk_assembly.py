@@ -1,6 +1,7 @@
 """Use a homemade body injected into the fingerprint pack; never commit SDK bytes."""
 import hashlib
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -365,6 +366,16 @@ def test_other_libultra_builds_of_the_cache_routines_are_in_the_table():
         assert name in names
     assert len(table.KNOWN['713e7b78373df6fbf3d030b5237e9c1e2148c9443cbfdf938f2e8ffdf8e2d326'][0]) and 40 in table.SIZES
     assert table.identify(bytes(116)) is None and table.identify(bytes(40)) is None
+
+
+def test_cache_writeback_variant_is_a_complete_sdk_assembly_body(monkeypatch):
+    digest = '8c546e9178ba1c7dfc3e11a3e68155cf3a93263b74c0efab4f29f5ccc00b2575'
+    monkeypatch.setattr(pack.hashlib, 'sha256', lambda _: SimpleNamespace(hexdigest=lambda: digest))
+    proof = pack.identify(bytes(40))
+    assert proof['name'] == 'osWritebackDCacheAll' and not proof.get('from_c')
+    assert proof['reference'].endswith('/os/writebackdcacheall.s')
+    assert pack.identify(bytes(40), big_endian=False) is None
+    assert pack.identify(bytes(44)) is None
 
 
 def test_sdk_archive_fingerprints_are_unambiguous_and_cover_every_build():
