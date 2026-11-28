@@ -1542,3 +1542,30 @@ def test_undefined_branch_in_link_delay_does_not_cut_another_body(case):
     result = repair(functions, [], image, consoles.get('n64'), segments)
     head = next(fn for fn in result if fn.rom == 16)
     assert head.size == (32 if case == 'invalid delay' else 12)
+
+
+@pytest.mark.parametrize('case', ['valid', 'wrong_slot', 'missing_restore', 'entered_gap', 'entered_tail', 'gap_data', 'terminal_jump', 'terminal_break', 'tail_jump', 'out_of_frame'])
+def test_saved_stack_body_retains_independently_entered_restore(case):
+    from decompnet.rom.automatic_boundaries import saved_stack_shared_tail
+
+    registers = (16, 17, 18, 19, 20, 31)
+    stores = [0xaf000000 | (29 << 21) | (reg << 16) | (i*4) for i, reg in enumerate(registers)]
+    loads = [0x8c000000 | (29 << 21) | (reg << 16) | (i*4) for i, reg in enumerate(registers)]
+    head = [0x27bdffc0, *stores, 0x3c018001, 0xac3d0100, 0x0320f809, 0]
+    tail = [0x3c028001, 0x8c420104 if case == 'wrong_slot' else 0x8c420100,
+            0, 0x0040e821, *loads, 0x03e00008, 0x27bd0040]
+    if case == 'missing_restore':tail[4] ^= 4
+    if case == 'terminal_jump':head[-2] = 0x08000400
+    if case == 'terminal_break':head[-1] = 0x0000000d
+    if case == 'tail_jump':tail[5] = 0x08000400
+    if case == 'out_of_frame':
+        head[1] = (head[1] & ~0xffff) | 0x40
+        tail[4] = (tail[4] & ~0xffff) | 0x40
+    gap = [1 if case == 'gap_data' else 0]
+    cuts = (0, len(head)*4, (len(head)+1)*4, (len(head)+1+len(tail))*4)
+    image, functions, segments = fixture(head+gap+tail, cuts=cuts)
+    first, _, last = functions
+    entered = {last.vram}
+    if case == 'entered_gap':entered.add(first.vram+first.size)
+    if case == 'entered_tail':entered.add(last.vram+4)
+    assert saved_stack_shared_tail(first, last, image, 'big', segments, entered, []) == (case == 'valid')

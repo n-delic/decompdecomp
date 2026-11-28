@@ -550,7 +550,7 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
     loaded_words = loaded_constant_words(functions)
     recovered_data=[]
     predecessors={(fn.rom+fn.size,fn.vram+fn.size):fn for fn in result if fn.size>=8}
-    kept=[];dropped=markers=recovered_shared=recovered_fallthrough=recovered_continuations=shared_delay_entries=return_wrappers=backward_loops=cache_prefixes=0;ordered=sorted(result,key=lambda f:(owner(f),f.rom))
+    kept=[];dropped=markers=recovered_shared=recovered_fallthrough=recovered_continuations=shared_delay_entries=return_wrappers=backward_loops=cache_prefixes=saved_stack_tails=0;ordered=sorted(result,key=lambda f:(owner(f),f.rom))
     for i,fn in enumerate(ordered):
         previous=kept[-1] if kept else None;following=ordered[i+1] if i+1<len(ordered) else None
         successor = following if fn.size == 4 else original_entries.get((fn.rom+4, fn.vram+4))
@@ -580,6 +580,15 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
                 kept.append(replace(successor, lines=fn.lines[1:],
                                     labels=successor.labels | {a for a in fn.labels if a >= successor.vram}))
             shared_delay_entries += 1
+            continue
+        if (previous is not None and owner(fn)[0] >= 0 and owner(previous) == owner(fn)
+                and saved_stack_shared_tail(previous, fn, image, order, segments, entered_addresses, data)):
+            padding = [AsmLine(previous.rom+previous.size, previous.vram+previous.size, 0, 'nop', '')] if fn.rom > previous.rom+previous.size else []
+            kept[-1] = replace(previous, lines=previous.lines+padding+fn.lines,
+                               labels=previous.labels | fn.labels,
+                               entry_aliases={**previous.entry_aliases, fn.vram:fn.name})
+            data.append(DataSymbol(fn.name, fn.vram, fn.rom, 0, 'func'))
+            saved_stack_tails += 1
             continue
         if (previous is not None and owner(fn)[0] >= 0 and owner(previous) == owner(fn)
                 and previous.rom+previous.size == fn.rom and previous.vram+previous.size == fn.vram
@@ -815,11 +824,13 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
         log(f'Joined {backward_loops} backward-entered assembly loops, preserving their callable entries.')
     if return_wrappers:
         log(f'Recovered {return_wrappers} shared assembly return wrappers with their entry symbols.')
+    if saved_stack_tails:
+        log(f'Recovered {saved_stack_tails} saved-stack bodies with their shared entry symbols.')
     if recovered_continuations:
         log(f'Joined {recovered_continuations} unentered framed continuations.')
     if shared_delay_entries:
         log(f'Preserved {shared_delay_entries} called NOP entries shared with a return delay slot.')
-    final = kept if dropped or markers or recovered_data or recovered_shared or recovered_fallthrough or recovered_continuations or shared_delay_entries or return_wrappers or backward_loops or cache_prefixes else result if changed else functions
+    final = kept if dropped or markers or recovered_data or recovered_shared or recovered_fallthrough or recovered_continuations or shared_delay_entries or return_wrappers or backward_loops or cache_prefixes or saved_stack_tails else result if changed else functions
     # Closing called bodies can expose a stale fragment that was initially part
     # of a larger piece. Recheck the frozen result with the same entry guards.
     late_stale = stale_code_copies(final, image, order, console, segments, owner, explicit,
@@ -1028,6 +1039,56 @@ def shared_fallthrough_frame(head, tail, image, console, order, segments, entere
         return False
     flow = extent(image, head.rom, end, head.vram, order, cpu=console.cpu_variant)
     return flow['direct_flow_closed'] and flow['extent_bytes'] == head.size+tail.size
+
+
+def saved_stack_shared_tail(head, tail, image, order, segments, entered, data):
+    """A saved stack frame falls into a separately entered, matching restore sequence."""
+    gap = tail.rom-head.rom-head.size
+    if (gap not in (0, 4) or tail.vram-head.vram-head.size != gap or head.piece or tail.piece
+            or head.entry_aliases or tail.entry_aliases or head.size < 32 or tail.size < 32
+            or tail.vram not in entered or any(tail.vram < a < tail.vram+tail.size for a in entered)
+            or any(head.vram+head.size <= a < tail.vram for a in entered)
+            or image[head.rom+head.size:tail.rom] != bytes(gap)
+            or sum(s.contains(head.vram, head.size+gap+tail.size) for s in segments) != 1
+            or any(d.rom is not None and d.rom < tail.rom+tail.size and head.rom < d.rom+d.size for d in data)):
+        return False
+    before = [line.word for line in head.lines]
+    after = [line.word for line in tail.lines]
+    frame = (-before[0]) & 0xffff
+    if (before[0] >> 16 != 0x27bd or not before[0] & 0x8000 or not 8 <= frame <= 0x1000
+            or frame % 8 or after[-2:] != [JR_RA, 0x27bd0000 | frame]
+            or JR_RA in before or not any(w >> 26 == 0 and w & 63 == 9 for w in before)
+            or _has_delay_slot(before[-1]) or before[-1] == 0x42000018
+            or before[-1] >> 26 == 0 and before[-1] & 63 in (12, 13)
+            or any(_has_delay_slot(w) for w in after[:-2])
+            or before[-2] >> 26 == 2 or before[-2] >> 26 == 0 and before[-2] & 63 == 8):
+        return False
+    # The same saved register and stack offset must be restored, including
+    # floating registers. This also distinguishes ordinary stack adjustment.
+    def stack_words(words, op):
+        return {((w >> 16) & 31, w & 0xffff) for w in words if w >> 26 == op and (w >> 21) & 31 == 29}
+    saved = stack_words(before, 43)
+    if (not any(reg == 31 for reg, _ in saved)
+            or len(saved) < 6 or saved != stack_words(after, 35)
+            or any(offset % 4 or offset+4 > frame for _, offset in saved)
+            or stack_words(before, 61) != stack_words(after, 53)
+            or any(offset % 8 or offset+8 > frame for _, offset in stack_words(before, 61))):
+        return False
+    # A LUI/store saves SP to a global; the tail reads that same global and
+    # installs it as SP before restoring the registers.
+    slots = set()
+    for a,b in zip(before,before[1:]):
+        reg = (a >> 16) & 31
+        if a >> 26 == 15 and reg and b >> 26 == 43 and (b >> 21) & 31 == reg and (b >> 16) & 31 == 29:
+            slots.add(((a & 0xffff) << 16) + ((b & 0xffff) - (0x10000 if b & 0x8000 else 0)))
+    if not slots or len(after) < 6:
+        return False
+    a,b,c,d = after[:4]
+    reg = (a >> 16) & 31
+    address = ((a & 0xffff) << 16) + ((b & 0xffff) - (0x10000 if b & 0x8000 else 0))
+    return (a >> 26 == 15 and reg and b >> 26 == 35 and (b >> 21) & 31 == reg
+            and (b >> 16) & 31 == reg and c == 0 and d == ((reg << 21) | (29 << 11) | 0x21)
+            and address in slots)
 
 
 def shared_entry_leaf(head, tail, image, console, order, segments, entered):
