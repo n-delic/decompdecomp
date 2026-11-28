@@ -1,12 +1,81 @@
 """Carry byte-verified existing entries through a newly generated ROM split."""
 
 import copy
+import hashlib
 import json
 import re
 
 import yaml
 
 from ...rom import split
+
+_ALIGNMENT_BEFORE = 'd10940a77e59962afa3d224185117c2feb94baa71d8393e2da2591840af3438a'
+_ALIGNMENT_AFTER = frozenset(('4b90fb5a0c5466bcb0496316b8d40676d437a3d8e0b619cff839c132c0631f85',
+                              '904fe2e3576c8a791862c8ff38ab006c55986a5763e9a8db2effd85daefebcb2',
+                              'f2b22a0984e7ff4a962f47512b161a3fa0990ef013bd431c18d68d1d905d1ea1'))
+
+
+def _payload_only_alignment_entries(result, image, rows, payloads, check):
+    """Reject a stale fallthrough entry only with independently corroborated SDK alignment."""
+    from ...arch.mips_references import references
+
+    # These complete linked bodies occur on both sides of an eight-byte,
+    # 16-alignment gap. Independent images have different bytes in that gap.
+    if not payloads:
+        return set()
+    by_start = {(fn.rom, fn.vram): fn for fn in result.functions if fn.rom is not None and fn.vram is not None}
+    by_end = {(fn.rom + fn.size, fn.vram + fn.size): fn for fn in result.functions
+              if fn.rom is not None and fn.vram is not None}
+    candidates = {}
+    for row in rows:
+        lo, addr, size = (row.get(k) for k in ('rom_offset', 'vram', 'size'))
+        if (type(lo) is not int or type(addr) is not int or size != 8 or lo % 16 != 8 or addr % 16 != 8
+                or row.get('status') != 'open' or row.get('matched_source')
+                or not re.fullmatch(r'func_[0-9a-fA-F]{8}(?:_\w+)?', row.get('name', ''))):
+            continue
+        try:
+            meta = json.loads(row.get('meta') or '{}')
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(meta, dict) or meta.get('boundary_decision') or meta.get('real') or meta.get('debug'):
+            continue
+        head, tail = by_end.get((lo, addr)), by_start.get((lo + size, addr + size))
+        if (head is None or tail is None or head.size != 36 or tail.size != 256
+                or row.get('target') != image[lo:lo+size]
+                or hashlib.sha256(image[head.rom:lo]).hexdigest() != _ALIGNMENT_BEFORE
+                or hashlib.sha256(image[tail.rom:tail.rom+tail.size]).hexdigest() not in _ALIGNMENT_AFTER):
+            continue
+        seen = False
+        for entry in (addr, addr+4):
+            needle, pos = entry.to_bytes(4, 'big'), 0
+            while (at := image.find(needle, pos)) >= 0:
+                pos = at + 1
+                if at % 4:
+                    continue
+                if not any(start <= at and at+4 <= end for start, end in payloads):
+                    break
+                if entry == addr:
+                    seen = True
+            else:
+                continue
+            break
+        else:
+            if seen:
+                candidates[addr] = (row['name'], tail.vram)
+    if not candidates:
+        return set()
+    incoming, called = set(), set()
+    for fn in result.functions:
+        check()
+        if fn.rom is None or fn.vram is None or fn.size <= 0 or not 0 <= fn.rom < fn.rom+fn.size <= len(image):
+            continue
+        for target, _, kind in references(image, fn.rom, fn.rom+fn.size, fn.vram):
+            for addr in candidates:
+                if addr <= target < addr+8:
+                    incoming.add(addr)
+            if kind == 'call':
+                called.add(target)
+    return {name for addr, (name, tail) in candidates.items() if addr not in incoming and tail in called}
 
 
 def _uncompressed_pointer(image, low, high):
@@ -460,12 +529,19 @@ def preserve(net, project, result, image, rows, log=print):
                    if getattr(d, 'boundary_proven', False) and d.rom is not None and d.vram is not None]
     from .boot_mapping import preserved_startup_trap
 
+    old_rows = [dict(row) for row in rows]
+    stale = set()
+    if net is not None and any(row.get('size') == 8 and row.get('status') == 'open' for row in old_rows):
+        payloads = net.console(project).import_nonpointer_ranges(image, result.segments)
+        stale = _payload_only_alignment_entries(result, image, old_rows, payloads, check)
+        if stale:
+            log(f'Left {len(stale)} stale alignment entries out; their saved C remains in recovery notes.')
     eligible = []
-    for raw in rows:
+    for raw in old_rows:
         check()
         row = dict(raw)
         lo, size, vram, target = (row.get(key) for key in ('rom_offset', 'size', 'vram', 'target'))
-        if (row.get('name') in names or type(lo) is not int or type(size) is not int or type(vram) is not int
+        if (row.get('name') in names or row.get('name') in stale or type(lo) is not int or type(size) is not int or type(vram) is not int
                 or size <= 0 or size % 4 or lo < 0 or lo + size > len(image)
                 or any(vram-lo == address-start and start < lo+size and lo < start+length
                        for start,address,length in proven_data)
