@@ -360,7 +360,10 @@ def make_venv(root, log):
     venv, repo = (root / "venv").resolve(), (root / "repo").resolve()
     if not repo.is_dir():
         sys.exit(f"no worktree at {repo}")
-    env = dict(os.environ, UV_PROJECT_ENVIRONMENT=str(venv))
+    # DECOMP_BUILD_GATEWAY=0: the editable install would otherwise run `cargo build` of the Rust gateway in every session's
+    # worktree (minutes of every core each; four sessions starting together took the machine to load 95). A session
+    # reaches the app over its HTTP connection and never needs a gateway of its own.
+    env = dict(os.environ, UV_PROJECT_ENVIRONMENT=str(venv), DECOMP_BUILD_GATEWAY="0")
     with open(log, "w") as out:
         subprocess.run(["uv", "sync"], cwd=repo, env=env, stdout=out, stderr=subprocess.STDOUT, check=True)
 

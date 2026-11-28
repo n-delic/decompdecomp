@@ -192,7 +192,7 @@ Scripts live in `.claude/skills/match-function/scripts/`; read the latest from o
 checkout: `git fetch -q origin && git archive origin/main .claude/skills/match-function/scripts | tar -x -C /tmp/dd-skill`
 (`mkdir -p` it first), then run `python3 /tmp/dd-skill/.claude/skills/match-function/scripts/setup.py SLUG [FUNC]
 --repo <primary checkout>`. It picks a holder, builds `/tmp/dd-<holder>/` with a worktree off origin/main (`repo/`, detached:
-`git switch -c <type>/<name>` there) and a private venv (synced to that worktree's lock file; after you `git pull`/rebase there, run `setup.py sync <holder>`; never `uv sync` the primary checkout), creates the project-scoped MCP connection (token in
+`git switch -c <type>/<name>` there) and a private venv (synced to that worktree's lock file; after you `git pull`/rebase there, run `setup.py sync <holder>`; never `uv sync` the primary checkout; the sync sets `DECOMP_BUILD_GATEWAY=0` so no session builds the Rust gateway, so do the same if you sync by hand), creates the project-scoped MCP connection (token in
 `connection.json`, mode 0600, never printed), claims once (when none is given: the nearest open function, lowest saved score first, of at most 800 instructions;
 `--max-size N` changes the cap, 0 for any size; `--random` takes a random one instead) and renews the claim
 every 5 minutes until it matches. It prints the environment; use that worktree's own `scripts/` and venv python from then

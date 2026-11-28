@@ -308,6 +308,7 @@ def test_the_venv_is_synced_inside_the_worktree_into_the_private_environment_onl
         if cmd[:2] != ["uv", "sync"]:
             return real_run(cmd, **kwargs)  # git and ps run for real
         calls.append((cmd, kwargs["cwd"], kwargs["env"]["UV_PROJECT_ENVIRONMENT"]))
+        assert kwargs["env"]["DECOMP_BUILD_GATEWAY"] == "0"  # no cargo build of the gateway per session
         return subprocess.CompletedProcess(cmd, 0)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
