@@ -41,8 +41,17 @@ def verified_image_reader(root, manifest):
     image=(root/manifest['image']).read_bytes()
     if hashlib.sha1(image).hexdigest()!=manifest['sha1']:
         raise ValueError('Restore the verified game image before checking an entry.')
-    ranges=[dict(rom_start=s['start'],rom_end=s['end'] or len(image),vram=s['vram'])
-            for s in manifest['segments'] if s['kind']=='code']+manifest.get('data_mappings',[])
+    ranges=[]
+    for s in manifest['segments']:
+        if s['kind'] != 'code':
+            continue
+        start, end = s['start'], s['end'] if s['end'] is not None else len(image)
+        # A split can leave an empty code segment where raw data starts. It
+        # contributes no readable bytes, but is not an invalid mapping.
+        if start == end and 0 <= start <= len(image):
+            continue
+        ranges.append(dict(rom_start=start,rom_end=end,vram=s['vram']))
+    ranges += manifest.get('data_mappings',[])
     for s in ranges:
         if not 0<=s['rom_start']<s['rom_end']<=len(image):
             raise ValueError('A reviewed data mapping exceeds the verified image.')
