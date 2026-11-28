@@ -8,7 +8,7 @@ from . import emulator, loaded_code
 VIS = (1200, 2400, 4000, 5000)
 
 
-def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _: None, status=None):
+def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _: None, status=None, context=None):
     """Return assets backed by captured RAM and unique bytes in the analysis image."""
     from decompassets.n64 import runtime_audio, runtime_packed_graphics, runtime_ptr_audio, runtime_textures
 
@@ -92,6 +92,32 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
                 except emulator.EmulatorError as error:
                     expansion_failed = True
                     log(f'Expanded-memory observation skipped: {error}')
+            # A self-indexed compressed sprite bank and its independently
+            # identified loader justify one longer, isolated menu observation.
+            # Some games do not populate the sprite buffer until after setup.
+            sprites = []
+            if context:
+                from decompassets.n64 import runtime_rle_sprites
+                check = getattr(log, 'check_cancel', lambda: None)
+                if next(runtime_rle_sprites.tables(image, check), None) and runtime_rle_sprites.evidence(image, context, check):
+                    sprites = runtime_rle_sprites.regions(image, snapshots, context, check=check)
+                    if not sprites and not run.timed_out:
+                        log('Checking a compressed sprite bank after a longer menu sequence.')
+                        late = {vi: Path(folder)/f'sprite-{vi}.ram' for vi in (12000, 16000)}
+                        inputs = ('600:START,608:,1200:START,1208:,1800:START,1808:,2400:START,2408:,'
+                                  '3000:START,3008:,5000:A,5008:,5200:START,5208:,7000:A,7008:,'
+                                  '8500:A,8508:,10000:START,10008:,15500:A,15508:')
+                        try:
+                            extended = emulator.run(rom, 16000, inputs=inputs, dumps=late,
+                                                    timeout=120, expansion_pak=expansion)
+                            captures = [path.read_bytes() for path in late.values() if path.is_file()]
+                            sprites = runtime_rle_sprites.regions(image, captures, context, check=check)
+                            if extended.timed_out:
+                                expansion_failed = True
+                                log('Extended sprite observation timed out; completed snapshots are still included.')
+                        except emulator.EmulatorError as error:
+                            expansion_failed = True
+                            log(f'Extended sprite observation skipped: {error}')
             merged = {}
             for asset in packed:
                 key = asset['offset'], asset.get('layout')
@@ -137,7 +163,7 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
                 bases.setdefault(key, set()).add(asset['table_offset'])
             audio = {(asset['bank_offset'], asset.get('layout'), asset['offset'], asset['size']): asset for asset in sounds
                      if len(bases[asset['bank_offset'], asset.get('layout')]) == 1}
-            assets = list(unique.values()) + list(merged.values()) + list(audio.values())
+            assets = list(unique.values()) + list(merged.values()) + list(audio.values()) + sprites
         if run.timed_out:
             log('Runtime observation timed out; any completed snapshots are still included.')
         graphics = sum(a.get('kind') != 'audio' for a in assets)

@@ -122,6 +122,7 @@ class Nintendo64(Console):
             observed = runtime_textures.observe(image, evidence['runtime_rom'], evidence.get('runtime_sha1'),
                                                 log=evidence.get('log', lambda _: None),
                                                 status=evidence.get('runtime_observation'),
+                                                context={'read_code': read, **evidence},
                                                 progress=kwargs.get('progress', lambda _: None))
             banks = {a['bank_offset'] for a in observed if a.get('audio_kind') == 'sample bank'}
             assets = [a for a in assets if not (a.get('audio_kind') in ('unresolved bank', 'sample bank')
