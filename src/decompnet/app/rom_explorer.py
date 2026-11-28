@@ -213,8 +213,10 @@ def _run(net, slug, log, scene=None):
         seen = set()
         for row in previous.get('regions',()):
             for asset in row.get('evidence',()):
-                if ('preview_settings' not in asset or not isinstance(asset.get('layout'),str)
-                        or not asset['layout'].startswith('runtime-')):
+                layout = asset.get('layout') or ''
+                if ('preview_settings' not in asset or not isinstance(layout,str)
+                        or not (layout.startswith('runtime-')
+                                or asset.get('table_confidence') == 'runtime relocated controls')):
                     continue
                 marker = json.dumps(asset,sort_keys=True)
                 if marker not in seen:

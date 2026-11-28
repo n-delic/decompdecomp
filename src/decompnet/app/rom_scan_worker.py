@@ -48,6 +48,20 @@ def _retain_assets(assets, previous):
             if field == 'meshes':
                 current['vertices'] = sum(item.get('vertices',0) for item in current[field])
                 current['triangles'] = sum(item.get('triangles',0) for item in current[field])
+            elif 'texture_count' in current:
+                current['texture_count'] = len(current[field])
+    # Separate scenes can expose conflicting relocations for the same sound
+    # bank. As in the runtime scanner, neither base is a playable verdict.
+    bases = {}
+    for asset in assets:
+        if asset.get('audio_kind') == 'sample bank' and asset.get('table_confidence') == 'runtime relocated controls':
+            bases.setdefault((asset.get('bank_offset'),asset.get('layout')),set()).add(asset.get('table_offset'))
+    conflicts = {key for key,values in bases.items() if len(values)>1}
+    if conflicts:
+        assets[:] = [asset for asset in assets if not (
+            asset.get('audio_kind') == 'sample bank' and asset.get('table_confidence') == 'runtime relocated controls'
+            and (asset.get('bank_offset'),asset.get('layout')) in conflicts)]
+    return len(conflicts)
 
 
 def scan(request, log, progress):
@@ -80,7 +94,8 @@ def scan(request, log, progress):
                                                               log=log, runtime_observation=observation,
                                                               runtime_scene=request.get('runtime_scene')), progress=progress))
         if request.get('previous_image_hash') == hashlib.sha256(image).hexdigest():
-            _retain_assets(assets,request.get('previous_assets',()))
+            if conflicts := _retain_assets(assets,request.get('previous_assets',())):
+                log(f'{conflicts} sound bank(s) had conflicting runtime locations; their samples need review.')
         report = analyse(image, segments, functions, symbols, big_endian=big_endian, progress=progress,
                          ranges=[chain["source"] for chain in flow["chains"]], assets=assets)
         if observation:

@@ -180,6 +180,16 @@ def test_later_scene_retains_prior_runtime_assets_and_bank_members():
     assert (bank['vertices'],bank['triangles']) == (7,3)
 
 
+def test_later_scene_does_not_keep_conflicting_runtime_sound_bases():
+    from decompnet.app.rom_scan_worker import _retain_assets
+
+    sound=dict(offset=10,size=4,kind='audio',audio_kind='sample bank',bank_offset=10,
+               table_offset=100,table_confidence='runtime relocated controls')
+    assets=[sound,dict(offset=40,size=4,kind='image',layout='runtime-observed-texture')]
+    assert _retain_assets(assets,[dict(sound,table_offset=200)]) == 1
+    assert [a['kind'] for a in assets] == ['image']
+
+
 def test_later_scene_bypasses_cache_and_keeps_prior_runtime_previews(project,monkeypatch):
     from decompnet.app import rom_explorer, rom_scan_worker
     from decompnet.consoles.n64 import emulator
@@ -193,6 +203,10 @@ def test_later_scene_bypasses_cache_and_keeps_prior_runtime_previews(project,mon
         at=64 if request['runtime_scene'] else 32
         assets=[dict(offset=at,size=4,kind='image',layout='runtime-observed-texture',confidence='validated',
                      preview_settings=dict(source='rom',format='auto',offset=at))]
+        if not request['runtime_scene']:
+            assets.append(dict(offset=48,size=4,kind='audio',audio_kind='sample bank',bank_offset=48,
+                               table_offset=80,table_confidence='runtime relocated controls',confidence='validated',
+                               preview_settings=dict(source='rom',format='auto',offset=48)))
         if request.get('previous_image_hash')==hashlib.sha256(image).hexdigest():
             rom_scan_worker._retain_assets(assets,request['previous_assets'])
         report=analyse(image,request['source']['segments'],request['functions'],request['symbols'],assets=assets)
@@ -203,9 +217,10 @@ def test_later_scene_bypasses_cache_and_keeps_prior_runtime_previews(project,mon
     assert rom_explorer.run(net,'game',Log())['cached']
     result=rom_explorer.run(net,'game',Log(),{'vis':60,'inputs':'1:A,2:'})
     assert not result.get('cached') and len(requests)==2
-    assert [a['offset'] for a in requests[1]['previous_assets']]==[32]
+    assert {a['offset'] for a in requests[1]['previous_assets']}=={32,48}
     with net.progress.view():report=rom_explorer.listing(net,'game')
     assert {r['start'] for r in report['regions'] if r['kind']=='image'} == {32,64}
+    assert any(r['start']==48 and r['kind']=='audio' for r in report['regions'])
 
 
 @pytest.fixture
