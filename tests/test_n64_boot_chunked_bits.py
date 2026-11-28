@@ -100,6 +100,13 @@ def test_earlier_variant_banks_require_primary_and_directory(monkeypatch):
     assert len(boot_chunked_bits.find(rom, ranges)) == 1
 
 
+def test_earlier_variant_overlays_keep_distinct_sizes():
+    first, second = boot_chunked_bits.VARIANT3_PROGRAMS[:2]
+    assert first[4] == second[4]
+    assert boot_chunked_bits.code_start(first[4], bytes(first[6])) == first[5]
+    assert boot_chunked_bits.code_start(second[4], bytes(second[6])) == second[5]
+
+
 def test_impossible_bss_is_dropped_without_changing_valid_segments():
     segments = [{'type': 'code', 'bss_size': 0x80000400}, {'type': 'code', 'bss_size': 0x1000}, [0x100]]
     boot_chunked_bits.drop_impossible_bss(segments)
