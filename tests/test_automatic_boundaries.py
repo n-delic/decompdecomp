@@ -1311,6 +1311,48 @@ def test_stale_copy_requires_one_consistent_relocation():
     assert not _same_stale_instructions(image, 0, len(old)*4, len(old)*4, 'big')
 
 
+@pytest.mark.parametrize('case', ['delayed', 'branch_before_frame', 'different_register', 'open_next',
+                                  'incoming', 'pointer', 'uncalled_next'])
+def test_stale_copy_before_called_delayed_frame(case):
+    from collections import defaultdict
+
+    from decompnet.rom.automatic_boundaries import stale_code_copies
+
+    prior = [0x27bdffe8] + [0x24840001+i for i in range(13)] + [0x03e00008, 0x27bd0018]
+    next_body = [0x3c0e8008, 0x8dce2ccc, *BODY]
+    if case == 'branch_before_frame': next_body[1] = 0x10000001
+    if case == 'different_register': next_body[1] = 0x8dcf2ccc
+    if case == 'open_next': next_body[-2] = 0
+    image, functions, segments = fixture(prior + prior[3:11] + next_body + BODY,
+                                          cuts=(0, 64, 96, 136, 168))
+    ghost = functions[1]
+    references = defaultdict(set)
+    for target in (functions[0].vram, functions[2].vram):
+        references[target].add((len(image), 'code'))
+        image += (0x0c000000 | (target >> 2 & 0x3ffffff)).to_bytes(4, 'big')
+    if case == 'incoming': references[ghost.vram+4].add((0, 'code'))
+    if case == 'pointer': image += ghost.vram.to_bytes(4, 'big')
+    calls = {functions[0].vram, functions[2].vram}
+    if case == 'uncalled_next': calls.remove(functions[2].vram)
+    found = stale_code_copies(functions, image, 'big', consoles.get('n64'), segments,
+                              lambda fn: (0, ''), set(), references, calls, [])
+    assert ((ghost.rom, ghost.vram) in found) == (case == 'delayed')
+
+
+def test_stale_copy_exposed_by_closing_previous_function():
+    prior = [0x27bdffe8] + [0x24840001+i for i in range(13)] + [0x03e00008, 0x27bd0018]
+    next_body = [0x3c0e8008, 0x8dce2ccc, *BODY]
+    call = lambda address: 0x0c000000 | ((address >> 2) & 0x3ffffff)
+    words = prior + prior[3:11] + next_body + BODY + [call(BASE), 0, call(BASE+96), 0, 0x03e00008, 0]
+    image, functions, segments = fixture(words, cuts=(0, 96, 136, 168, 192))
+    data = []
+    result = repair(functions, data, image, consoles.get('n64'), segments)
+    assert any(fn.vram == BASE and fn.size == 64 for fn in result)
+    assert not any(fn.vram == BASE+64 for fn in result)
+    assert any(fn.vram == BASE+96 for fn in result)
+    assert any(item.vram == BASE+64 and item.size == 32 and item.boundary_proven for item in data)
+
+
 def test_code_table_names_only_contiguous_distinct_starts_outside_code():
     from decompnet.rom.automatic_boundaries import _code_table_entries
 

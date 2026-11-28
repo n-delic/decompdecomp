@@ -678,7 +678,19 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
         log(f'Joined {recovered_continuations} unentered framed continuations.')
     if shared_delay_entries:
         log(f'Preserved {shared_delay_entries} called NOP entries shared with a return delay slot.')
-    return kept if dropped or markers or recovered_data or recovered_shared or recovered_fallthrough or recovered_continuations or shared_delay_entries or return_wrappers or backward_loops or cache_prefixes else result if changed else functions
+    final = kept if dropped or markers or recovered_data or recovered_shared or recovered_fallthrough or recovered_continuations or shared_delay_entries or return_wrappers or backward_loops or cache_prefixes else result if changed else functions
+    # Closing called bodies can expose a stale fragment that was initially part
+    # of a larger piece. Recheck the frozen result with the same entry guards.
+    late_stale = stale_code_copies(final, image, order, console, segments, owner, explicit,
+                                   references, direct_calls, data)
+    if late_stale:
+        # Reimport must not restore the old function solely because its bytes
+        # still exist. Keep its original extent and record why it was removed.
+        data.extend(DataSymbol(fn.name, fn.vram, fn.rom, fn.size, 'data', boundary_proven=True)
+                    for fn in final if (fn.rom, fn.vram) in late_stale)
+        final = [fn for fn in final if (fn.rom, fn.vram) not in late_stale]
+        log(f'Left {len(late_stale)} additional proven stale code copies in the original image.')
+    return final
 
 
 
@@ -1439,6 +1451,20 @@ def string_address_references(fn, references, lines, bodies):
         uses.difference_update((start,start+4))
     return True
 
+def _stale_next_frame(fn):
+    """Accept a frame scheduled after a global load as well as at entry."""
+    if is_frame(fn.lines[0].word):
+        return True
+    if len(fn.lines) < 3 or not is_frame(fn.lines[2].word):
+        return False
+    first, second = (line.word for line in fn.lines[:2])
+    reg = (first >> 16) & 31
+    # This straight-line prelude cannot enter the copied fragment or depend on
+    # its registers. The function's own frame follows the global load.
+    return (first >> 26 == 15 and reg not in (0, 29, 31)
+            and second >> 26 == 35 and (second >> 21) & 31 == reg and (second >> 16) & 31 == reg)
+
+
 def stale_code_copies(functions, image, order, console, segments, owner, explicit, references, calls, data):
     """Find unentered stale copies of another called function between a return and the next frame."""
     ordered = sorted(functions, key=lambda fn: (owner(fn), fn.rom))
@@ -1452,7 +1478,7 @@ def stale_code_copies(functions, image, order, console, segments, owner, explici
                 or before.rom + before.size != fn.rom or before.vram + before.size != fn.vram
                 or before.size < 8 or before.lines[-2].word != JR_RA
                 or fn.rom + fn.size != after.rom or fn.vram + fn.size != after.vram
-                or after.vram not in calls or not is_frame(after.lines[0].word)
+                or after.vram not in calls or not _stale_next_frame(after)
                 or not any(not fn.rom <= src < fn.rom+fn.size
                            and int.from_bytes(image[src:src+4], order) >> 26 == 3
                            for src, _ in references.get(after.vram, ()))
@@ -1470,6 +1496,14 @@ def stale_code_copies(functions, image, order, console, segments, owner, explici
         segment = segments[index_owner]
         if sum(s.contains(fn.vram, fn.size) for s in segments) != 1:
             continue
+        if not is_frame(after.lines[0].word):
+            # A delayed frame is useful evidence only when the called entry's
+            # entire extent closes independently of the fragment before it.
+            length = called_extent(image, after.rom, min(segment.rom_end, after.rom+0x4000),
+                                   after.vram, big_endian=console.big_endian,
+                                   cpu=console.cpu_variant, asm_check=console.asm_reason)
+            if length != after.size:
+                continue
         for other in ordered:
             if (other is fn or owner(other) != owner(fn) or abs(other.rom-fn.rom) > 0x800
                     or other.vram not in named and (other.vram not in calls
