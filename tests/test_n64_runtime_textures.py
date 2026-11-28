@@ -31,6 +31,26 @@ def test_observation_requires_original_and_uses_isolated_snapshots(tmp_path, mon
     assert runtime_textures.observe(b'analysis', rom, ['0' * 40, sha1(rom.read_bytes()).hexdigest()]) == [dict(offset=1, size=1, layout='test')]
 
 
+def test_observation_keeps_distinct_tlut_formats(tmp_path, monkeypatch):
+    from decompassets.n64 import runtime_packed_graphics
+
+    rom = tmp_path / 'game.z64'
+    rom.write_bytes(bytes.fromhex('80371240') + b'original')
+    monkeypatch.setattr(runtime_textures.emulator, 'installed', lambda: tmp_path)
+
+    def run(path, vis, *, dumps, timeout, **kwargs):
+        for dump in dumps.values():
+            dump.write_bytes(b'ram')
+        return SimpleNamespace(timed_out=False)
+
+    monkeypatch.setattr(runtime_textures.emulator, 'run', run)
+    monkeypatch.setattr(runtime_packed_graphics, 'regions', lambda *args, **kwargs: [])
+    rows = [dict(offset=1, size=1, layout='test', palette='abcd', palette_format=fmt)
+            for fmt in ('ia16', 'rgba5551-be')]
+    monkeypatch.setattr(detector, 'regions', lambda image, snapshots: list(rows))
+    assert runtime_textures.observe(b'analysis', rom, sha1(rom.read_bytes()).hexdigest()) == rows
+
+
 def test_observation_is_optional_and_reports_failure(tmp_path, monkeypatch):
     rom = tmp_path / 'game.z64'
     rom.write_bytes(bytes.fromhex('80371240') + b'original')
