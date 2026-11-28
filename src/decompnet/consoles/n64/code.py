@@ -579,6 +579,19 @@ def unpack_code(rom: bytes) -> list[tuple[int, bytes]]:
 
 # ---------------------------------------------------------------------------------------------- into splat's config
 
+def _with_runtime_code(workdir, original, rom, taken, found, known, sources, log):
+    """Include called code observed outside the initial split before adding banks."""
+    from .loaded_code import find as run_and_find
+
+    loaded = run_and_find(workdir / original, rom, taken, found, log=log)
+    found = sorted(found + loaded['segments'])
+    found = sorted(complete_gaps(rom, taken, found, tuple((s.rom_start, s.rom_end, s.vram) for s in known),
+                                 runtime_entries(workdir), log=log))
+    if sources:
+        found = _within_sources(found, sources)
+    return found, loaded
+
+
 def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_replacing_boot=False,
                  skip_paged=False) -> str:
     """An N64 game's code outside the main segment (n64code.py), added to splat's config as code segments of their
@@ -703,6 +716,9 @@ def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_rep
         dma_overlays.add(config,workdir,original_rom,found,banks,log)
         return original
     if not packed and taken and (banks := sectioned_overlays.read(original_rom, taken)):
+        # A directory describes overlays, not the resident code loaded before them.
+        # Run the same observation as an ordinary import before this early return.
+        found, _ = _with_runtime_code(workdir, original, rom, taken, found, known, sources, log)
         sectioned_overlays.add(config, workdir, original_rom, found, banks, log)
         return original
     if packed and found:
@@ -711,13 +727,7 @@ def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_rep
             return result
     loaded = {}
     if taken:  # what the game loads that the search couldn't place: found by running it (when the emulator's here)
-        from .loaded_code import find as run_and_find
-
-        loaded = run_and_find(workdir / original, rom, taken, found, log=log)
-        found = sorted(found + loaded["segments"])
-        found = sorted(complete_gaps(rom, taken, found, tuple((s.rom_start, s.rom_end, s.vram) for s in known),
-                                     runtime_entries(workdir), log=log))
-        if sources:found=_within_sources(found,sources)
+        found, loaded = _with_runtime_code(workdir, original, rom, taken, found, known, sources, log)
     if not packed and not found and loaded.get('decoded_programs'):
         from . import runtime_zlib
         if result := runtime_zlib.add(config, workdir, original, original_rom, taken,
