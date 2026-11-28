@@ -54,6 +54,36 @@ def _macro_variant(fn, source, header, candidate, info, extra):
     return '\n'.join(declarations) + '\n#ifdef PORT\n' + port + '\n#else\n' + rom + '\n#endif\n' + source + '\n' + extra
 
 
+def _data_variant(fn, source, header, candidate, target):
+    """Separate marked data sites when each has one recorded low relocation."""
+    span = csource.find(source, fn['name'])
+    if span is None:
+        return None
+    clean = csource._blank(source)
+    pattern = r'\bXDATA\s*\(\s*([A-Za-z_]\w*)\s*,'
+    sites = list(re.finditer(pattern, clean[span[0]:span[1]]))
+    sites = [(span[0] + m.start(1), span[0] + m.end(1)) for m in sites]
+    low = sorted((r for r in candidate.relocs if r.type == 6 and r.symbol == 'D_00000000'),
+                 key=lambda r: r.offset)
+    if not sites or len(sites) != len(low):
+        return None
+    expected = {(r.offset, r.type): r for r in target.relocs}
+    wanted = [expected.get((r.offset, r.type)) for r in low]
+    if (any(r.addend for r in low) or any(r is None or r.addend or not re.fullmatch(r'[A-Za-z_]\w*', r.symbol)
+                                          for r in wanted)):
+        return None
+    pattern = r'(?m)^[ \t]*extern[ \t]+[^;{}#\n]+\bD_00000000[ \t]*;'
+    declaration = re.search(pattern, csource._blank(header))
+    if declaration is None:
+        return None
+    prototype = header[declaration.start():declaration.end()]
+    bindings = [r.symbol for r in wanted]
+    for (start, end), binding in reversed(list(zip(sites, bindings))):
+        source = source[:start] + binding + source[end:]
+    declarations = [rename_identifiers(prototype, {'D_00000000': binding}) for binding in sorted(set(bindings))]
+    return '\n'.join(declarations) + '\n' + source
+
+
 def retry(net, project, fn, source):
     """Return a rewritten saved source only after its complete module-aware judge passes."""
     try:
@@ -77,6 +107,12 @@ def retry(net, project, fn, source):
         macro = _macro_variant(fn, source, header, candidate, info, extra)
         if macro:
             variants.append(macro)
+        data = _data_variant(fn, source, header, candidate, target)
+        if data:
+            variants.append(data + '\n' + extra)
+            combined = _macro_variant(fn, data, header, candidate, info, extra)
+            if combined:
+                variants.append(combined)
         for variant in variants:
             built = net._compile(project, header, variant, fn)
             if built.ok and net._evaluate(fn, project, built.obj)[1] is True:

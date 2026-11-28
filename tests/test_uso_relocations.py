@@ -1444,6 +1444,26 @@ def test_reimport_macro_retry_separates_only_complete_placeholder_calls():
     assert _macro_variant(fn, source, header, candidate, info, '') is None
 
 
+def test_reimport_data_retry_requires_a_site_for_each_placeholder_relocation():
+    from types import SimpleNamespace
+
+    from decompnet.consoles.n64.reimport_bindings import _data_variant
+
+    fn = {'name': 'work'}
+    source = 'int work(void) { return XDATA(first, a, 0) + XDATA(second, b, 0); }'
+    header = 'extern int D_00000000;'
+    candidate = SimpleNamespace(relocs=[SimpleNamespace(offset=4, type=6, symbol='D_00000000', addend=0),
+                                        SimpleNamespace(offset=12, type=6, symbol='D_00000000', addend=0)])
+    target = SimpleNamespace(relocs=[SimpleNamespace(offset=4, type=6, symbol='uso_1_sym_2', addend=0),
+                                     SimpleNamespace(offset=12, type=6, symbol='uso_1_sym_3', addend=0)])
+    result = _data_variant(fn, source, header, candidate, target)
+    assert 'XDATA(uso_1_sym_2, a, 0)' in result and 'XDATA(uso_1_sym_3, b, 0)' in result
+    target.relocs[1].addend = 4
+    assert _data_variant(fn, source, header, candidate, target) is None
+    candidate.relocs.pop()
+    assert _data_variant(fn, source, header, candidate, target) is None
+
+
 def test_reimport_binding_retry_returns_only_exact_result(monkeypatch):
     import json
     from types import SimpleNamespace
