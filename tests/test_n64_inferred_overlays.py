@@ -352,3 +352,16 @@ def test_single_inferred_bank_scopes_resident_bss():
     ]}
     assert inferred_overlays.apply_scopes(config, [(0x2000, 0x2800, 0x80001800)], {0x2000})
     assert config['segments'][0]['exclusive_ram_id'] == config['segments'][1]['exclusive_ram_id']
+
+
+def test_child_range_cannot_scope_its_entire_resident_parent():
+    config = {'segments': [
+        {'type': 'code', 'name': 'main', 'start': 0x1000, 'vram': 0x80000400,
+         'subsegments': [[0x1000, 'c'], [0x1800, 'c']]},
+        {'type': 'code', 'name': 'bank', 'start': 0x2000, 'vram': 0x80000c00},
+        [0x2800],
+    ]}
+    assert not inferred_overlays.apply_scopes(config, [(0x1800, 0x1c00, 0x80000c00),
+                                                        (0x2000, 0x2400, 0x80000c00)],
+                                                {0x1800, 0x2000})
+    assert all('exclusive_ram_id' not in segment for segment in config['segments'] if isinstance(segment, dict))

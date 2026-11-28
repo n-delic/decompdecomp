@@ -852,7 +852,7 @@ def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_rep
             insert_segments(config, unscoped_cfg, before_mapping, len(rom))
         else:
             config.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding='utf-8')
-        log('Recovered overlapping code-bank addresses from their independent internal calls.')
+            log('Recovered overlapping code-bank addresses from their independent internal calls.')
     kib = sum(en - st for st, en, _ in found) // 1024
     log(f"found {len(found)} more code segment{'s' if len(found) != 1 else ''} the game loads later ({kib} KiB)")
     if not packed and loaded.get('decoded_programs'):
@@ -989,7 +989,7 @@ def insert_segments(config: Path, cfg: dict, found, size: int, *, scopes=None) -
     # splat measures a parent's VRAM end as ROM length + bss_size. New code segments can split its data
     # tail: remember that end so the explicit BSS still describes the same addresses after the split.
     bss_ends = {}
-    for seg in split.segments_from_config(config):
+    for seg in parents:
         raw = next(s for s in cfg["segments"] if isinstance(s, dict) and s.get("start") == seg.rom_start)
         if raw.get("bss_size") and any(isinstance(sub, dict) and sub.get("type") == "bss" and "vram" in sub
                                        for sub in raw.get("subsegments", [])):

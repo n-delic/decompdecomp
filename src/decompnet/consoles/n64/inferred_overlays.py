@@ -278,10 +278,15 @@ def safe_scopes(found, scoped, taken):
 def scope(config, found, scoped):
     """Put each overlapping connected set into one exclusive address space."""
     if not scoped:
-        return
+        return True
     segments = {seg['start']: seg for seg in config['segments']
                 if isinstance(seg, dict) and seg.get('type') == 'code'}
     remaining = {lo for lo,_,_ in found if lo in scoped}
+    # A recovered range may have been inserted as a child of resident code,
+    # rather than as a separate bank. Scoping its parent would also scope other
+    # code; retain the earlier mappings instead of guessing or raising KeyError.
+    if not remaining <= segments.keys():
+        return False
     ranges = {lo:(vram,vram+hi-lo) for lo,hi,vram in found if lo in scoped}
     while remaining:
         pending = [min(remaining)]
@@ -300,12 +305,12 @@ def scope(config, found, scoped):
             name = segment['name']
             segment.update(exclusive_ram_id=ident, symbol_name_format=f'$VRAM_{name}',
                            symbol_name_format_no_rom=f'$VRAM_{name}')
+    return True
 
 
 def apply_scopes(config, found, scoped):
     """Scope inferred banks and check every resident BSS they can touch."""
-    scope(config, found, scoped)
-    return scope_resident_bss(config)
+    return scope(config, found, scoped) and scope_resident_bss(config)
 
 
 def scope_resident_bss(config):
