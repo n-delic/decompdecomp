@@ -184,6 +184,8 @@
   functions** (`find_missed_functions`, the console's `missed_functions`) runs the same
   search on the project's own splat config and adds what it finds as open functions and
   code segments, its matches, attempts and notes as they were (that game's project: 18).
+  Initial N64 imports also repeat this verified search and final disassembly until no further bodies survive the
+  final boundary checks; a conflicting or failed re-split leaves the previous import split intact.
   Concurrent status and source updates are retained; changed original bytes, symbols or mappings
   still cause the staged search to stop without overwriting the newer work.
   Planned: the same for the other MIPS consoles' splits (PS1, PS2), runtime entries that

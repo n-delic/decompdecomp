@@ -908,6 +908,12 @@ def split_rom(workdir: Path, rom_name: str = "rom.z64", console=None, picked: Pi
     if symbols:
         _add_symbols(workdir / "symbol_addrs.txt", symbols)
     image = console.add_code(config, workdir, image, picked or Picked(console.id, b"", rom_name, {}, big_endian), log)
+    return _finish_split(workdir, rom_name, config, image, console, compiler, gp, out, symbols, log)
+
+
+def _finish_split(workdir, rom_name, config, image, console, compiler, gp, out, symbols, log):
+    """Disassemble a prepared config and build the usual repaired split result."""
+    big_endian = console.big_endian
     log("disassembling every function")
     out += "\n" + _splat(["split", config.name], workdir, log)
 
@@ -960,6 +966,16 @@ def split_rom(workdir: Path, rom_name: str = "rom.z64", console=None, picked: Pi
     coverage = workdir / 'analysis-coverage.json'
     notes = json.loads(coverage.read_text(encoding='utf-8')) if coverage.is_file() else []
     return SplitResult(unique, data, segments, named_symbols(workdir), config, compiler, out, console.id, gp, image, notes)
+
+
+def resplit_prepared(workdir: Path, rom_name: str, console, previous: SplitResult, *, symbols=None, log=print):
+    """Re-read an import's verified config without recreating it or rediscovering its code segments."""
+    import shutil
+
+    # Splat may leave files for functions removed by a new boundary. The import workdir is private.
+    shutil.rmtree(workdir / 'asm', ignore_errors=True)
+    return _finish_split(workdir, rom_name, previous.config_path, previous.image, console,
+                         previous.compiler, previous.gp, previous.log, symbols, log)
 
 
 def _left_out_filler(lines: dict, address: int) -> bool:

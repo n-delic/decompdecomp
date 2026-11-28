@@ -8,6 +8,95 @@ from decompnet.consoles.n64.code import aligned_gaps, complete_gaps, mapped_data
 LEAF = [0x24020001, 0x24420001, 0x03e00008, 0]
 
 
+@pytest.mark.parametrize('outcome', ['partial', 'lost_existing', 'no_progress', 'resplit_error'])
+def test_import_keeps_safe_recovered_entries_and_rolls_back_unsafe_resplits(tmp_path, monkeypatch, outcome):
+    from types import SimpleNamespace
+
+    from decompnet.consoles.n64 import code
+    from decompnet.rom import split
+
+    config = tmp_path / 'game.yaml'
+    config.write_text('original')
+    (tmp_path / 'rom.z64').write_bytes(bytes(64))
+    old = SimpleNamespace(rom=0, size=8, vram=0x80001000)
+    found = SimpleNamespace(rom=16, size=8, vram=0x80001010)
+    base = SimpleNamespace(config_path=config, image='rom.z64', functions=[old])
+    updated = SimpleNamespace(config_path=config, image='rom.z64', functions=(
+        [old, found] if outcome == 'partial' else [found] if outcome == 'lost_existing' else [old]))
+    calls = []
+
+    def recover(path, _image, _log, _known):
+        if calls:
+            return []
+        calls.append('scan')
+        path.write_text('updated')
+        return [(16, 24, 0x80001010), (32, 40, 0x80001020)]
+
+    monkeypatch.setattr(code, 'missed_functions', recover)
+    def resplit(*_args, **_kwargs):
+        if config.read_text() == 'original':
+            return base
+        if outcome == 'resplit_error':
+            raise ValueError('staged split failed')
+        return updated
+
+    monkeypatch.setattr(split, 'resplit_prepared', resplit)
+    result = code.finish_import(base, tmp_path, 'rom.z64', object(), log=lambda *_: None)
+    assert result is (updated if outcome == 'partial' else base)
+    assert config.read_text() == ('updated' if outcome == 'partial' else 'original')
+
+
+def test_prepared_resplit_removes_stale_assembly_without_recreating_the_config(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from decompnet.rom import split
+
+    asm = tmp_path / 'asm'
+    asm.mkdir()
+    (asm / 'stale.s').write_text('old output')
+    config = tmp_path / 'game.yaml'
+    config.write_text('prepared')
+    previous = SimpleNamespace(config_path=config, image='image.z64', compiler='KMC', gp=1, log='before')
+    calls = []
+
+    def finish(*args):
+        assert not asm.exists()
+        calls.append(args)
+        return 'new split'
+
+    monkeypatch.setattr(split, '_finish_split', finish)
+    assert split.resplit_prepared(tmp_path, 'rom.z64', object(), previous) == 'new split'
+    assert calls[0][2] == config and calls[0][3] == 'image.z64'
+    assert config.read_text() == 'prepared'
+
+
+def test_import_repeats_recovery_until_no_more_bodies(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from decompnet.consoles.n64 import code
+    from decompnet.rom import split
+
+    config = tmp_path / 'game.yaml'
+    config.write_text('original')
+    (tmp_path / 'rom.z64').write_bytes(bytes(64))
+    functions = [SimpleNamespace(rom=n, size=8, vram=0x80001000 + n) for n in (0, 16, 32)]
+    results = [SimpleNamespace(config_path=config, image='rom.z64', functions=functions[:n]) for n in (1, 2, 3)]
+    scans = []
+
+    def recover(path, _image, _log, known):
+        scans.append(known)
+        if len(scans) == 3:
+            return []
+        path.write_text(str(len(scans)))
+        fn = functions[len(scans)]
+        return [(fn.rom, fn.rom + fn.size, fn.vram)]
+
+    monkeypatch.setattr(code, 'missed_functions', recover)
+    monkeypatch.setattr(split, 'resplit_prepared', lambda *_args, **_kwargs: results[int(config.read_text())])
+    assert code.finish_import(results[0], tmp_path, 'rom.z64', object(), log=lambda *_: None) is results[2]
+    assert [len(known) for known in scans] == [1, 2, 3]
+
+
 def test_exact_sdk_body_before_a_function_uses_its_true_entry(monkeypatch):
     from decompnet.consoles.n64 import sdk_assembly
     from decompnet.consoles.n64.code import _sdk_between_functions
