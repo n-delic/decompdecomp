@@ -31,6 +31,75 @@ def test_observation_requires_original_and_uses_isolated_snapshots(tmp_path, mon
     assert runtime_textures.observe(b'analysis', rom, ['0' * 40, sha1(rom.read_bytes()).hexdigest()]) == [dict(offset=1, size=1, layout='test')]
 
 
+def test_requested_scene_adds_later_textures_and_merges_loaded_meshes(tmp_path, monkeypatch):
+    from decompassets.n64 import (
+        indexed_bitstream_images,
+        runtime_audio,
+        runtime_burp_models,
+        runtime_packed_graphics,
+        runtime_ptr_audio,
+        runtime_rle_sprites,
+    )
+
+    rom = tmp_path/'game.z64'
+    rom.write_bytes(bytes.fromhex('80371240')+b'original')
+    calls = []
+    monkeypatch.setattr(runtime_textures.emulator,'installed',lambda:tmp_path)
+    def run(path,vis,*,dumps,timeout,**kwargs):
+        calls.append((vis,kwargs.get('inputs','')))
+        for dump in dumps.values():dump.write_bytes(b'later' if vis==12000 else b'opening')
+        return SimpleNamespace(timed_out=False)
+    monkeypatch.setattr(runtime_textures.emulator,'run',run)
+    monkeypatch.setattr(detector,'regions',lambda image,snapshots:[dict(offset=2 if b'later' in snapshots else 1,size=1,layout='test')])
+    def packed(image,snapshots,**kwargs):
+        name = 'later' if b'later' in snapshots else 'opening'
+        return [dict(offset=7,layout='runtime-packed-model',meshes=[dict(commands=name,base=0,vertices=4,triangles=2)])]
+    monkeypatch.setattr(runtime_packed_graphics,'regions',packed)
+    monkeypatch.setattr(runtime_audio,'regions',lambda *args:[])
+    monkeypatch.setattr(runtime_ptr_audio,'regions',lambda *args:[])
+    monkeypatch.setattr(runtime_rle_sprites,'tables',lambda *args:iter(()))
+    monkeypatch.setattr(runtime_burp_models,'archives',lambda *args:iter(()))
+    monkeypatch.setattr(indexed_bitstream_images,'directories',lambda *args:[])
+    result = runtime_textures.observe(rom.read_bytes(),rom,sha1(rom.read_bytes()).hexdigest(),
+        context={'runtime_scene':dict(vis=12000,inputs='600:START,608:')})
+    assert {a['offset'] for a in result} == {1,2,7}
+    model = next(a for a in result if a['offset']==7)
+    assert {m['commands'] for m in model['meshes']} == {'opening','later'}
+    assert calls[-1] == (12000,'600:START,608:')
+
+
+def test_requested_scene_timeout_is_reported_instead_of_publishing_an_incomplete_scan(tmp_path, monkeypatch):
+    from decompassets.n64 import runtime_audio, runtime_packed_graphics, runtime_ptr_audio
+    from decompnet.network import NetworkError
+
+    rom=tmp_path/'game.z64';rom.write_bytes(bytes.fromhex('80371240')+b'original')
+    monkeypatch.setattr(runtime_textures.emulator,'installed',lambda:tmp_path)
+    def run(path,vis,*,dumps,timeout,**kwargs):
+        if vis != 12000:
+            for dump in dumps.values():dump.write_bytes(b'opening')
+        return SimpleNamespace(timed_out=vis==12000)
+    monkeypatch.setattr(runtime_textures.emulator,'run',run)
+    monkeypatch.setattr(detector,'regions',lambda *args:[dict(offset=1,size=1,layout='test')])
+    monkeypatch.setattr(runtime_packed_graphics,'regions',lambda *args,**kwargs:[])
+    monkeypatch.setattr(runtime_audio,'regions',lambda *args:[])
+    monkeypatch.setattr(runtime_ptr_audio,'regions',lambda *args:[])
+    with pytest.raises(NetworkError,match='shorter duration'):
+        runtime_textures.observe(rom.read_bytes(),rom,sha1(rom.read_bytes()).hexdigest(),
+            context={'runtime_scene':dict(vis=12000,inputs='600:START,608:')})
+
+
+def test_requested_scene_requires_the_recorded_image(tmp_path,monkeypatch):
+    from decompnet.network import NetworkError
+
+    rom=tmp_path/'game.z64';rom.write_bytes(bytes.fromhex('80371240')+b'original')
+    scene={'runtime_scene':dict(vis=60,inputs='1:A')}
+    monkeypatch.setattr(runtime_textures.emulator,'installed',lambda:tmp_path)
+    with pytest.raises(NetworkError,match='recorded hash'):
+        runtime_textures.observe(rom.read_bytes(),rom,'0'*40,context=scene)
+    with pytest.raises(NetworkError,match='recorded game image'):
+        runtime_textures.observe(rom.read_bytes(),rom,None,context=scene)
+
+
 def test_observation_keeps_distinct_tlut_formats(tmp_path, monkeypatch):
     from decompassets.n64 import runtime_packed_graphics
 

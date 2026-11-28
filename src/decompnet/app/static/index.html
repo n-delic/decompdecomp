@@ -559,6 +559,12 @@
       <div class="pad">
         <p>Explore the whole image to find data, see which functions reference it and record what the evidence suggests.</p>
         <div class="row"><button class="ghost small-btn" id="romStop" type="button" hidden>Stop</button><button class="ghost small-btn" id="romReload" type="button">Refresh</button></div>
+        <details class="deep-advanced" id="romSceneSettings" hidden><summary>Explore a later scene</summary>
+          <p>Run your game with a controller sequence to find assets used beyond the opening screens.</p><div class="deep-advanced-fields">
+          <label class="field"><span>Run for (seconds of game time)</span><input id="romSceneSeconds" type="number" min="1" max="600" value="600"><small>1–600 seconds; the run is faster than watching it.</small></label>
+          <label class="field"><span>Controller sequence</span><textarea id="romSceneInput" rows="3" spellcheck="false" placeholder="600:START,608:,1200:A,1208:"></textarea><small>Use retrace:buttons, with an empty event to release buttons. Supports A, B, START, directions, C buttons, and SX=n / SY=n.</small></label>
+          <div class="row deep-advanced-actions"><button class="primary small-btn" id="romSceneScan" type="button">Scan later scene</button></div>
+        </div></details>
         <div id="romWork" role="status"></div>
         <p id="romSummary" role="status"></p><p id="romStale" class="err-msg" hidden>The imported layout changed. Scan again before inspecting regions or saving notes.</p>
         <canvas id="romMap" class="rom-image-map" role="img" aria-label="ROM byte map. Use the region table below for keyboard access."></canvas>

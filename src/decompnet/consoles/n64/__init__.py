@@ -104,6 +104,7 @@ class Nintendo64(Console):
     own_features = frozenset({EXPORT})
     port_kit = PORT_KIT
     emulator = emulator
+    runtime_asset_script = True
     recompiler = recomp
     as_flags = ("-EB", "-march=vr4300", "-mabi=32")
     reference_tools = ("binutils-mips", "mips-ps2-decompals-as", "mips-ps2-decompals-ld")

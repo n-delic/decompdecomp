@@ -12,9 +12,14 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
     """Return assets backed by captured RAM and unique bytes in the analysis image."""
     from decompassets.n64 import runtime_audio, runtime_packed_graphics, runtime_ptr_audio, runtime_textures
 
+    from ...network import NetworkError
+
+    scene = (context or {}).get('runtime_scene')
     status = status if status is not None else {}
     status['state'] = 'unavailable'
     if not emulator.installed() or not expected_sha1:
+        if scene:
+            raise NetworkError('Restore the recorded game image and install the reference emulator before exploring a later scene.')
         log("Runtime texture observation is unavailable without the emulator and a recorded game hash.")
         return []
     hashes = [expected_sha1] if isinstance(expected_sha1, str) else expected_sha1
@@ -23,12 +28,16 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
     try:
         with rom.open('rb') as stream:
             if stream.read(4) != bytes.fromhex('80371240'):
+                if scene:
+                    raise NetworkError('Restore the recorded N64 cartridge image before exploring a later scene.')
                 status['state'] = 'unavailable'
                 return []
             stream.seek(0)
             original = stream.read()
             digest = hashlib.sha1(original).hexdigest()
         if digest not in {value.lower() for value in hashes if isinstance(value, str)}:
+            if scene:
+                raise NetworkError('The game image no longer matches the recorded hash. Restore the original before exploring a later scene.')
             log('Runtime texture observation skipped: the original game no longer matches its recorded hash.')
             return []
         # Runtime libmus sample pointers name cartridge offsets. A transformed
@@ -92,6 +101,22 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
                 except emulator.EmulatorError as error:
                     expansion_failed = True
                     log(f'Expanded-memory observation skipped: {error}')
+            if scene:
+                log('Observing the requested later scene with the controller script.')
+                progress(dict(phase='Observing the requested scene',done=0,total=1))
+                end = scene['vis']
+                late = {vi:Path(folder)/f'scene-{vi}.ram' for vi in (end//2,3*end//4,end)}
+                try:
+                    extra = emulator.run(rom,end,inputs=scene['inputs'],dumps=late,timeout=180,expansion_pak=expansion)
+                except emulator.EmulatorError as error:
+                    raise NetworkError(f'The later-scene observation failed: {error}. Try the controller sequence again.') from error
+                captures = [path.read_bytes() for path in late.values() if path.is_file()]
+                if extra.timed_out or len(captures) != len(late):
+                    raise NetworkError('The later-scene observation did not finish. Try a shorter duration or sequence.')
+                snapshots += captures
+                direct += runtime_textures.regions(image,captures)
+                packed += runtime_packed_graphics.regions(image,captures,progress=progress)
+                sounds += runtime_audio.regions(image,captures) + (runtime_ptr_audio.regions(image,captures) if raw_samples else [])
             # A self-indexed compressed sprite bank and its independently
             # identified loader justify one longer, isolated menu observation.
             # Some games do not populate the sprite buffer until after setup.
@@ -190,7 +215,7 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
                     known = {tuple(item['preview_settings'].items()) for item in previous}
                     previous.extend(item for item in asset['textures']
                                     if tuple(item['preview_settings'].items()) not in known)
-                elif key in merged and asset.get('layout') in ('runtime-zip-model', 'runtime-erz-model', 'runtime-edl-model', 'runtime-deflate-model', 'runtime-chunked-model', 'runtime-zlib-model'):
+                elif key in merged and asset.get('layout') in ('runtime-zip-model', 'runtime-erz-model', 'runtime-edl-model', 'runtime-deflate-model', 'runtime-chunked-model', 'runtime-zlib-model', 'runtime-packed-model'):
                     previous = merged[key]['meshes']
                     def identity(item, layout=asset['layout']):
                         if layout in ('runtime-zip-model', 'runtime-erz-model'):
@@ -199,7 +224,7 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
                             return tuple(item['source']), tuple(tuple(face) for face in item['faces'])
                         if layout == 'runtime-chunked-model':
                             return item['vertex'], item.get('captured', (item['command'], item.get('command_size'))) 
-                        if layout == 'runtime-zlib-model':
+                        if layout in ('runtime-zlib-model', 'runtime-packed-model'):
                             return item['commands'], item['base']
                         return item['offset'], item['size']
                     known = {identity(item) for item in previous}
@@ -240,5 +265,7 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
         progress(dict(phase='Observing runtime textures', done=1, total=1))
         return assets
     except (OSError, emulator.EmulatorError) as error:
+        if scene:
+            raise NetworkError(f'The later-scene observation could not start: {error}. Check the game image and emulator.') from error
         log(f'Runtime texture observation skipped: {error}')
         return []

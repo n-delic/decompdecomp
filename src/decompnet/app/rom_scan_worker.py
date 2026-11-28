@@ -1,6 +1,7 @@
 """Analyse a frozen ROM Explorer request without opening the application's stores."""
 from __future__ import annotations
 
+import hashlib
 import json
 import mmap
 import os
@@ -15,6 +16,38 @@ from decompnet.app.workers import lower_priority
 from decompnet.network import NetworkError
 from decompnet.rom import asset_flow, config_images, resource_catalog
 from decompnet.rom.explorer import analyse
+
+
+def _retain_assets(assets, previous):
+    """Add earlier scene evidence without losing newly observed bank members."""
+    def key(asset):
+        # A single ROM range can have several palettes, dimensions or audio
+        # bank interpretations; those are distinct evidence, not duplicates.
+        fields = ('offset','size','kind','layout','codec','provider','format','width','height',
+                  'palette_offset','palette_format','palette','palette_little_endian','odd_row_swap',
+                  'bank_offset','table_offset','sample','sample_index','rate')
+        return json.dumps([asset.get(k) for k in fields],sort_keys=True)
+    by_key = {key(asset):asset for asset in assets}
+    for old in previous:
+        current = by_key.get(key(old))
+        if current is None:
+            assets.append(old)
+            by_key[key(old)] = old
+            continue
+        for field in ('textures','meshes'):
+            if not isinstance(current.get(field),list) or not isinstance(old.get(field),list):
+                continue
+            def identity(item):
+                return json.dumps({k:v for k,v in item.items() if k!='name'},sort_keys=True)
+            seen = {identity(item) for item in current[field]}
+            for item in old[field]:
+                marker = identity(item)
+                if marker not in seen and len(current[field]) < 512:
+                    current[field].append(item)
+                    seen.add(marker)
+            if field == 'meshes':
+                current['vertices'] = sum(item.get('vertices',0) for item in current[field])
+                current['triangles'] = sum(item.get('triangles',0) for item in current[field])
 
 
 def scan(request, log, progress):
@@ -44,7 +77,10 @@ def scan(request, log, progress):
                   + console.asset_regions(image, context=dict(functions=functions, symbols=symbols,
                                                               segments=segments, gp=gp, runtime_rom=str(runtime_rom),
                                                               runtime_sha1=source.get("runtime_hashes") if source["fork"] else rom.get("sha1"),
-                                                              log=log, runtime_observation=observation), progress=progress))
+                                                              log=log, runtime_observation=observation,
+                                                              runtime_scene=request.get('runtime_scene')), progress=progress))
+        if request.get('previous_image_hash') == hashlib.sha256(image).hexdigest():
+            _retain_assets(assets,request.get('previous_assets',()))
         report = analyse(image, segments, functions, symbols, big_endian=big_endian, progress=progress,
                          ranges=[chain["source"] for chain in flow["chains"]], assets=assets)
         if observation:

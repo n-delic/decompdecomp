@@ -12,7 +12,9 @@ import hashlib
 import json
 import mmap
 import re
+import threading
 import time
+from collections import deque
 from importlib.metadata import distribution
 from pathlib import Path
 
@@ -23,6 +25,34 @@ PREFIX = 'rom-explorer:'
 CONTRACT_PREFIX='rom-explorer-contracts:'
 ANALYSIS_REVISION=33
 KINDS=('', 'unknown', 'code', 'data', 'strings', 'pointer table', 'compressed', 'image', '3d model', 'palette', 'audio', 'animation', 'collision', 'object placements', 'world grid', 'music sequence', 'demo', 'font', 'container', 'repeated bytes')
+_scan_queue = threading.Condition()
+_scan_waiters = {}
+
+
+def scene_request(value):
+    """Validate an optional, bounded controller-guided observation."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise NetworkError('Supply a controller script and a duration for the later scene.')
+    vis, inputs = value.get('vis'), value.get('inputs')
+    if (type(vis) is not int or not 60 <= vis <= 36000 or not isinstance(inputs, str)
+            or not 1 <= len(inputs) <= 4096):
+        raise NetworkError('Enter a controller script and a duration from 60 to 36,000 retraces.')
+    buttons = {'A','B','Z','START','L','R','UP','DOWN','LEFT','RIGHT','CU','CD','CL','CR'}
+    previous = -1
+    for event in inputs.split(','):
+        at, sep, state = event.partition(':')
+        if not sep or not at.isascii() or not at.isdigit() or not previous < int(at) <= vis:
+            raise NetworkError('Use increasing retrace:buttons events within the chosen duration.')
+        previous = int(at)
+        for button in state.split('+') if state else ():
+            if button in buttons:
+                continue
+            axis = re.fullmatch(r'S[XY]=(-?\d{1,3})',button)
+            if not axis or not -128 <= int(axis.group(1)) <= 127:
+                raise NetworkError('Use supported controller buttons or stick values from -128 to 127.')
+    return dict(vis=vis,inputs=inputs)
 
 
 def _source(net, proj):
@@ -125,13 +155,30 @@ def listing(net, slug):
     return {k:v for k,v in report.items() if k not in ('regions','loader_chain_sets')} | dict(available=True,stale=report['revision']!=_revision(net,proj),regions=regions,asset_groups=groups({**report,'regions':regions}))
 
 
-def run(net, slug, log):
+def run(net, slug, log, scene=None):
     """Freeze a read-only analysis snapshot without synchronizing saved game work."""
-    with net.progress.view():
-        return _run(net,slug,log)
+    scene = scene_request(scene)
+    ticket, key = object(), (id(net),slug)
+    with _scan_queue:
+        queue = _scan_waiters.setdefault(key,deque())
+        queue.append(ticket)
+    try:
+        with _scan_queue:
+            while queue[0] is not ticket:
+                log.check_cancel()
+                log.progress(dict(phase='Waiting for the earlier ROM scan'))
+                _scan_queue.wait(timeout=.2)
+        with net.progress.view():
+            return _run(net,slug,log,scene)
+    finally:
+        with _scan_queue:
+            queue.remove(ticket)
+            if not queue:
+                _scan_waiters.pop(key,None)
+            _scan_queue.notify_all()
 
 
-def _run(net, slug, log):
+def _run(net, slug, log, scene=None):
     proj = _project(net,slug)
     cfg = net.cfg(proj)
     revision = _revision(net,proj)
@@ -144,7 +191,13 @@ def _run(net, slug, log):
     previous=_read(net,proj)['report']
     emulator = getattr(net.console(proj), 'emulator', None)
     runtime_available = bool(emulator and emulator.installed())
-    if (previous and previous.get('revision')==revision and 'loader_flow' in previous
+    scene_capable = bool(getattr(net.console(proj),'runtime_asset_script',False))
+    scene_supported = bool(runtime_available and scene_capable)
+    if scene and not scene_capable:
+        raise NetworkError('This console does not yet support controller-guided asset scans.')
+    if scene and not runtime_available:
+        raise NetworkError('Install this console\'s reference emulator before exploring a later scene.')
+    if (not scene and previous and previous.get('revision')==revision and 'loader_flow' in previous
             and previous.get('worker_revision') == worker_revision
             and previous.get('asset_revision') == asset_revision
             and previous.get('runtime_available', False) == runtime_available
@@ -152,6 +205,21 @@ def _run(net, slug, log):
         log.check_cancel();log('ROM image and analysis inputs are unchanged; using the current saved map.')
         log.progress(dict(phase='ROM map is current',done=1,total=1))
         return dict(regions=len(previous['regions']),size=previous['size'],cached=True)
+    previous_assets = []
+    if (scene and previous and previous.get('revision')==revision
+            and previous.get('worker_revision')==worker_revision and previous.get('asset_revision')==asset_revision):
+        # A later scene adds evidence; keep earlier validated previews for the
+        # same image and recognizer revision, even when they are not seen again.
+        seen = set()
+        for row in previous.get('regions',()):
+            for asset in row.get('evidence',()):
+                if ('preview_settings' not in asset or not isinstance(asset.get('layout'),str)
+                        or not asset['layout'].startswith('runtime-')):
+                    continue
+                marker = json.dumps(asset,sort_keys=True)
+                if marker not in seen:
+                    seen.add(marker)
+                    previous_assets.append(asset)
     log('Reading the analysis image and imported mappings. No compiler or AI calls are made.')
     source = _source(net,proj)
     path = source['path']
@@ -163,7 +231,8 @@ def _run(net, slug, log):
     report = rom_scan.run(worker_source, {
         'source': source | {'path': str(path)}, 'root': proj['root'], 'rom': cfg.get('rom'),
         'console': net.console(proj).id, 'functions': functions, 'symbols': symbols,
-        'contracts': _contracts(net,proj),
+        'contracts': _contracts(net,proj), 'runtime_scene': scene,
+        'previous_assets': previous_assets, 'previous_image_hash': previous.get('image_hash') if previous_assets else None,
     }, log)
     log.check_cancel()
     current = net.project_row(slug)
@@ -171,6 +240,7 @@ def _run(net, slug, log):
         raise NetworkError('The project layout changed during the scan. Scan again to use the current mappings.')
     report.update(revision=revision,worker_revision=worker_revision,asset_revision=asset_revision,
                   scanned_at=time.time(),image_name=path.name,runtime_available=runtime_available,
+                  runtime_scene_supported=scene_supported,
                   derived=bool(not source['fork'] and cfg['rom'].get('program') and cfg['rom']['program']!=cfg['rom']['file']))
     if report['derived']:report['note']='This is a derived analysis image (for example a flattened executable or expanded code), not physical-media offsets. Its hash freezes this scan; it does not certify a reconstruction of the original file. '+report['note']
     # Merge notes only at publication, so edits made during a rescan survive.
