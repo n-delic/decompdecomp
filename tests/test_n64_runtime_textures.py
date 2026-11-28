@@ -47,6 +47,7 @@ def test_observation_keeps_distinct_tlut_formats(tmp_path, monkeypatch):
     monkeypatch.setattr(runtime_packed_graphics, 'regions', lambda *args, **kwargs: [])
     rows = [dict(offset=1, size=1, layout='test', palette='abcd', palette_format=fmt)
             for fmt in ('ia16', 'rgba5551-be')]
+    rows.extend([dict(offset=2, size=1, layout='test', odd_row_swap=swap) for swap in (0, 8)])
     monkeypatch.setattr(detector, 'regions', lambda image, snapshots: list(rows))
     assert runtime_textures.observe(b'analysis', rom, sha1(rom.read_bytes()).hexdigest()) == rows
 
