@@ -1,4 +1,6 @@
 """Whole loader-bank recovery needs a closed body and independent CPU-code evidence."""
+import hashlib
+
 import pytest
 
 from decompnet.consoles.n64.loader_code import complete
@@ -38,6 +40,35 @@ def test_directly_called_trapping_stack_frame_is_recovered_as_a_complete_body():
     assert complete(image,[],banks,taken)==[(0x4000,0x4014,BASE)]
     image,taken,banks=setup(body)
     assert complete(image,[],banks,taken)==[]
+
+
+def test_called_linked_sdk_assembly_needs_the_exact_image_body_and_boundary(monkeypatch):
+    from decompnet.consoles.n64 import sdk_linked
+
+    body=[0x40026000,0x03e00008,0]  # mfc0 v0, status; jr ra; nop
+    image,taken,banks=setup(body,[BASE])
+    code=image[0x4000:0x400c]
+    fingerprint=hashlib.sha256(code).hexdigest()
+    image_hash=hashlib.sha1(image).hexdigest()
+    monkeypatch.setattr(sdk_linked, '_LIBULTRA', {
+        image_hash: {fingerprint: ('sdk', len(code), False, 'os/test.s')},
+    })
+    assert complete(image,[],banks,taken)==[(0x4000,0x400c,BASE)]
+    changed=bytearray(image);changed[0x2000]=1
+    assert complete(bytes(changed),[],banks,taken)==[]  # different image
+    changed=bytearray(image);changed[0x4003]^=1
+    monkeypatch.setitem(sdk_linked._LIBULTRA,hashlib.sha1(changed).hexdigest(),sdk_linked._LIBULTRA[image_hash])
+    assert complete(bytes(changed),[],banks,taken)==[]  # different body
+    assert complete(image,[],[(0x4000,0x4008,BASE)],taken)==[]  # truncated gap
+    image,taken,banks=setup(body)  # a fingerprint alone cannot choose an entry
+    monkeypatch.setitem(sdk_linked._LIBULTRA,hashlib.sha1(image).hexdigest(),sdk_linked._LIBULTRA[image_hash])
+    assert complete(image,[],banks,taken)==[]
+    image,taken,banks=setup(body,[BASE,BASE+4])  # a separate entry cannot be swallowed
+    monkeypatch.setitem(sdk_linked._LIBULTRA,hashlib.sha1(image).hexdigest(),sdk_linked._LIBULTRA[image_hash])
+    assert (0x4000,0x400c,BASE) not in complete(image,[],banks,taken)
+    image,taken,banks=setup(body,[BASE])
+    monkeypatch.setitem(sdk_linked._LIBULTRA,image_hash,{fingerprint: ('sdk', len(code), True, 'os/test.c')})
+    assert complete(image,[],banks,taken)==[]  # C-library fingerprints do not authorize assembly
 
 
 def test_trapping_frame_needs_a_balanced_return_and_no_external_interior_entry():

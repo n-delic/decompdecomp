@@ -3,6 +3,7 @@
 A loaded bank can also contain assets. Require calls, materialized callbacks,
 corroborated callees or contiguous accepted code; unrelated patterns stay raw.
 """
+import hashlib
 from bisect import bisect_right
 from collections import defaultdict
 
@@ -10,6 +11,7 @@ from ...arch.mips import is_frame
 from ...arch.mips_code_recovery import MAX_BYTES, called_extent, leaf_extent
 from ...arch.mips_gaps import extent
 from ...arch.mips_references import references
+from . import sdk_linked
 
 
 def _called_trapping_frame(image, start, end, vram, table_ranges):
@@ -77,6 +79,7 @@ def complete(image, segments, banks, taken=(), log=print, *, table_ranges=(), wh
     for a,b,v in spans:
         check()
         read_calls(a,b,v)
+    sdk_fingerprints = None
     def independent(a,b,v):
         return any(v<t<v+b-a and any(not a<=at<b for at in sites) for t,sites in incoming.items())
     # Validate all frames, not just the first N hits or most common mappings.
@@ -123,6 +126,15 @@ def complete(image, segments, banks, taken=(), log=print, *, table_ranges=(), wh
                       or leaf_extent(image,at,gaps[i][1],target,table_ranges=table_ranges))
                 if not size and target in calls:
                     size=_called_trapping_frame(image,at,gaps[i][1],target,table_ranges)
+                if not size and target in calls:
+                    # A complete linked SDK digest and image identity prove
+                    # assembly that the C-shaped extent readers must reject.
+                    if sdk_fingerprints is None:
+                        sdk_fingerprints = sdk_linked.assembly_fingerprints(image)
+                    sizes = [n for n, digests in sdk_fingerprints.items()
+                             if at+n <= gaps[i][1] and hashlib.sha256(image[at:at+n]).hexdigest() in digests]
+                    if len(sizes) == 1:
+                        size = sizes[0]
                 if size:bodies[at]=(at,at+size,target)
         # Grow anchored runs in either direction. Padding is allowed only when
         # it is zero and no direct call names an interior instruction.
