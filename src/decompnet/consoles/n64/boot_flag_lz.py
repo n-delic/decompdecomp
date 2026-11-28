@@ -3,54 +3,10 @@
 import hashlib
 import struct
 
+from decompassets.n64.flag_lz_graphics import unpack as decode
+
 _DECODER_SHA256 = 'd36f74995294c1ff63104fa705c99f2f735bc29274087d109e28c56d314387e9'
 _LIMIT = 4 * 1024 * 1024
-
-
-def decode(source):
-    """Decode bounded flag-byte literals and backward copies, requiring the end marker and declared size."""
-    if len(source) < 5 or source[0] != 1:
-        return None
-    expected = int.from_bytes(source[1:4], 'big')
-    if not 0 < expected <= _LIMIT:
-        return None
-    at, out = 4, bytearray()
-    while at < len(source) and len(out) <= expected:
-        flags = source[at]
-        at += 1
-        if flags == 0:
-            if at + 8 > len(source) or len(out) + 8 > expected:
-                return None
-            out.extend(source[at:at+8])
-            at += 8
-            continue
-        for bit in range(7, -1, -1):
-            if not flags & (1 << bit):
-                if at >= len(source) or len(out) >= expected:
-                    return None
-                out.append(source[at])
-                at += 1
-                continue
-            if at + 2 > len(source):
-                return None
-            hi, lo = source[at:at+2]
-            at += 2
-            distance = ((hi & 0xf0) << 4) | lo
-            if not distance:
-                return bytes(out) if len(out) == expected else None
-            count = hi & 15
-            if not count:
-                if at >= len(source):
-                    return None
-                count = source[at] + 17
-                at += 1
-            else:
-                count += 1
-            if distance > len(out) or len(out) + count > expected:
-                return None
-            for _ in range(count):
-                out.append(out[-distance])
-    return None
 
 
 def find(rom, boot_ranges):
