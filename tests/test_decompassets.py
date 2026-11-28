@@ -203,3 +203,21 @@ def test_chunked_runtime_mesh_reaches_console_preview():
                  label="Local mesh", meshes=[dict(command=0x20, command_size=24, vertex=0x100)])
     result = get("n64").asset_preview(packed, asset, {})
     assert result["media"] == "model" and result["triangles"] == 4
+
+
+def test_ea_xa_sound_bank_reaches_console_preview():
+    import struct
+
+    from decompnet.consoles import get
+
+    image = bytearray(0x40 + 15)
+    image[:20] = b"BNKb\x04\0\0\x01\0\0\0\x40\0\0\0\x0f\0\0\0\0"
+    image[20:24] = struct.pack(">I", 4)
+    record = (b"PT\x02\0\xfd\x85\x02\0\x1c\x84\x02\x3e\x80"
+              b"\x83\x01\x07\x88\x04\0\0\0\x40\xff")
+    image[24:24+len(record)] = record
+    image[0x40:] = b"\x0c" + b"\x1f"*14
+    from decompassets.n64 import bnkb_audio
+    bank, = bnkb_audio.regions(image)
+    result = get("n64").asset_preview(image, bank, {})
+    assert result["media"] == "audio" and result["details"]["original_samples"] == 28
