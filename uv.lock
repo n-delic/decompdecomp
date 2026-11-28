@@ -326,8 +326,8 @@ wheels = [
 [[package]]
 name = "decompassets"
 version = "0.71.0"
-source = { url = "https://github.com/RetroReversing/decomp-assets/archive/refs/tags/v0.263.0.tar.gz" }
-sdist = { hash = "sha256:a9d3260841395f32b33cb87da1fe0551bf2a0728d93f7b8fbbf01460db94d3db" }
+source = { url = "https://github.com/RetroReversing/decomp-assets/archive/refs/tags/v0.265.0.tar.gz" }
+sdist = { hash = "sha256:e2d98d01f21c43c189e2b347275a0ec962ce2287101abaee9d5e2867801c582a" }
 
 [[package]]
 name = "decompnet"
@@ -366,7 +366,7 @@ dev = [
 requires-dist = [
     { name = "capstone", specifier = ">=5.0.9" },
     { name = "cython", specifier = ">=3.1" },
-    { name = "decompassets", url = "https://github.com/RetroReversing/decomp-assets/archive/refs/tags/v0.263.0.tar.gz" },
+    { name = "decompassets", url = "https://github.com/RetroReversing/decomp-assets/archive/refs/tags/v0.265.0.tar.gz" },
     { name = "decomprepair", url = "https://github.com/RetroReversing/decomp-repair/archive/refs/tags/v0.6.454.tar.gz" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "mcp", specifier = ">=2.3.0" },
