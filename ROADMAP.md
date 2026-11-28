@@ -115,6 +115,9 @@
 - Done: the N64 missed-function search can recover a verified body inside a handwritten boot
   assembly unit while keeping the surrounding assembly. Planned: apply the same verified
   recovery automatically during the initial import.
+- Done: MIPS project reports and judges expose a global untyped `func_` entry hidden inside another
+  symbol when both sides of the split have independently closed control flow and their addresses agree.
+  The original target object stays untouched. Other untyped entries still need boundary evidence.
 - Done: N64 imports map audited inline data spans separately from executable text when their
   full surrounding fingerprints match. This prevents constants and alignment words from cutting
   otherwise closed function bodies.
