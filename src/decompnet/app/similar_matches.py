@@ -19,6 +19,7 @@ from functools import lru_cache
 from .. import permuter, similarity, toolchains
 from ..arch import mips_immediates
 from ..metadata_rows import rows as metadata_rows
+from ..network import NetworkError
 from ..project import compiler_for
 
 MIN_BYTES, MAX_BYTES = 32, 3200
@@ -35,6 +36,7 @@ MAX_ATTEMPTS = 128
 MAX_SECONDS = 120
 MAX_REPAIRS = 8
 SITE_FORMS = 24  # a donor-profile near miss: this many uses of its globals rewritten as the target uses them
+DONOR_REPAIRS = 8  # and this many of the draft pass's repair children, judged under the donor's profile too
 REPAIR_PERCENT = 90  # 318 open N64 functions had donor C compiling to 90-95%: worth the repair families
 MUTATION_DRAWS = 48
 # Consume comments, strings and identifiers whole, so edits never touch a symbol's address or documentation.
@@ -638,6 +640,23 @@ def best_first(net, proj, donors, targets, leads, deadline) -> dict[int, float]:
     return out
 
 
+def donor_repairs(proj, b, source: str, settings, header: str) -> list[str]:
+    """What a near miss under a donor's profile is changed into, to be judged under that profile: its globals used as
+    the target uses them, then the draft pass's first repair children. A match once needed a repair child compiled with
+    a look-alike's profile, and every probe of another profile judged only the C as it was."""
+    from decomprepair import global_site_forms
+
+    from . import draft_repairs
+    found = [text for _, text in global_site_forms.variants(source, b['name'], asm=b['asm'] or '')[:SITE_FORMS]]
+    try:
+        found += draft_repairs.variants(source, b['name'], proj['arch'], b['asm'] or '',
+                                        tuple((settings or {}).get('flags') or ()), limit=DONOR_REPAIRS,
+                                        header=header)[:DONOR_REPAIRS]
+    except NetworkError:  # the proposal worker failed: the target-guided rewrites are still worth their compiles
+        pass
+    return [text for text in dict.fromkeys(found) if text != source]
+
+
 def run(twins, slug: str, job, *, function_ids=None) -> int:
     """Try a few close candidates per function after exact transfers, with a pass-wide time/compile budget."""
     from .twins import _declared, apply, rom_renames
@@ -664,8 +683,6 @@ def run(twins, slug: str, job, *, function_ids=None) -> int:
     symbol_state = [(r['name'], r['address']) for r in net.project_store(proj['id']).all(
         'SELECT name,address FROM symbols WHERE project_id=? ORDER BY name', proj['id'])]
     source_cache, ops_cache = {}, {}
-    from decomprepair import global_site_forms
-
     from . import address_repairs, parameter_transfers, regional_layouts, reuse_donors, twin_fields
     donors = reuse_donors.Donors(net, proj, include_self=True)
     layouts = {pid: regional_layouts.learn(net, proj, other) for pid, other in others.items()}
@@ -961,8 +978,8 @@ def run(twins, slug: str, job, *, function_ids=None) -> int:
                     pair = (a['id'], b['id'])
                     if pair not in repairs or int(close[1]) < repairs[pair][0]:
                         repairs[pair] = (int(close[1]), a, b, other, score, prelude, variant, settings, names, header_b, dict(feedback))
-                # A near miss under the donor's profile is repaired under that profile too: a mirrored sibling's
-                # C has the shape and reads the wrong global or constant at a few places.
+                # A near miss under the donor's profile is repaired under that profile too (donor_repairs): a mirrored
+                # sibling's C has the shape and reads the wrong global or constant at a few places.
                 near = kind == 'profile' and outcome == 'miss' and re.match(r'score (\d+)', why or '')
                 if near and 100 * (1 - int(near[1]) / max(1, (b['n_insns'] or 0) * 100)) >= REPAIR_PERCENT:
                     pair = (a['id'], b['id'], 'profile')
@@ -981,10 +998,12 @@ def run(twins, slug: str, job, *, function_ids=None) -> int:
     known = {name for name, _ in symbol_state}
     prepared = []
     for pair, r in list(repairs.items()):
-        if len(pair) == 3:  # a donor-profile near miss: only the target-guided rewrites, each judged once
+        if len(pair) == 3:  # a donor-profile near miss: a few rewrites, each judged once under that profile
             _, a, b, other, score, prelude, source, settings, names, header, _ = repairs.pop(pair)
+            if net.project_store(proj['id']).one('SELECT status FROM functions WHERE id=?', b['id'])['status'] != 'open':
+                continue
             publish_progress(job, 'Repairing similar donor code', function=b['name'])
-            for _, variant in global_site_forms.variants(prelude + source, b['name'], asm=b['asm'] or '')[:SITE_FORMS]:
+            for variant in donor_repairs(proj, b, prelude + source, settings, header):
                 if exhausted():
                     if not incomplete:
                         resume(0)

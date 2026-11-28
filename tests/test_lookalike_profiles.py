@@ -270,3 +270,31 @@ def test_a_later_arm_compared_with_zero_is_tried_when_the_literal_search_ends_in
     assert result.exact and compiles == 1 and 'else if (v == 0)' in child
     unchanged = 'void f(int a) { a = 1; }'
     assert lp.zero_arms(None, {}, {'name': 'f'}, unchanged, None, first) == (unchanged, first, 0)
+
+
+def test_a_near_miss_under_the_donor_profile_gets_repair_children_judged_under_it(game, monkeypatch):
+    from decompnet.app import draft_repairs
+    from decomprepair import global_site_forms
+    monkeypatch.setattr(sm.toolchains, 'installed', lambda tc: True)
+    monkeypatch.setattr(game.twins, '_attempt_twin', lambda *a, **kw: ('miss', 'score 700'))
+    monkeypatch.setattr(global_site_forms, 'variants', lambda source, name, asm='': [])
+    asked = []
+
+    def repairs(source, name, arch, asm='', flags=(), **kw):
+        asked.append((name, flags, kw['limit']))
+        return [source, source + '/* repair 1 */', source + '/* repair 2 */']
+
+    monkeypatch.setattr(draft_repairs, 'variants', repairs)
+    tried = []
+
+    def trial(net, agent, proj, fn, source, settings=None, **kw):
+        tried.append((settings, source, kw['budget']))
+        if source.endswith('/* repair 1 */'):
+            return 'match', 'byte match with gcc-2.7.2-kmc -O1', 1
+        return 'miss', 'score 10 with gcc-2.7.2-kmc -O1', 1
+
+    monkeypatch.setattr(lp, 'trial', trial)
+    sm.run(game.twins, 'destination', Job())
+    assert ('new', ('-O1',), sm.DONOR_REPAIRS) in asked
+    repaired = [(s, b) for s, source, b in tried if '/* repair' in source]
+    assert repaired == [({'toolchain': 'gcc-2.7.2-kmc', 'flags': ['-O1']}, 0)]  # an exact child stops the rest
