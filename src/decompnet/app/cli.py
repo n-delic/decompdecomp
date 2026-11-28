@@ -299,7 +299,7 @@ def _start(args,home,internal,state_file,log,restarted,headless):
             with step("Starting the agents' MCP gateway"):
                 reader = tool_reader.start(net, internal, {"secret": secret, "port": port} if window_reads else None)
                 gateway = mcp_gateway.start(port, internal / "logs" / "mcp-gateway.log", internal / "mcp-gateway.port",
-                                            reader=reader, window=window_reads, executable=executable)
+                                            reader=reader, window=window_reads, window_secret=secret, executable=executable)
         except (OSError, RuntimeError, ValueError) as error:
             if reader is not None:
                 reader.stop()
