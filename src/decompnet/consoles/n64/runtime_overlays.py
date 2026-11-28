@@ -50,7 +50,7 @@ def ambiguous(rom, known, *, check=lambda: None):
     return False
 
 
-def regions(rom, dumps, known, *, check=lambda: None):
+def regions(rom, dumps, known, *, check=lambda: None, moved=None):
     """Find missing ROM code with a runtime-observed mapping and independent calls.
 
     A caller must match its known ROM mapping and each target must match a
@@ -99,7 +99,15 @@ def regions(rom, dumps, known, *, check=lambda: None):
         hi = min(row[1] for row in observations)
         # Every observed span has the same mapping and must overlap. Their
         # block-aligned starts can differ by up to 15 bytes.
-        if intersection >= hi or any(a < hi and lo < b and v-a != delta for a,b,v in known):
+        if intersection >= hi:
+            continue
+        if any(a < hi and lo < b and v-a != delta for a,b,v in known):
+            # The same ROM bytes may already have an inferred placement.
+            # Keep them out of the new-segment list, but pass the observed
+            # mapping to the existing correction pass, which independently
+            # checks internal calls and leaves ambiguous placements unchanged.
+            if moved is not None:
+                moved.add((lo, hi, lo+delta))
             continue
         cursor = lo
         for a,b,v in sorted(known):
