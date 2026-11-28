@@ -130,3 +130,14 @@ def test_frame_pointer_body_can_pop_before_return(damage):
     if damage == 'delay_pop_twice': words[-1] = 0x27bd0020
     data = image(words)
     assert called_extent(data, 0, len(data), BASE) == (len(data) if damage is None else None)
+
+
+@pytest.mark.parametrize('platform',['n64','psx','ps2','psp'])
+def test_large_stack_frame_requires_a_matching_return(platform):
+    console=consoles.get(platform)
+    words=[0x27bddfe8,0xafbf2014,0x24020001,0x8fbf2014,RETURN,0x27bd2018]
+    data=image(words,console.big_endian)
+    assert called_extent(data,0,len(data),BASE,big_endian=console.big_endian,cpu=console.cpu_variant)==len(data)
+    words[-1]=0x27bd2010
+    data=image(words,console.big_endian)
+    assert called_extent(data,0,len(data),BASE,big_endian=console.big_endian,cpu=console.cpu_variant) is None

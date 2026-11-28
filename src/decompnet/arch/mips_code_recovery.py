@@ -32,7 +32,9 @@ def called_extent(image, start, end, vram, *, big_endian=True, cpu='', asm_check
     entry=start;start+=lead  # the frame's own address: the checks below are about the body it opens
     frame=word(start)
     amount=0x10000-(frame&0xffff)
-    if amount%8 or amount>0x1000:
+    # Both adjustments must fit signed 16-bit immediates; large local buffers
+    # can produce frames larger than a page while keeping the same proof.
+    if amount%8 or amount>0x7ff8:
         return None
     info=extent(image,entry,end,vram,order,cpu,table_ranges=table_ranges,max_steps=MAX_BYTES//4,
                 resolved_indirect=resolved_indirect)
