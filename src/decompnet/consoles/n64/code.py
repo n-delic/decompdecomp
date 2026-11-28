@@ -1070,7 +1070,10 @@ def _observed_overlap_scopes(banks, overlaps, known, config):
         group = {min(seeds)}
         selected = set()
         while True:
-            expanded = {bank for bank in banks if any(intersects(bank, other) for other in group)}
+            # Two observed fragments can be disjoint from each other yet both
+            # overlap the same existing bank; that bank connects their scopes.
+            parents = [(known[i].rom_start, known[i].rom_end, known[i].vram) for i in selected]
+            expanded = {bank for bank in banks if any(intersects(bank, other) for other in (*group, *parents))}
             members = {i for i, seg in enumerate(known)
                        if any(intersects((seg.rom_start, seg.rom_end, seg.vram), bank) for bank in expanded)}
             if expanded == group and members == selected:

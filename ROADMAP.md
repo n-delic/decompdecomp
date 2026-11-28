@@ -116,6 +116,7 @@
   there are called by the independently verified predecessor and no call supports its former placement.
   Existing projects can also add verified functions in independently corroborated overlapping banks: the search stages the
   affected scopes together and retains them only if the old functions and new bodies split exactly.
+  Disjoint observed fragments that overlap the same existing bank share its exclusive scope.
   The search also recovers an exact, complete SDK body immediately before a function when its neighbouring
   functions establish the same mapping, including routines whose first instruction precedes their stack frame.
   It can recover a closed body in a data subsegment when an existing function on the same mapping calls it,
