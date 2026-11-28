@@ -1,6 +1,8 @@
 """Bounded MIPS indirect-transfer evidence. No guessed mapping becomes an executable edge."""
 
 import struct
+from bisect import bisect_left, bisect_right
+from collections import defaultdict
 
 MAX_ENTRIES=256
 MAX_CALLS=512
@@ -394,10 +396,40 @@ def calls(image,functions,order,*,full_scan=False,check=lambda:None,progress=lam
     return results,limited
 
 
+def _consumer_index(traced,check):
+    """Index call loads without losing trace order or weakening mapping evidence."""
+    exact=defaultdict(list);indexed=defaultdict(list)
+    for i,call in enumerate(traced):
+        if not i % 128:check()
+        base,terms=call['load_address']
+        if not terms:
+            exact[base].append(i)
+        elif len(terms)==1:
+            stride=next(iter(terms.values()))
+            if stride and 4<=stride<=256 and stride%4==0:
+                indexed[(stride,base%stride)].append((base,i))
+    for entries in indexed.values():entries.sort()
+    return exact,indexed
+
+
+def _possible_consumers(cells,exact,indexed,strides):
+    matches=set()
+    for cell,_ in cells:
+        matches.update(exact.get(cell,()))
+        for stride in strides:
+            entries=indexed.get((stride,cell%stride),())
+            lo=bisect_left(entries,(cell-stride*255,-1))
+            hi=bisect_right(entries,(cell,float('inf')))
+            matches.update(i for _,i in entries[lo:hi])
+    return sorted(matches)
+
+
 def consumers(image,functions,rows,order,ranges,mappings,unresolved=None,*,check=lambda:None,
               full_scan=False,progress=lambda _:None,checkpoint=None):
     traced,limited=(calls(image,functions,order,full_scan=True,check=check,progress=progress,checkpoint=checkpoint)
                     if full_scan else calls(image,functions,order))
+    exact,indexed=_consumer_index(traced,check)
+    strides=sorted({stride for stride,_ in indexed})
     linked=set()
     for row in rows:
         check()
@@ -405,7 +437,8 @@ def consumers(image,functions,rows,order,ranges,mappings,unresolved=None,*,check
         for ref in row['pointer_references']:
             cells={(s['vram']+ref['rom_offset']-s['rom_start'],True) for s in ranges if s['rom_start']<=ref['rom_offset']<s['rom_end']}
             if not cells:cells={(ref['rom_offset']+m,False) for m in mappings}
-            for call in traced:
+            for index in _possible_consumers(cells,exact,indexed,strides):
+                call=traced[index]
                 base,terms=call['load_address']
                 for cell,verified in cells:
                     stride=next(iter(terms.values())) if len(terms)==1 else None
