@@ -374,3 +374,24 @@ def test_runtime_bank_replaces_unresolved_static_controls(monkeypatch):
     monkeypatch.setattr(runtime_textures, 'observe', lambda *args, **kwargs: [observed])
     result = Nintendo64().asset_regions(b'image', context={'runtime_rom': 'game'})
     assert result == [unrelated, other_sample, observed]
+
+
+def test_distinct_runtime_audio_formats_do_not_conflict(tmp_path, monkeypatch):
+    from decompassets.n64 import runtime_audio, runtime_ptr_audio
+
+    rom = tmp_path / 'game.z64'
+    rom.write_bytes(bytes.fromhex('80371240') + b'original')
+    monkeypatch.setattr(runtime_textures.emulator, 'installed', lambda: tmp_path)
+    def run(path, vis, *, dumps, **kwargs):
+        for dump in dumps.values():dump.write_bytes(b'ram')
+        return SimpleNamespace(timed_out=False)
+    monkeypatch.setattr(runtime_textures.emulator, 'run', run)
+    monkeypatch.setattr(detector, 'regions', lambda *_: [dict(offset=1, size=1, layout='test')])
+    def item(layout, table):
+        return [dict(kind='audio', bank_offset=100, table_offset=table, offset=100, size=10, layout=layout)]
+    monkeypatch.setattr(runtime_audio, 'regions', lambda *_: item('b1', 200))
+    monkeypatch.setattr(runtime_ptr_audio, 'regions', lambda *_: item('libmus', 300))
+    result = runtime_textures.observe(rom.read_bytes(), rom, sha1(rom.read_bytes()).hexdigest())
+    assert {a['layout'] for a in result if a.get('kind') == 'audio'} == {'b1', 'libmus'}
+    changed = runtime_textures.observe(b'changed', rom, sha1(rom.read_bytes()).hexdigest())
+    assert {a['layout'] for a in changed if a.get('kind') == 'audio'} == {'b1'}
