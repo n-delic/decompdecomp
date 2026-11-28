@@ -664,3 +664,36 @@ def test_compressed_texture_observation_uses_submitted_tasks_and_keeps_palettes(
     assert [item['palette'] for item in bank['textures']] == ['title', 'game']
     assert bank['texture_count'] == 2
     assert sum(calls) == 2
+
+
+def test_compressed_model_observation_keeps_distinct_meshes(tmp_path, monkeypatch):
+    from decompassets.n64 import runtime_packed_graphics, runtime_variable_lz_models
+
+    rom = tmp_path / 'game.z64'
+    rom.write_bytes(bytes.fromhex('80371240') + b'original')
+    monkeypatch.setattr(runtime_textures.emulator, 'installed', lambda: tmp_path)
+    monkeypatch.setattr(runtime_variable_lz_models, 'has_resources', lambda *_: True)
+    monkeypatch.setattr(runtime_packed_graphics, 'regions', lambda *args, **kwargs: [])
+    monkeypatch.setattr(detector, 'regions', lambda *_: [dict(offset=1, size=1, layout='texture')])
+
+    def run(path, vis, *, dumps=None, frame_dumps=None, **kwargs):
+        for dump in (dumps or {}).values():
+            dump.write_bytes(b'ram')
+        for dump in (frame_dumps or {}).values():
+            dump.write_bytes(b'game' if kwargs.get('inputs') else b'title')
+            Path(str(dump)+'.task').write_bytes(b'task')
+        return runtime_textures.emulator.Run(vis=vis, frame_dumps=frame_dumps or {})
+
+    def regions(image, frames, **kwargs):
+        assert frames and all(task == b'task' for _, task in frames)
+        commands = frames[0][0].decode()
+        mesh = dict(commands=commands, base=0, vertices=4, triangles=3)
+        return [dict(offset=100, size=16, kind='3d model', layout='runtime-variable-lz-model',
+                     meshes=[mesh], vertices=4, triangles=3)]
+
+    monkeypatch.setattr(runtime_textures.emulator, 'run', run)
+    monkeypatch.setattr(runtime_variable_lz_models, 'regions', regions)
+    assets = runtime_textures.observe(b'image', rom, sha1(rom.read_bytes()).hexdigest())
+    bank, = [asset for asset in assets if asset.get('layout') == 'runtime-variable-lz-model']
+    assert [item['commands'] for item in bank['meshes']] == ['title', 'game']
+    assert (bank['vertices'], bank['triangles']) == (8, 6)

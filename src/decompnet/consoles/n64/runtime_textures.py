@@ -209,9 +209,14 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
                         log(f'Extended image observation skipped: {error}')
             # The submitted task, not an arbitrary later retrace, supplies the
             # palette: the game may reuse its memory before the next snapshot.
-            from decompassets.n64 import runtime_deflate_ci8, runtime_lzw_textures, runtime_variable_lz
+            from decompassets.n64 import (
+                runtime_deflate_ci8,
+                runtime_lzw_textures,
+                runtime_variable_lz,
+                runtime_variable_lz_models,
+            )
             frame_assets = []
-            recognizers = [module for module in (runtime_lzw_textures, runtime_deflate_ci8, runtime_variable_lz)
+            recognizers = [module for module in (runtime_lzw_textures, runtime_deflate_ci8, runtime_variable_lz, runtime_variable_lz_models)
                            if module.has_resources(image, check)]
             if recognizers and not run.timed_out:
                 log('Checking submitted graphics frames for compressed textures.')
@@ -251,7 +256,7 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
                             known.add(marker)
                     if 'texture_count' in merged[key]:
                         merged[key]['texture_count'] = len(previous)
-                elif key in merged and asset.get('layout') in ('runtime-zip-model', 'runtime-erz-model', 'runtime-edl-model', 'runtime-deflate-model', 'runtime-chunked-model', 'runtime-zlib-model', 'runtime-packed-model'):
+                elif key in merged and asset.get('layout') in ('runtime-zip-model', 'runtime-erz-model', 'runtime-edl-model', 'runtime-deflate-model', 'runtime-chunked-model', 'runtime-zlib-model', 'runtime-packed-model', 'runtime-variable-lz-model'):
                     previous = merged[key]['meshes']
                     def identity(item, layout=asset['layout']):
                         if layout in ('runtime-zip-model', 'runtime-erz-model'):
@@ -260,7 +265,7 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
                             return tuple(item['source']), tuple(tuple(face) for face in item['faces'])
                         if layout == 'runtime-chunked-model':
                             return item['vertex'], item.get('captured', (item['command'], item.get('command_size'))) 
-                        if layout in ('runtime-zlib-model', 'runtime-packed-model'):
+                        if layout in ('runtime-zlib-model', 'runtime-packed-model', 'runtime-variable-lz-model'):
                             return item['commands'], item['base']
                         return item['offset'], item['size']
                     known = {identity(item) for item in previous}
