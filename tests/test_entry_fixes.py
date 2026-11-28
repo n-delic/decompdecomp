@@ -293,3 +293,24 @@ def test_called_frame_shared_with_previous_return_delay_slot_joins_continuation(
     assert 'tail' not in ef.decide([head, tail, caller, extra], word_at=prior)
     wrong = entry('tail', start+4, body()[1:-1]+[addiu(SP, SP, 0x20)])
     assert 'tail' not in ef.decide([head, wrong, caller], word_at=prior)
+
+
+def test_shared_frame_accepts_later_ra_save_before_first_transfer():
+    start = 0x80001000
+    head = entry('head', start, [addiu(SP, SP, -0x38)])
+    words = [sw(S0, SP, 0x10), move(S0, A1), sw(S1, SP, 0x14), sw(RA, SP, 0x34),
+             jal(0x80023D58), NOP, lw(RA, SP, 0x34), JR_RA, addiu(SP, SP, 0x38)]
+    caller = entry('caller', 0x80002000, [jal(start), NOP, JR_RA, NOP], [(0, 4, start)])
+    prior = lambda at: JR_RA if at == start-4 else None
+    tail = entry('tail', start+4, words)
+    fix = ef.decide([head, tail, caller], word_at=prior)['tail']
+    assert (fix.kind, fix.at, fix.confidence) == ('join_previous', start, 'auto')
+    late = entry('tail', start+4, [words[0], jal(0x80023D58), NOP, *words[2:]])
+    assert 'tail' not in ef.decide([head, late, caller], word_at=prior)
+    wrong_slot = entry('tail', start+4, words[:-3]+[lw(RA, SP, 0x30), *words[-2:]])
+    assert 'tail' not in ef.decide([head, wrong_slot, caller], word_at=prior)
+    local_jump = words[:4] + [j(start+28), NOP] + words[6:]
+    tail = entry('tail', start+4, local_jump, [(16, 4, start+28)])
+    assert ef.decide([head, tail, caller], word_at=prior)['tail'].kind == 'join_previous'
+    outside = entry('outside', 0x80003000, [j(start+28), NOP, JR_RA, NOP], [(0, 4, start+28)])
+    assert 'tail' not in ef.decide([head, tail, caller, outside], word_at=prior)
