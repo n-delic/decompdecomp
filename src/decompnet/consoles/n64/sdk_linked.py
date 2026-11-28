@@ -32,6 +32,22 @@ _KNOWN = {
 # The PI manager references the EPI DMA entry. The scheduler uses linked
 # addresses for queues and OS globals when saving and restoring context.
 _LIBULTRA = {
+    # Four helpers match the 2.0I llcvt object byte for byte. The two unsigned
+    # conversions differ only at the linked constant addresses; both constants match.
+    '6da1a6a2bda687d50e798d80c342948ad1738202': {
+        '48aaeb35564e08822c2bdb27216388c251c5694800d6ecdfcf7e097b9a755ac0':
+            ('__d_to_ll', 28, True, 'libc/llcvt.c'),
+        'f8bea959cb8ea987ad5d91b842cf546fb7d18ff8fc740c2e8417d4270aad84cd':
+            ('__f_to_ll', 28, True, 'libc/llcvt.c'),
+        'dcff610b8bf0a19cae292358d4dc3be7813ca66df72ab3e63e365fbd2665a814':
+            ('__d_to_ull', 160, True, 'libc/llcvt.c'),
+        '00dc74dfb22b0b1c45e63f0c92c27b961bc5b9e4dd13d1714fefb39495e8ce0e':
+            ('__f_to_ull', 156, True, 'libc/llcvt.c'),
+        '3ba11f1a28a9802b21e5d730228be65dacb4301cb4c994f6806afc96828168e9':
+            ('__ll_to_d', 24, True, 'libc/llcvt.c'),
+        '2982a1e508fc621881ff0dd7f87fbd3b7c4887c2e03cfb32508c90fe86bb5fe5':
+            ('__ll_to_f', 24, True, 'libc/llcvt.c'),
+    },
     # Six consecutive conversion helpers were compared instruction by instruction with the pinned
     # libultra 2.0I build of libc/llcvt.c. Four bodies are identical; the two unsigned conversions
     # differ only in their linked constant addresses, and both eight-byte constants also match.
