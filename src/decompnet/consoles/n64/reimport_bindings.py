@@ -32,9 +32,9 @@ def _macro_variant(fn, source, header, candidate, info, extra):
         return None
     pattern = r'(?m)^[ \t]*extern[ \t]+[^;{}#\n]+\bD_80000000[ \t]*\([^;{}#\n]*\)[ \t]*;'
     declaration = re.search(pattern, csource._blank(header))
-    if declaration is None:
-        return None
-    prototype = header[declaration.start():declaration.end()]
+    # Old C can call an undeclared function with the compiler's implicit int type.
+    # The complete judge below must still prove any rewrite using this fallback.
+    prototype = header[declaration.start():declaration.end()] if declaration else 'extern int D_80000000();'
     local = {(at, index): offset for at, index, offset in info.get('local_calls', ())}
     bindings = [local_alias(info['section'], index, local[(at, index)]) if (at, index) in local
                 else alias(info['section'], index) for at, index in sorted(relocs)]
