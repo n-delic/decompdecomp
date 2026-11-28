@@ -753,3 +753,36 @@ def test_a_call_in_archived_padding_does_not_keep_pieces_apart(tmp_path,monkeypa
             db.execute("UPDATE functions SET meta=? WHERE name='filler'",(json.dumps({'gone':True,'boundary_classification':'padding'}),))
     fixed=[(f['flagged'],f['action']) for f in repair.apply_safe(net,'game')['fixed']]
     assert (('start','join_previous') in fixed)==archived
+
+
+@pytest.mark.parametrize('big_endian', [False, True])
+def test_stored_pointer_filter_preserves_exact_aligned_lookup(monkeypatch, big_endian):
+    from decompnet.app.boundary_repairs import _pointed_at, _Stored
+
+    order = 'big' if big_endian else 'little'
+    image = b''.join(value.to_bytes(4, order) for value in (0x80001234, 0x12345678, 0x8000abcd)) + b'\x80'
+    monkeypatch.setattr(_Stored, '_FILTER_AFTER', 1)
+    monkeypatch.setattr(_Stored, '_FILTER_MIN_IMAGE', 0)
+    stored = _Stored(image, big_endian)
+    assert 0x80001234 in stored
+    for value in (0x12345678, 0x8000abcd, 0x00123456, 0x80001235):
+        assert (value in stored) == _pointed_at(image, big_endian, value)
+    assert stored.filter is not None
+    # A filter collision must still use the exact, aligned image lookup.
+    monkeypatch.setattr(_Stored, '_slot', classmethod(lambda cls, value: 0))
+    collision = _Stored(image, big_endian)
+    collision._build_filter()
+    assert 0x80001234 in collision and 0x80001235 not in collision
+
+
+def test_stored_pointer_filter_can_cancel_building():
+    from decompnet.app.boundary_repairs import _Stored
+
+    def stop():
+        raise RuntimeError('stopped')
+
+    stored = _Stored(bytes(256), True, stop)
+    with pytest.raises(RuntimeError, match='stopped'):
+        stored._build_filter()
+    assert stored.filter is None
+

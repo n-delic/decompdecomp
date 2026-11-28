@@ -892,18 +892,50 @@ def _declined(net, proj):
 
 
 class _Stored:
-    """`address in stored`: whether an aligned word of the image holds it (searched only for the few words a fix
-    would cut off; a set of every word of a 32 MB image would not be)."""
+    """Check aligned image words, using a bounded filter when many queries need it."""
 
-    def __init__(self, image, big_endian):
+    _FILTER_BITS = 1 << 25
+    _FILTER_AFTER = 256
+    _FILTER_MIN_IMAGE = 8 << 20
+
+    def __init__(self, image, big_endian, check=lambda: None):
         self.image, self.big_endian, self.seen = image, big_endian, {}
+        self.check = check
+        self.filter = None
+
+    @classmethod
+    def _slot(cls, value):
+        mixed = ((value ^ (value >> 16)) * 0x9e3779b1) & 0xffffffff
+        return (mixed ^ (mixed >> 16)) & (cls._FILTER_BITS-1)
+
+    def _build_filter(self):
+        bits = bytearray(self._FILTER_BITS//8)
+        fmt = '>I' if self.big_endian else '<I'
+        size = len(self.image)//4*4
+        for index, (word,) in enumerate(struct.iter_unpack(fmt, memoryview(self.image)[:size])):
+            if index % 65536 == 0:
+                self.check()
+            slot = self._slot(word)
+            bits[slot >> 3] |= 1 << (slot & 7)
+        self.filter = bits
 
     def __contains__(self, address):
-        if address not in self.seen:self.seen[address]=_pointed_at(self.image,self.big_endian,address)
+        if address not in self.seen:
+            if not 0 <= address <= 0xffffffff:
+                return _pointed_at(self.image, self.big_endian, address)
+            if (self.filter is None and len(self.image) >= self._FILTER_MIN_IMAGE
+                    and len(self.seen) >= self._FILTER_AFTER):
+                self._build_filter()
+            if self.filter is not None:
+                slot = self._slot(address)
+                if not self.filter[slot >> 3] & (1 << (slot & 7)):
+                    self.seen[address] = False
+                    return False
+            self.seen[address]=_pointed_at(self.image,self.big_endian,address)
         return self.seen[address]
 
 
-def entry_findings(net, proj, *, layout=None, mapped=None):
+def entry_findings(net, proj, *, layout=None, mapped=None, check=lambda: None):
     """{name: entry_fixes.Fix} for the project's live functions. Only open functions nobody decided on may be
     fixed automatically, and those set aside by their shape alone (`asm_code` from asm_reason, no verdict): on an N64
     game four such functions were filed as assembly only for the stray words a fix cuts off ("writes $s3 before
@@ -926,7 +958,7 @@ def entry_findings(net, proj, *, layout=None, mapped=None):
         return None
     # Tails a reviewed adjustment kept for review: confirmed when other code points at their first word.
     reviewed={r['name'] for r in live if (m:=json.loads(r['meta'] or '{}')).get('boundary_tail_review') and not m.get('boundary_override')}
-    found=entry_fixes.decide(entries,big_endian=bool(proj['big_endian']),word_at=word_at,stored=_Stored(image,proj['big_endian']),reviewed=reviewed)
+    found=entry_fixes.decide(entries,big_endian=bool(proj['big_endian']),word_at=word_at,stored=_Stored(image,proj['big_endian'],check),reviewed=reviewed)
     rows={r['name']:r for r in live}
     for name,fix in found.items():
         row=rows[name];meta=json.loads(row['meta'] or '{}')
@@ -970,7 +1002,7 @@ def _apply_entry_fixes(net, slug, proj, log, *, preferred_entries=None):
     for _ in range(SAFE_ROUNDS):
         cancel()
         layout=_layout_rows(net,proj)
-        found=entry_findings(net,proj,layout=layout,mapped=mapped)
+        found=entry_findings(net,proj,layout=layout,mapped=mapped,check=cancel)
         suggested=sum(f.confidence!='auto' for f in found.values())
         todo=[f for f in sorted(found.values(),key=lambda f:f.vram) if f.confidence=='auto' and f.name not in failed
               and _undo_key(f) not in declined]
