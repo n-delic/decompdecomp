@@ -329,7 +329,9 @@ def _export_segments(config: dict, functions) -> dict:
     from .reviewed import extend_config, restore_cut_banks, restore_matched_entries
     restored = []
     config = extend_config(restore_cut_banks(config, restored=restored), functions)
-    restore_matched_entries(config, functions, restored)
+    # Rejoining a bank can hide open and set-aside entries as well as matches.
+    # Keep every recorded body visible so staging can verify it and exports retain it.
+    restore_matched_entries(config, functions, restored, only_matched=False)
     # Two recorded entries can share a return. Anchor the later entry before
     # removing interior cuts so both remain visible to the staged split.
     for bank in _segments(config):
