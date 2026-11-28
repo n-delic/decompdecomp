@@ -472,6 +472,9 @@ class Nintendo64(Console):
 
             expanded = decode_runtime_code(config, workdir, expanded, log)
         apply(config, (workdir / expanded).read_bytes(), log)
+        from .runtime_data import recover_import
+
+        recover_import(config, workdir / expanded, workdir / picked.filename, log)
         return expanded
 
     def runtime_audit_candidates(self, root, cfg, image, segments, functions, log, candidates=(), checkpoint=None):

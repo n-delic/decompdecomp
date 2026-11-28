@@ -122,7 +122,8 @@
   preserving the surrounding data and staging the new split alongside every existing function.
   Short-lived code loaded from an unowned data tail at a different address can also be recovered when a closed
   caller and two distinct closed callees coexist byte for byte in two snapshots, with no competing mapping.
-  Planned: use the same verified data-tail recovery during initial imports, without requiring a later scan.
+  Initial imports use the same check before the final split, after a private preliminary split proves the tail
+  has no existing functions to displace.
 - Done: the N64 missed-function search can recover a verified body inside a handwritten boot
   assembly unit while keeping the surrounding assembly. Planned: apply the same verified
   recovery automatically during the initial import.
