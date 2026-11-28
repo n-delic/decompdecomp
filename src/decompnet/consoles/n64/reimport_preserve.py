@@ -137,6 +137,38 @@ def _joined_bodies(result, image, rows):
     return len(used)//2
 
 
+def _require_preserved_joins(result, image, rows):
+    """Do not silently discard a previously joined body or its archived tail."""
+    from ...network import NetworkError
+
+    old = {row['name']: dict(row) for row in rows}
+    archives = getattr(result, 'retained_join_archives', set())
+    for tail in old.values():
+        try:
+            meta = json.loads(tail.get('meta') or '{}')
+        except (TypeError, ValueError):
+            continue
+        head = old.get(meta.get('boundary_absorbed_by')) if isinstance(meta, dict) else None
+        if not head or tail.get('gone_mark') is None or head.get('gone_mark') is not None:
+            continue
+        try:
+            decision = json.loads(head.get('meta') or '{}').get('boundary_decision', {})
+        except (AttributeError, TypeError, ValueError):
+            continue
+        start, size, addr = head.get('rom_offset'), head.get('size'), head.get('vram')
+        if (not isinstance(decision, dict) or decision.get('action') != 'join_previous'
+                or type(start) is not int or type(size) is not int or type(addr) is not int
+                or size <= 0 or start < 0 or start+size > len(image)
+                or head.get('target') != image[start:start+size]):
+            continue
+        if any(fn.rom == start and fn.vram == addr and fn.size == size for fn in result.functions):
+            archives.add(tail['name'])
+            continue
+        raise NetworkError(f"Reimport could not preserve the previously joined function {head['name']}. "
+                           "The existing project was left unchanged; review its boundaries before reimporting.")
+    result.retained_join_archives = archives
+
+
 def _called_suffixes(result, image, rows, log):
     """Find old called entries swallowed by a new short, fallthrough prefix."""
     from collections import defaultdict
@@ -339,6 +371,7 @@ def preserve(net, project, result, image, rows, log=print):
     if restored:
         log(f'Kept {restored} matched module entries with unchanged bytes and no overlapping functions.')
     joined = _joined_bodies(result, image, rows)
+    _require_preserved_joins(result, image, rows)
     restored += joined
     if joined:
         log(f'Kept {joined} previously proven joins with unchanged bytes and no outside entries.')

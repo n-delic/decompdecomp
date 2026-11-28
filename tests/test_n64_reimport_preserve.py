@@ -7,6 +7,7 @@ import pytest
 import yaml
 
 from decompnet.consoles.n64 import reimport_preserve, runtime_staging
+from decompnet.network import NetworkError
 from decompnet.rom import split
 
 
@@ -91,6 +92,22 @@ def test_reimport_keeps_only_a_still_proven_join(case):
     assert reimport_preserve._joined_bodies(result,bytes(image),old) == joined
     assert any(fn.name=='tail' for fn in result.functions) != joined
     assert result.retained_join_archives == ({'tail'} if joined else set())
+
+
+def test_reimport_refuses_to_discard_a_join_when_the_split_starts_early():
+    raw = bytes.fromhex('03e00008 27bdffd0 24020001 03e00008 27bd0030')
+    image = bytes(0x100) + raw
+    head = dict(name='head', rom_offset=0x104, vram=0x80001004, size=16,
+                target=raw[4:], gone_mark=None,
+                meta=json.dumps({'boundary_decision': {'action': 'join_previous'}}))
+    tail = dict(name='tail', gone_mark=1, meta=json.dumps({'boundary_absorbed_by': 'head'}))
+    early = split.function_from_bytes('early', raw, 0x100, 0x80001000, 'code')
+    result = SimpleNamespace(functions=[early])
+    with pytest.raises(NetworkError, match='previously joined function head'):
+        reimport_preserve._require_preserved_joins(result, image, [head, tail])
+    result.functions = [split.function_from_bytes('head', raw[4:], 0x104, 0x80001004, 'code')]
+    reimport_preserve._require_preserved_joins(result, image, [head, tail])
+    assert result.retained_join_archives == {'tail'}
 
 
 @pytest.mark.parametrize('case', ['partial', 'other_mapping', 'unproven'])
