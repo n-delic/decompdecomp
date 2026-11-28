@@ -11,6 +11,8 @@ _LOADER = '9f4eee2e007ab9c5a521a86f13eb7590148c4e6607650eccf4092e0660f6ad68'
 _VARIANT = '0b6a82da5b2950bfda9db4e225dc1df96cdcf63d3fe0af52386360d9385b92f5'
 _VARIANT_TEXT = '31133f68985fed7e9d6871a5c31d18c1fb2c9f0d7478f21360dc527b9592e015'
 _VARIANT2 = 'd23bb6845b14fa601fdfd283f00ecf4ff1674f580b4d410c6a6c998a4c7624ca'
+_VARIANT3 = '163d1aa4193a5339b0e38a59a68bee64a0667206d48345662cea7fb18d3c61de'
+_VARIANT3_TEXT = '1d622307d78f42131aa25aea8b8977bdaa4f382cd5853b3993936d2cc8d3c1cc'
 _VARIANT2_TEXT = '536038ee4edee1e18fffba67b85e873954b3cb1adab362c169b71e3989b305ac'
 _PRIMARY = '10d91d2c6916496106b399cc05b6ee0663d10a3ae9fd8003cad4936ad5476b71'
 _VARIANT_PRIMARY = '3ca488c5e900ac5748c11ef50a1178305b116e6a70bf22b7826d0c39bf4683a3'
@@ -57,6 +59,8 @@ def drop_impossible_bss(segments):
 
 
 def code_start(vram, text):
+    if vram == 0x80000400 and hashlib.sha256(text).hexdigest() == _VARIANT3_TEXT:
+        return 72
     if vram == 0x80000400:
         return 96 if len(text) >= 96 and not any(text[80:96]) else 80
     return next((start for _, _, _, _, address, start, end, _ in EXTRA_PROGRAMS + VARIANT_PROGRAMS
@@ -126,6 +130,9 @@ def find(rom, boot_ranges):
         if not 0xb0000000 <= pointer < 0xb0000000 + len(rom):
             return None
         directory, startup = pointer - 0xb0000000, 80
+    elif (cursor >= 0x16e0 and len(rom) >= 0x1748
+          and hashlib.sha256(rom[0x1000:0x1738]).hexdigest() == _VARIANT3):
+        directory, startup = 0x1738, 72
     else:
         return None
     if directory % 4 or directory + 16 > len(rom):
