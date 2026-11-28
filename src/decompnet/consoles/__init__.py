@@ -343,6 +343,10 @@ class Console:
         """Optionally adapt saved source to newly established loader bindings before rejudging."""
         return source
 
+    def retry_reimport_source(self, net, project, fn, source):
+        """Optionally prove a second saved-source candidate after reimport."""
+        return None
+
     def import_table_ranges(self, image, segments):
         """Additional load mappings for jump-table evidence during ROM import."""
         return ()

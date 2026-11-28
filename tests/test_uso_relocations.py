@@ -1418,3 +1418,64 @@ def test_native_reimport_rebinds_only_unambiguous_jal_references():
     assert rebind_native_calls(fn, source) == source
 
 
+def test_reimport_macro_retry_separates_only_complete_placeholder_calls():
+    from types import SimpleNamespace
+
+    from decompnet.consoles.n64.reimport_bindings import _macro_variant
+
+    fn = {'name': 'work', 'target': bytes.fromhex('0c0000000c000000')}
+    source = 'int work(void) { return CALL(first)(1) + CALL(second)(2); } /* CALL(comment) */'
+    header = 'extern int D_80000000();\n#define CALL(f) D_80000000\n'
+    info = {'section': 0x1234, 'relocs': [[0, 4, 2], [4, 4, 3]]}
+    candidate = SimpleNamespace(relocs=[SimpleNamespace(offset=0, type=4, symbol='D_80000000'),
+                                        SimpleNamespace(offset=4, type=4, symbol='D_80000000')])
+    result = _macro_variant(fn, source, header, candidate, info, '')
+    assert 'uso_1234_sym_2(1)' in result and 'uso_1234_sym_3(2)' in result
+    assert '/* CALL(comment) */' in result
+    assert _macro_variant(fn, source, header, candidate, info | {'relocs': [[0, 4, 2]]}, '') is None
+    candidate.relocs[1].symbol = 'other'
+    assert _macro_variant(fn, source, header, candidate, info, '') is None
+
+
+def test_reimport_binding_retry_returns_only_exact_result(monkeypatch):
+    import json
+    from types import SimpleNamespace
+
+    from decompnet.consoles.n64 import reimport_bindings
+
+    class FakeNet:
+        def __init__(self, exact):
+            self.exact = exact
+            self.compiles = 0
+
+        def _contexts(self, pid, units):
+            return {'unit': {'header': 'header'}}
+
+        def _compile(self, project, header, source, fn):
+            self.compiles += 1
+            return SimpleNamespace(ok=True, obj=source)
+
+        def _evaluate(self, fn, project, obj):
+            return SimpleNamespace(relocs=[]), self.exact and self.compiles > 1, []
+
+        def _target_obj(self, fn, project):
+            return object()
+
+        def console(self, project):
+            return SimpleNamespace(separate_overlay_reference=lambda binding, number: binding)
+
+    monkeypatch.setattr(reimport_bindings.overlay_donor_aliases, 'explicit_symbol_bindings',
+                        lambda source, header, candidate, target, separate: (source, header + '\nmarker'))
+    monkeypatch.setattr(reimport_bindings, '_macro_variant', lambda *args: None)
+    fn = {'name': 'work', 'project_id': 1, 'unit': 'unit', 'meta': json.dumps({'uso': {'native': True, 'section': 1}})}
+    assert reimport_bindings.retry(FakeNet(True), {}, fn, 'source') == 'source\n\nmarker'
+    assert reimport_bindings.retry(FakeNet(False), {}, fn, 'source') is None
+    class BrokenNet(FakeNet):
+        def _compile(self, project, header, source, fn):
+            raise IndexError('malformed metadata')
+
+    assert reimport_bindings.retry(BrokenNet(True), {}, fn, 'source') is None
+    fn['meta'] = json.dumps({'uso': {'native': False, 'section': 1}})
+    assert reimport_bindings.retry(FakeNet(True), {}, fn, 'source') is None
+
+

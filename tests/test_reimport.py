@@ -110,6 +110,35 @@ def test_reimport_rejudge_releases_only_its_own_claims(tmp_path):
     assert 'removed' in note['text'] and 'int preserved;' in note['text']
 
 
+def test_reimport_rejudge_records_proven_retry_and_keeps_original(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    net = RomNetwork(tmp_path / 'app.db', tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute('INSERT INTO projects(slug,name,root,arch,config) VALUES(?,?,?,?,?)',
+                         ('game', 'Game', str(tmp_path), 'mips', '{}')).lastrowid
+        fid = db.execute('INSERT INTO functions(project_id,name,size,n_insns,target,relocs,status,vram) '
+                         'VALUES(?,?,?,?,?,?,?,?)', (pid, 'work', 4, 1, b'\0' * 4, '[]', 'open', 0x80000000)).lastrowid
+    store = net.project_store(pid)
+    monkeypatch.setattr(net, 'console', lambda project: SimpleNamespace(
+        retry_reimport_source=lambda network, project, fn, source: 'rebound'))
+    seen = []
+
+    def attempt(agent, name, source, slug):
+        seen.append(source)
+        if source == 'rebound':
+            with store.tx() as db:
+                db.execute("UPDATE functions SET status='matched' WHERE id=?", (fid,))
+        return {'matched': source == 'rebound'}
+
+    monkeypatch.setattr(net, 'attempt', attempt)
+    net._judge_kept_matches('game', [('work', 'original', None)], lambda _: None)
+    assert seen == ['original', 'rebound']
+    assert 'original' in store.one('SELECT text FROM notes WHERE function_id=?', fid)['text']
+    assert store.one('SELECT status FROM functions WHERE id=?', fid)['status'] == 'matched'
+    assert store.one('SELECT COUNT(*) AS n FROM claims')['n'] == 0
+
+
 def test_reimport_does_not_wait_on_its_own_autopilot_claim(tmp_path, monkeypatch):
     from decompnet.app.engine import importing, judging
 

@@ -798,7 +798,18 @@ class ImportMixin:
             agent = self.attribution_agent(row["name"] if row else "you")
             try:
                 with _reimport_claim(self, slug, name, agent):
-                    matched += bool(self.attempt(agent, name, source, slug)["matched"])
+                    result = self.attempt(agent, name, source, slug)
+                    if not result['matched']:
+                        proj = self.project_row(slug)
+                        fn = self._function(name, slug)
+                        rebound = self.console(proj).retry_reimport_source(self, proj, fn, source)
+                        if rebound and rebound != source:
+                            # The retry was proven privately; keep the original before recording it.
+                            with self.project_store(pid).tx() as db:
+                                db.execute('INSERT INTO notes(project_id,function_id,text,created_at) VALUES(?,?,?,?)',
+                                           (pid, fn['id'], f"[{name} before reimport: saved C]\n{source}", time.time()))
+                            result = self.attempt(agent, name, rebound, slug)
+                    matched += bool(result['matched'])
             except NetworkError as error:
                 log(f"{name}: {error}")
             row = self.project_store(pid).one("SELECT status FROM functions WHERE project_id=? AND name=?", pid, name)
