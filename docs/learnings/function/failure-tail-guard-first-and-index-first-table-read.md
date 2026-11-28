@@ -2,7 +2,7 @@
 title: failure tail as the guard before the work, and a table read with its index first
 kind: function
 compiler: sn-n64-281 -G0 -mips3 -O2 -mgas -meb -mcpu=VR4300 -mhard-float -mfp64
-evidence: matched
+evidence: verified
 date: 2026-11-28
 ---
 
