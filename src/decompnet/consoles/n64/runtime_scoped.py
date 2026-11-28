@@ -11,6 +11,35 @@ from ...arch.mips_code_recovery import MAX_BYTES, called_extent, leaf_extent
 from ...rom.split import Segment
 
 
+def executed_bodies(image, candidates):
+    """Select current audit leads whose complete closed body was captured executing at a direct-call target."""
+    result = set()
+    for row in candidates:
+        if not isinstance(row, dict):
+            continue
+        start, size = row.get('rom_offset'), row.get('extent_bytes')
+        if (row.get('direct_flow_closed') is not True or type(start) is not int or type(size) is not int
+                or start < 0 or start % 4 or size < 64 or size % 4 or start + size > len(image)):
+            continue
+        prefix = image[start:start + 64]
+        if image.find(prefix) != start or image.find(prefix, start + 1) >= 0:
+            continue
+        for location in row.get('runtime_locations') or ():
+            if not isinstance(location, dict):
+                continue
+            address, site, retrace = (location.get('vram'), location.get('direct_call_site'),
+                                      location.get('execution_retrace'))
+            if (location.get('executed') is not True or type(address) is not int or type(site) is not int
+                    or type(retrace) is not int or retrace < 0 or address % 4 or site % 4
+                    or not 0x80000400 <= address < address + size <= 0x80800000
+                    or not 0x80000400 <= site < 0x80800000):
+                continue
+            if called_extent(image, start, start + size, address, cpu='vr4300') == size:
+                result.add((start, start + size, address))
+    return sorted(body for body in result if not any(other != body and other[0] < body[1] and body[0] < other[1]
+                                                     for other in result))
+
+
 def observe(root, cfg, image, segments, functions, log, *, candidates=(), checkpoint=None):
     """Sample runtime locations and scoped callers without changing the project."""
     from . import emulator, loaded_code

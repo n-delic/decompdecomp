@@ -150,6 +150,31 @@ def test_search_continues_when_one_recovery_reveals_another(tmp_path, monkeypatc
     assert 'No further functions' in result['message']
 
 
+def test_changed_audit_review_cannot_publish_an_executed_body(tmp_path, monkeypatch):
+    from decompnet.app import code_audit_reviews
+    from decompnet.consoles.n64 import Nintendo64, code
+
+    net, pid = project(tmp_path)
+    path = tmp_path / 'game.yaml'
+    original = path.read_text()
+    body = (0x1010, 0x1020, 0x80001010)
+    evidence = iter([['current'], []])
+    monkeypatch.setattr(code_audit_reviews, 'execution_candidates', lambda *_: next(evidence))
+    monkeypatch.setattr(Nintendo64, 'executable_audit_bodies', lambda _self, _image, rows: [body] if rows else [])
+
+    def recover(self, config, image, log, known, **kwargs):
+        assert kwargs['executed_bodies'] == [body]
+        cfg = yaml.safe_load(config.read_text())
+        code.insert_segments(config, cfg, [body], len(image))
+        return [body]
+
+    monkeypatch.setattr(Nintendo64, 'missed_functions', recover)
+    with pytest.raises(NetworkError, match='audit evidence changed'):
+        net.find_missed_functions('game', log=lambda *_: None)
+    assert path.read_text() == original
+    assert net.project_store(pid).one('SELECT COUNT(*) n FROM functions WHERE project_id=?', pid)['n'] == 2
+
+
 def test_runtime_bank_shortens_its_old_data_mapping_in_the_project_catalog(tmp_path, monkeypatch):
     from decompnet.consoles.n64 import Nintendo64, code
 
@@ -546,6 +571,25 @@ def test_observed_overlapping_bank_is_staged_in_its_own_scope(tmp_path, monkeypa
     else:
         assert result == []
         assert config.read_text() == original
+
+
+def test_executed_body_and_enclosing_observation_can_share_a_scope(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import code, emulator, loaded_code, loader_code
+
+    config = tmp_path / 'game.yaml'
+    config.write_text(yaml.safe_dump(splat_config()))
+    rom = image()
+    (tmp_path / 'rom.z64').write_bytes(rom)
+    body = (0x1038, 0x1048, 0x80001008)
+    bank = (0x1030, 0x1050, 0x80001000)
+    known = [(0x1000, 0x1010, 0x80001000), (0x1020, 0x1028, 0x80001020)]
+    monkeypatch.setattr(code, 'complete_gaps', lambda *a, **kw: [])
+    monkeypatch.setattr(code, '_bodies_inside_code', lambda *a, **kw: [])
+    monkeypatch.setattr(emulator, 'installed', lambda: tmp_path)
+    monkeypatch.setattr(loaded_code, 'moved_banks', lambda *a, **kw: [])
+    monkeypatch.setattr(loaded_code, 'find', lambda *a, **kw: {'segments': [], 'overlap_segments': [bank]})
+    monkeypatch.setattr(loader_code, 'complete', lambda rom, established, banks, *a, **kw: established)
+    assert missed_functions(config, rom, log=lambda *_: None, known_functions=known, executed_bodies=[body]) == [body]
 
 
 @pytest.mark.parametrize('setting', [{'bss_size': 0x20}, {'symbol_name_format': 'custom_$VRAM'}])

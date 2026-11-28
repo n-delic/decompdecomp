@@ -1118,7 +1118,7 @@ def _apply_overlap_scopes(config, existing, active):
 
 
 def missed_functions(config: Path, rom: bytes, log=print, known_functions=(), *, prepare_split=None,
-                     checkpoint=None, expected_config=None) -> list[tuple[int, int, int]]:
+                     checkpoint=None, expected_config=None, executed_bodies=()) -> list[tuple[int, int, int]]:
     """In a project that exists, the functions its split left as data that an import would now find (complete_gaps,
     with the addresses the game was seen running in the project's folder): written into splat's `config` as code
     segments, as an import writes them, and returned as (rom_start, rom_end, vram), one function each. Lets a
@@ -1195,7 +1195,12 @@ def missed_functions(config: Path, rom: bytes, log=print, known_functions=(), *,
             if reviews:
                 extra = {body for body in extra if safe(body)}
             found.extend(sorted(extra))
-    new = sorted({r for r in found if not any(a < r[1] and r[0] < b for a, b, _ in taken)})
+    executed = {body for body in executed_bodies if not any(a < body[1] and body[0] < b for a, b, _ in taken)}
+    if executed:
+        log(f'Checking {len(executed)} closed bodies captured executing at direct-call targets.')
+        runtime_banks.extend(sorted(executed))
+        overlap_banks.extend(sorted(executed))
+    new = sorted({r for r in found if not any(a < r[1] and r[0] < b for a, b, _ in taken)} | executed)
     # A raw child of a code parent is absent from code_ranges, but it is still inside that parent.
     # Inserting another top-level segment there truncates the parent's later children and breaks its split.
     children = [body for body in new if _owner(cfg, body[0], body[1]) is not None
@@ -1221,11 +1226,11 @@ def missed_functions(config: Path, rom: bytes, log=print, known_functions=(), *,
 
     def overlap_scope(body):
         lo, hi, address = body
-        banks = {(a, b, v) for a, b, v in bank_scopes
-                 if a <= lo < hi <= b and address - lo == v - a}
-        if len(banks) != 1:
-            return ''
-        return bank_scopes.get(next(iter(banks)), '')
+        scopes = {scope for (a, b, v), scope in bank_scopes.items()
+                  if a <= lo < hi <= b and address - lo == v - a}
+        # A verified body and the larger observed bank containing it can both
+        # describe the same mapping. Only differing scopes are ambiguous.
+        return next(iter(scopes)) if len(scopes) == 1 else ''
 
     ambiguous = [body for body in new if any(
                      s.exclusive_ram_id and s.vram - s.rom_start == body[2] - body[0] or

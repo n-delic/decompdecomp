@@ -317,6 +317,10 @@ class Console:
         """Optional game-run evidence for audit leads; other consoles need a runtime adapter."""
         return []
 
+    def executable_audit_bodies(self, image, candidates):
+        """Execution-backed audit entries safe to offer to this console's staged missed-code search."""
+        return []
+
     def donor_text_regions(self, image: bytes) -> list:
         """Original code regions with separate module-relative addresses."""
         return []
@@ -330,7 +334,7 @@ class Console:
         return {}
 
     def missed_functions(self, config: Path, image: bytes, log=print, known=(), *, prepare_split=None,
-                         checkpoint=None, expected_config=None) -> list[tuple[int, int, int]] | None:
+                         checkpoint=None, expected_config=None, executed_bodies=()) -> list[tuple[int, int, int]] | None:
         """ROM mode: in a project that exists, the functions its split left as data that an import would now find,
         written into splat's `config` as code segments and returned as (rom_start, rom_end, vram), one function each
         (N64: consoles/n64/code.py). None when the console has no such search yet (ROADMAP.md)."""

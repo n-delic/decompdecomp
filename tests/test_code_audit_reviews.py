@@ -34,6 +34,25 @@ def test_reviews_persist_and_refresh_only_for_identical_image_and_extent(tmp_pat
     assert not net.store.all('SELECT * FROM functions')
 
 
+@pytest.mark.parametrize('paged', [False, True])
+def test_execution_candidates_use_the_complete_current_report_and_respect_dismissals(tmp_path, monkeypatch, paged):
+    net, pid, report = fixture(tmp_path)
+    monkeypatch.setattr(reviews, 'PAGED_THRESHOLD', 0 if paged else 1000)
+    evidence = {'vram': 0x80002000, 'executed': True, 'direct_call_site': 0x80003000, 'execution_retrace': 10}
+    report['candidates'] = [dict(rom_offset=16 + i * 4, vram=4096 + i * 4, gap_start=16, gap_end=48,
+                                 extent_bytes=4, runtime_locations=[evidence]) for i in range(3)]
+    saved = reviews.record(net, pid, report, bytes(64))
+    dismissed = saved['candidates'][1]['review_id']
+    reviews.review(net, 'demo', dismissed, 'dismissed', 'Not this bank.')
+    assert len(reviews.execution_candidates(net, pid)) == 2
+    pending = saved['candidates'][2]['review_id']
+    reviews.review(net, 'demo', pending, 'needs_investigation', 'Check the caller.')
+    assert len(reviews.execution_candidates(net, pid)) == 1
+    with net.project_store(pid).tx() as db:
+        db.execute('UPDATE projects SET config=? WHERE id=?', (json.dumps({'segments': [{'changed': True}]}), pid))
+    assert reviews.execution_candidates(net, pid) == []
+
+
 def test_decisions_need_evidence_validate_notes_and_are_project_scoped(tmp_path):
     net,pid,report=fixture(tmp_path);r=reviews.record(net,pid,report,bytes(64));key=r['candidates'][0]['review_id']
     for state,notes in [('bogus','x'),('dismissed',''),('confirmed_code',' '),('unreviewed','x'*4001)]:
