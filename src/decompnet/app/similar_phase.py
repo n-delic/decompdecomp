@@ -96,6 +96,18 @@ def search_partition(net, slug, function_ids, stop, progress, *, imported_since=
             'bytes': job.reuse_bytes}
 
 
+def donor_width(job, targets, default_workers, compile_limit):
+    """How many donor workers to run: the user's number, else every core's share when they chose maximum
+    throughput (as the deep permuter's lanes do), else the automatic width."""
+    requested = int(getattr(job, 'donor_workers', 0) or 0)
+    if requested:
+        return min(requested, targets)
+    if getattr(job, 'donor_maximum', False):
+        from . import deep_throughput
+        return min(deep_throughput.lanes(True), targets)
+    return min(default_workers, compile_limit, targets)
+
+
 def parallel(twins, slug, job):
     from .. import compiler
     from . import deep_lanes, workers
@@ -111,7 +123,7 @@ def parallel(twins, slug, job):
     targets = [row['id'] for row in net.project_store(proj['id']).all(
         "SELECT id FROM main.functions WHERE project_id=? AND status='open' AND size BETWEEN ? AND ? ORDER BY size DESC, id",
         proj['id'], similar_matches.MIN_BYTES, similar_matches.MAX_BYTES)]
-    width = min(workers.WORKERS, compiler.concurrency_limit(), len(targets))
+    width = donor_width(job, len(targets), workers.WORKERS, compiler.concurrency_limit())
     since = getattr(job, 'cross_attempt_start', None)
     if width < 2:
         before = job.cross_matched

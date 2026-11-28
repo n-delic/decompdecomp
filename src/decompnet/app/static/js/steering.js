@@ -891,7 +891,7 @@ function renderAutopilot(ov) {
     updateElapsed();
     const elapsedTimer = setInterval(updateElapsed, 1000);
     try {
-      const {job} = existingJob ? {job:existingJob} : await api('/api/cross-game/run', {method:'POST', body:{slug}});
+      const {job} = existingJob ? {job:existingJob} : await api('/api/cross-game/run', {method:'POST', body:{slug, workers:crossGameSettings.workers, maximum_throughput:crossGameSettings.maximum}});
       stop.disabled = false; stop.textContent = 'Stop'; run.textContent = 'Searching…';
       log._state = 'Searching other games';
       if (S.slug === slug) { $('crossGameState').textContent = log._state; $('crossGamePhaseStatus').textContent = 'Waiting for the search worker to report its current step…'; }
@@ -924,6 +924,8 @@ function renderAutopilot(ov) {
     finally { clearInterval(elapsedTimer); if (S.slug === slug) $('crossGameActivity').hidden = true; finish(); stop.hidden = true; stop.textContent = 'Stop'; run._working = false; run.hidden = false; run.textContent = 'Start search'; }
   };
   run.onclick = () => startCrossGame();
+  $("crossGameOptions").onclick = () => openCrossGameOptions(!!run._working);
+  renderCrossGameOptionsSummary();
   if(ov.twins?.state==='running' && ov.twins.cross_job && !run._working)startCrossGame(ov.twins.cross_job);
   if(S.dialogKind==='cross-game-results' && $('dialogBody').dataset.crossSlug!==ov.slug)closeDialog();
   const cross = ov.cross_game || { counts: {}, recent: [] };
@@ -1026,6 +1028,28 @@ function renderAutopilot(ov) {
 }
 
 let crossGameDrawerResults = null;
+// CPU settings for the next search of other games. Kept for the session; a running search keeps the ones it started with.
+const crossGameSettings = {workers: 0, maximum: false};
+function renderCrossGameOptionsSummary() {
+  const label = crossGameSettings.workers ? `${crossGameSettings.workers} workers` : crossGameSettings.maximum ? "Maximum CPU" : "Automatic CPU";
+  $("crossGameOptionsSummary").textContent = crossGameSettings.workers && crossGameSettings.maximum ? `${label} · maximum CPU` : label;
+}
+function openCrossGameOptions(running) {
+  const cores = navigator.hardwareConcurrency || 0;
+  dialog("Matches from other games: search options", `<p class="small muted" id="crossGameOptionsHelp">${running ? "These settings are in use. Stop the search to change them." : "Changes apply when you start the next search."}</p><fieldset class="local-search-options" id="crossGameSettings"${running ? " disabled" : ""}><legend class="sr-only">Search options</legend><h3>CPU use</h3><label class="deep-sweep-repeat"><input id="crossGameMaximum" type="checkbox"><span>Maximum throughput<small>Use about one and a half search workers per CPU core${cores ? ` (${cores} detected)` : ""}, each with its own compiler pool.</small></span></label><label class="field"><span>Parallel search workers (1–256)</span><input id="crossGameWorkers" type="number" min="1" max="256" step="1" placeholder="auto"><small>How many functions are checked against other games at once. Leave blank for automatic; a number here overrides maximum throughput.</small></label></fieldset><div class="row"><button type="button" class="primary" id="crossGameOptionsDone">Done</button></div>`, "cross-game-options");
+  $("crossGameMaximum").checked = crossGameSettings.maximum;
+  $("crossGameWorkers").value = crossGameSettings.workers || "";
+  const read = () => {
+    const value = Math.trunc(Number($("crossGameWorkers").value)) || 0;
+    crossGameSettings.workers = Math.max(0, Math.min(256, value));
+    crossGameSettings.maximum = $("crossGameMaximum").checked;
+    renderCrossGameOptionsSummary();
+  };
+  $("crossGameSettings").oninput = read;
+  $("crossGameSettings").onchange = read;
+  $("crossGameOptionsDone").onclick = () => { if (!running) read(); closeDialog(); };
+  (running ? $("crossGameOptionsDone") : $("crossGameWorkers")).focus();
+}
 async function openCrossGameResults(ov, filter='matches') {
   const slug=ov.slug;
   crossGameDrawerResults=null;

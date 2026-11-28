@@ -833,7 +833,7 @@
     <section class="panel local-search-card" id="crossGamePanel" hidden>
       <header class="panel-head local-search-head">
         <div class="local-search-title"><h2><button type="button" class="transfer-toggle" id="crossGameToggle" aria-expanded="true" aria-controls="crossGameBody"><span aria-hidden="true" class="transfer-chevron"></span>Matches from other games</button></h2><span class="local-search-state" id="crossGameState" role="status">Ready to search</span></div>
-        <div class="row"><button type="button" class="primary small-btn" id="crossGameRun">Start search</button><button type="button" id="crossGameStop" class="primary small-btn" hidden>Stop</button></div>
+        <div class="row"><button class="ghost small-btn" id="crossGameOptions" type="button" aria-haspopup="dialog" title="Search options"><span class="sr-only">Search options </span><span id="crossGameOptionsSummary">Automatic CPU</span> <span aria-hidden="true">↗</span></button><button type="button" class="primary small-btn" id="crossGameRun">Start search</button><button type="button" id="crossGameStop" class="primary small-btn" hidden>Stop</button></div>
       </header>
       <div id="crossGameBody" class="pad local-search-body">
         <p class="local-search-intro">Try matching code from your other games and local SDKs. Autopilot pauses while the search runs.</p>

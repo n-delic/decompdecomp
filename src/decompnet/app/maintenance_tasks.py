@@ -34,6 +34,15 @@ def enabled() -> bool:
     return os.environ.get("DECOMP_MAINTENANCE_WORKER", "").strip() != "0"
 
 
+def donor_options(workers=0, maximum=False):
+    """The user's CPU settings for a search of other games: parallel donor workers (0 = automatic), all-cores mode."""
+    if isinstance(workers, bool) or not isinstance(workers, int) or not 0 <= workers <= 256:
+        raise NetworkError('Choose 1–256 parallel workers, or leave blank for automatic.')
+    if not isinstance(maximum, bool):
+        raise NetworkError('Maximum throughput must be true or false.')
+    return workers, maximum
+
+
 def worker_of(net):
     """The app's permuter worker, when background passes may run in it."""
     from .permuter_worker import PermuterWorker
@@ -129,7 +138,9 @@ def _cross_game_in_worker(worker, slug, job, log_):
     deaths the search runs in the app instead (Unavailable), so it never just stops."""
     for attempt in range(WORKER_RESTARTS + 1):
         try:
-            return worker.run_task("cross_game", {"slug": slug}, stop=job.stop,
+            payload = {"slug": slug, "workers": getattr(job, "donor_workers", 0),
+                       "maximum": getattr(job, "donor_maximum", False)}
+            return worker.run_task("cross_game", payload, stop=job.stop,
                                    on_status=lambda fields: apply_fields(job, fields))
         except NetworkError as error:
             if job.stop.is_set():
@@ -245,6 +256,7 @@ def _run_cross_game(net, payload, stop, promote, status):
     job = Job(stop=stop, foreground=promote)
     job.promote()
     job._parallel_donors = deep_lanes.enabled()
+    job.donor_workers, job.donor_maximum = donor_options(payload.get("workers", 0), bool(payload.get("maximum", False)))
     done = threading.Event()
     _ticker(stop, done, lambda: status({"progress": job.progress}))
     try:
