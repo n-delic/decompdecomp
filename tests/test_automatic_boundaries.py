@@ -26,6 +26,80 @@ def fixture(words=BODY,cuts=(0,12,32),order='big'):
     return image,functions,[Segment('code',0,len(image),BASE)]
 
 
+@pytest.mark.parametrize('case', ['return', 'branch', 'changed', 'different_bytes', 'no_transfer'])
+def test_restore_shared_original_delay_slot(case):
+    from decompnet.rom.automatic_boundaries import _restore_original_delay_slots
+
+    transfer = {'return': 0x03e00008, 'branch': 0x10400001}.get(case, 0x03e00008)
+    if case == 'no_transfer':
+        transfer = 0x24020001
+    image, functions, _ = fixture([0x27bdffe8, transfer, 0x27bd0018], cuts=(0, 12))
+    original = functions[0]
+    short = replace(original, lines=original.lines[:2])
+    if case == 'changed':
+        short = replace(short, lines=[replace(short.lines[0], word=0), short.lines[1]])
+    if case == 'different_bytes':
+        image = image[:8] + bytes(4)
+    result = _restore_original_delay_slots([short], {(original.rom, original.vram): original}, image, 'big')
+    assert result[0].size == (12 if case in ('return', 'branch') else 8)
+
+
+@pytest.mark.parametrize('case', ['store', 'escape', 'call', 'mismatch', 'store_address', 'branch_escape', 'delay',
+                                  'exception'])
+def test_indexed_store_reference_is_only_data_when_address_does_not_escape(case):
+    from decompnet.rom.automatic_boundaries import _indexed_store_references
+
+    # lui $at, %hi(entry); addu $at, $at, $v0; sb $v1, %lo(entry)($at)
+    words = [0, 0x3c018000, 0x00220821, 0xa0232000, 0x03e00008, 0]
+    if case == 'escape':
+        words[4] = 0x00202025  # or $a0, $at, $zero
+    elif case == 'call':
+        words[4] = 0x0c000800
+    elif case == 'store_address':
+        words[3] = 0xac212000  # sw $at, %lo(entry)($at)
+    elif case == 'branch_escape':
+        words[4:] = [0x10000001, 0, 0x00202025, 0x03e00008, 0]
+    elif case == 'delay':
+        words[0] = 0x0c000800  # the high half could escape through the call
+    elif case == 'exception':
+        words[4] = 0x0000000c  # syscall can transfer register state to a handler
+    image, functions, _ = fixture(words, cuts=(0, len(words)*4))
+    fn = functions[0]
+    fn.lines[1] = replace(fn.lines[1], operands='$at, %hi(entry)')
+    fn.lines[3] = replace(fn.lines[3], operands='$v1, %lo(other)($at)' if case == 'mismatch'
+                          else '$v1, %lo(entry)($at)')
+    found = _indexed_store_references(fn)
+    assert bool(found) == (case == 'store')
+    if found:
+        assert found == {4: {'entry'}, 12: {'entry'}}
+
+
+@pytest.mark.parametrize('case', ['other_bank', 'escape', 'same_bank'])
+def test_shared_slot_indexed_store_does_not_invent_callable_entry(case, monkeypatch):
+    from decompnet.rom import automatic_boundaries
+
+    words = [0x27bdffe8, 0xafbf0014, 0x0c000800, 0x24040001, 0x8fbf0014, 0x03e00008, 0x27bd0018,
+             0, 0x3c018000, 0x00220821, 0xa0231010]
+    if case == 'escape':
+        words.append(0x00202025)  # the computed address can escape in $a0
+    words += [0x03e00008, 0]
+    image, functions, _ = fixture(words, cuts=(0, 16, 28, len(words)*4))
+    head, tail, caller = functions
+    if case != 'same_bank':
+        caller.segment = 'caller'
+        caller.vram = BASE + 0x1000
+        caller.lines = [replace(line, vram=caller.vram + line.rom - caller.rom) for line in caller.lines]
+    caller.lines[1] = replace(caller.lines[1], operands=f'$at, %hi({tail.name})')
+    caller.lines[3] = replace(caller.lines[3], operands=f'$v1, %lo({tail.name})($at)')
+    segments = ([Segment('code', 0, len(image), BASE)] if case == 'same_bank' else
+                [Segment('code', 0, 28, BASE), Segment('caller', 28, len(image), caller.vram)])
+    monkeypatch.setattr(automatic_boundaries, 'shared_slot_calls', lambda *args: ([], [segments[0]]))
+    result = repair(functions, [], image, consoles.get('n64'), segments)
+    protected = case != 'other_bank'
+    assert any(fn.rom == tail.rom for fn in result) == protected
+    assert next(fn for fn in result if fn.rom == head.rom).size == (16 if protected else 28)
+
+
 @pytest.mark.parametrize('case', ['valid', 'different slot', 'one sibling', 'head call', 'body call', 'computed head',
                                   'head pointer', 'explicit', 'competing mapping', 'non-code data', 'bad sibling',
                                   'limited trace'])
