@@ -46,10 +46,12 @@ def _code_like(words: tuple[int, ...]) -> bool:
 
 
 def find_segments(rom: bytes, taken: list[tuple[int, int, int]], ends: tuple[int, ...] = (), *, log=print,
-                  declared: tuple[tuple[int, int, int], ...] = ()) -> list[tuple[int, int, int]]:
+                  declared: tuple[tuple[int, int, int], ...] = (),
+                  source_ranges: tuple[tuple[int, int], ...] | list[tuple[int, int]] = ()) -> list[tuple[int, int, int]]:
     """(rom_start, rom_end, vram) of code segments outside `taken` (rom_start, rom_end, vram of the known ones).
     `ends`: where the known segments end, their data included (splat's config): code found after one can begin
-    right there. `declared`: those segments whole (rom_start, rom_end, vram), where a switch's jump table is read."""
+    right there. `declared`: those segments whole (rom_start, rom_end, vram), where a switch's jump table is read.
+    `source_ranges`: separate original or decompressed images; their padding never supplies a mapping."""
     size = len(rom) & ~3
     known_code = [(s, e) for s, e, _ in taken]
     calls: list[int] = []  # every call the known code makes outside itself: some go into the code found here
@@ -64,6 +66,10 @@ def find_segments(rom: bytes, taken: list[tuple[int, int, int]], ends: tuple[int
         pos = max(pos, e)
     if pos < size:
         gaps.append((pos, size))
+    if source_ranges:
+        # Each appended decompressed block is a separate source image. Its
+        # synthetic padding and its neighbour cannot establish a shared mapping.
+        gaps=[(max(a,lo),min(b,hi)) for a,b in gaps for lo,hi in source_ranges if a<hi and lo<b]
 
     candidates = []  # (start, end, vram, how sure): every stretch placed first, the surest kept first
     stretches = []  # every stretch of code, for the second pass
@@ -137,6 +143,12 @@ def find_segments(rom: bytes, taken: list[tuple[int, int, int]], ends: tuple[int
 
     found=refine(rom,found+referenced_gaps(rom,sorted(taken+found),declared),taken,log)
     return close_gaps(rom, loaded_code(rom,found,verified(rom,taken),taken,log), taken)
+
+
+def _within_sources(found, source_ranges):
+    """Keep inferred code inside actual source bytes, excluding appended zero padding."""
+    return [(start,end,vram+start-lo) for lo,hi,vram in found for a,b in source_ranges
+            if (start:=max(lo,a)) < (end:=min(hi,b))]
 
 
 def reconcile_between(rom, found, taken=(), log=print):
@@ -619,9 +631,11 @@ def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_rep
         rom = bytes(work)
         kib = sum(len(d) for _, d in packed) // 1024
         log(f"unpacked {len(packed)} compressed code block{'s' if len(packed) != 1 else ''} ({kib} KiB)")
+    sources=([(0,len(original_rom)&~3)]+[(at,(at+len(data))&~3) for at,(_,data) in zip(locations,packed)] if packed else [])
     known = split.segments_from_config(config)
     found = find_segments(rom, taken, tuple(s.rom_end for s in known), log=log,
-                          declared=tuple((s.rom_start, s.rom_end, s.vram) for s in known)) if taken else []
+                          declared=tuple((s.rom_start, s.rom_end, s.vram) for s in known),source_ranges=sources) if taken else []
+    if sources:found=_within_sources(found,sources)
     if not packed and taken and (banks := copied_overlays.read(original_rom, taken)):
         copied_overlays.add(config, original_rom, found, banks, log)
         return original
@@ -650,6 +664,7 @@ def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_rep
         found = sorted(found + loaded["segments"])
         found = sorted(complete_gaps(rom, taken, found, tuple((s.rom_start, s.rom_end, s.vram) for s in known),
                                      runtime_entries(workdir), log=log))
+        if sources:found=_within_sources(found,sources)
     if not packed and not found and loaded.get('decoded_programs'):
         from . import runtime_zlib
         if result := runtime_zlib.add(config, workdir, original, original_rom, taken,
@@ -723,13 +738,25 @@ def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_rep
     if safe_expanded is not None:
         found, scoped = expanded, safe_expanded
     found = inferred_overlays.drop_pointer_fragments(rom, found, taken)
+    linked=set()
+    if sources:
+        before_clipping=found
+        found=_within_sources(found,sources)
+        scoped={start for start,_,_ in found if any(lo in scoped and lo<=start<hi for lo,hi,_ in before_clipping)}
+        from . import packed_mapping
+        found,linked=packed_mapping.recover(rom,found,sources[1:],taken,getattr(log,'check_cancel',lambda:None))
+        for start,end,address in found:
+            for other,stop,base in found:
+                if start!=other and (start in linked or other in linked) and address<base+stop-other and base<address+end-start:
+                    scoped.update((start,other))
     scoped &= {start for start,_,_ in found}
     safe = inferred_overlays.safe_scopes(found, scoped, taken)
     if safe is None:
-        found, scoped = before_mapping, set()
+        found, scoped, linked = before_mapping, set(), set()
         log('Kept the original code mappings because independent banks would overlap the global address range.')
     else:
         scoped = safe
+    if linked:log(f'Corrected {len(linked)} packed code ranges using independently closed linked call targets.')
     if runtime and scoped:
         log(f'Corrected {len(runtime)} inferred code ranges using RAM-observed bytes and their internal calls.')
     # A run of relocation-section files can be mistaken for one continuous
