@@ -1488,6 +1488,9 @@ def test_reimport_direct_retry_separates_each_placeholder_and_preserves_port_cal
     assert 'decomp_overlay_direct_1(1)' in result and 'decomp_overlay_direct_2(2)' in result
     pointer_result = _direct_variant(fn, source, 'void *func_00000000();', candidate, target, '')
     assert 'void *uso_1_sym_2();' in pointer_result and 'void *uso_1_sym_3();' in pointer_result
+    scoped_source = '#define TYPE void *\nTYPE func_00000000();\n' + source
+    scoped = _direct_variant(fn, scoped_source, '', candidate, target, '')
+    assert scoped.index('TYPE func_00000000();') < scoped.index('TYPE uso_1_sym_2();')
     fallback = _direct_variant(fn, source, 'UNKNOWN_TYPE func_00000000();', candidate, target, '', prefer_decl=False)
     assert 'extern int uso_1_sym_2();' in fallback and 'extern int uso_1_sym_3();' in fallback
     candidate.relocs.pop()

@@ -127,7 +127,7 @@ def _direct_variant(fn, source, header, candidate, target, extra, *, prefer_decl
     expected = {(r.offset, r.type): r for r in target.relocs}
     combined = header + '\n' + source
     clean_combined = csource._blank(combined)
-    bindings, declarations = {}, []
+    bindings, declarations, source_declarations = {}, [], {}
     for symbol in counts:
         ordered = sorted(grouped[symbol], key=lambda r: r.offset)
         wanted = [expected.get((r.offset, r.type)) for r in ordered]
@@ -139,7 +139,11 @@ def _direct_variant(fn, source, header, candidate, target, extra, *, prefer_decl
         declaration = re.search(pattern, clean_combined) if prefer_decl else None
         prototype = combined[declaration.start():declaration.end()] if declaration else f'extern int {symbol}();'
         bindings[symbol] = iter(r.symbol for r in wanted)
-        declarations.extend(rename_identifiers(prototype, {symbol: r.symbol}) for r in wanted)
+        copies = [rename_identifiers(prototype, {symbol: r.symbol}) for r in wanted]
+        if declaration and declaration.start() >= len(header) + 1:
+            source_declarations[symbol] = (pattern, copies)
+        else:
+            declarations.extend(copies)
     replacements = []
     for index, (start, end, symbol) in enumerate(calls, 1):
         name = f'decomp_overlay_direct_{index}'
@@ -148,6 +152,11 @@ def _direct_variant(fn, source, header, candidate, target, extra, *, prefer_decl
         replacements.append((start, end, name, symbol, next(bindings[symbol])))
     for start, end, name, _, _ in reversed(replacements):
         source = source[:start] + name + source[end:]
+    for pattern, copies in source_declarations.values():
+        declaration = re.search(pattern, csource._blank(source))
+        if declaration is None:
+            return None
+        source = source[:declaration.end()] + '\n' + '\n'.join(sorted(set(copies))) + source[declaration.end():]
     port = '\n'.join(f'#define {name} {symbol}' for _, _, name, symbol, _ in replacements)
     rom = '\n'.join(f'#define {name} {binding}' for _, _, name, _, binding in replacements)
     return '\n'.join(sorted(set(declarations))) + '\n#ifdef PORT\n' + port + '\n#else\n' + rom + '\n#endif\n' + source + '\n' + extra
