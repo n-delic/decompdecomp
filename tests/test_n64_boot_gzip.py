@@ -161,3 +161,12 @@ def test_boot_mapping_coalesces_adjacent_fragments_only():
     assert _coalesce_boot_ranges(rows) == [(0x1000,0x1030,0x80000400),
                                            (0x1034,0x1040,0x80000434),
                                            (0x1040,0x1050,0x80001440)]
+
+
+def test_inline_pointer_table_is_data():
+    table = bytes.fromhex(
+        '800838d000000000800c3e6800000000800efbf800000000'
+        '800fb428000000008013a7b000000000'
+    )
+    assert boot_gzip.inline_tables(b'code' + table + b'code') == [(4, 44)]
+    assert boot_gzip.inline_tables(b'code' + table[:-1] + b'?' + b'code') == []

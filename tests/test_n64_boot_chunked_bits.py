@@ -112,6 +112,24 @@ def test_variant_removes_only_the_false_relocation_pair(tmp_path, monkeypatch):
     assert path.read_text(encoding='utf-8') == keep
 
 
+def test_second_audited_loader_layout_and_relocation_guard(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import boot_chunked_bits
+
+    rom = bytearray(0x1c00)
+    monkeypatch.setattr(boot_chunked_bits, '_VARIANT2', hashlib.sha256(rom[0x1000:0x1b00]).hexdigest())
+    entry = dict(name='entry', start=0x1000, vram=0x80200400, subsegments=[[0x1000, 'hasm']])
+    main = dict(name='main', start=0x105c, vram=0x8020045c, bss_size=0x38, subsegments=[[0x105c, 'c', 'main']])
+    assert boot_chunked_bits.repair_variant_entry([entry, main], rom)
+    path = tmp_path / 'reloc_addrs.txt'
+    first = 'rom:0x001030 reloc:MIPS_HI16 symbol:main_BSS_SIZE\n'
+    second = 'rom:0x001038 reloc:MIPS_LO16 symbol:main_BSS_SIZE\n'
+    path.write_text(first + second, encoding='utf-8')
+    assert boot_chunked_bits.repair_variant_relocations(path, rom)
+    text = bytes(112) + bytes.fromhex('27bdffe803e0000827bd0018') * 400
+    monkeypatch.setattr(boot_chunked_bits, '_VARIANT2_TEXT', hashlib.sha256(text).hexdigest())
+    assert boot_chunked_bits.variant_sections(text) == (112, 0xb8, 0x5aa0)
+
+
 def test_variant_programs_require_their_own_primary_and_descriptors(monkeypatch):
     rom = bytearray(0x1d00)
     monkeypatch.setattr(boot_chunked_bits, '_VARIANT', hashlib.sha256(rom[0x1000:0x1b00]).hexdigest())

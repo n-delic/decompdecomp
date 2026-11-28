@@ -10,6 +10,8 @@ _LIMIT = 4 * 1024 * 1024
 _LOADER = '9f4eee2e007ab9c5a521a86f13eb7590148c4e6607650eccf4092e0660f6ad68'
 _VARIANT = '0b6a82da5b2950bfda9db4e225dc1df96cdcf63d3fe0af52386360d9385b92f5'
 _VARIANT_TEXT = '31133f68985fed7e9d6871a5c31d18c1fb2c9f0d7478f21360dc527b9592e015'
+_VARIANT2 = 'd23bb6845b14fa601fdfd283f00ecf4ff1674f580b4d410c6a6c998a4c7624ca'
+_VARIANT2_TEXT = '536038ee4edee1e18fffba67b85e873954b3cb1adab362c169b71e3989b305ac'
 _PRIMARY = '10d91d2c6916496106b399cc05b6ee0663d10a3ae9fd8003cad4936ad5476b71'
 _VARIANT_PRIMARY = '3ca488c5e900ac5748c11ef50a1178305b116e6a70bf22b7826d0c39bf4683a3'
 # Directory index, offset, output and stored sizes, runtime address, text bounds,
@@ -62,14 +64,17 @@ def code_start(vram, text):
 
 def variant_sections(text):
     """An audited program puts startup code before a large data table."""
-    if hashlib.sha256(text).hexdigest() == _VARIANT_TEXT:
+    digest = hashlib.sha256(text).hexdigest()
+    if digest == _VARIANT_TEXT:
         return 96, 0xa8, 0x5748
+    if digest == _VARIANT2_TEXT:
+        return 112, 0xb8, 0x5aa0
     return None
 
 
 def repair_variant_entry(segments, rom):
     """Keep an audited boot helper whole when the initial split cuts it in two."""
-    if hashlib.sha256(rom[0x1000:0x1b00]).hexdigest() != _VARIANT:
+    if hashlib.sha256(rom[0x1000:0x1b00]).hexdigest() not in (_VARIANT, _VARIANT2):
         return False
     entry = next((s for s in segments if isinstance(s, dict) and s.get('name') == 'entry'), None)
     main = next((s for s in segments if isinstance(s, dict) and s.get('name') == 'main'), None)
@@ -88,7 +93,7 @@ def repair_variant_entry(segments, rom):
 
 def repair_variant_relocations(path, rom):
     """Remove the two false stack-frame relocations emitted for this loader."""
-    if hashlib.sha256(rom[0x1000:0x1b00]).hexdigest() != _VARIANT or not path.is_file():
+    if hashlib.sha256(rom[0x1000:0x1b00]).hexdigest() not in (_VARIANT, _VARIANT2) or not path.is_file():
         return False
     lines = path.read_text(encoding='utf-8').splitlines(keepends=True)
     false = {'rom:0x001030 reloc:MIPS_HI16 symbol:main_BSS_SIZE',
@@ -108,8 +113,11 @@ def find(rom, boot_ranges):
     for lo, hi in covered:
         if lo <= cursor < hi:
             cursor = hi
-    if cursor >= 0x1b00 and hashlib.sha256(rom[0x1000:0x1b00]).hexdigest() == _VARIANT:
+    digest = hashlib.sha256(rom[0x1000:0x1b00]).hexdigest() if cursor >= 0x1b00 else None
+    if digest == _VARIANT:
         directory, startup = 0x1b68, 96
+    elif digest == _VARIANT2:
+        directory, startup = 0x1b70, 112
     elif (cursor >= 0x16e0 and len(rom) >= 0x16ec
           and hashlib.sha256(rom[0x1000:0x16e0]).hexdigest() == _LOADER):
         pointer = struct.unpack_from('>I', rom, 0x16e8)[0]
