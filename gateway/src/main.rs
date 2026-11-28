@@ -22,6 +22,7 @@ mod native;
 mod rom_judge;
 mod desktop_judge;
 mod entry_fixes;
+mod twins_prints;
 mod mips_link;
 mod mips_elf;
 mod mips_ecoff;
@@ -1084,6 +1085,9 @@ fn main() {
     }
     if args.as_slice() == ["entry-fixes"] {
         std::process::exit(entry_fixes::serve());
+    }
+    if args.as_slice() == ["twins-prints"] {
+        std::process::exit(twins_prints::serve());
     }
     gateway_main(args);
 }

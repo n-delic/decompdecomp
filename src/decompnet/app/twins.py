@@ -247,6 +247,67 @@ def rom_print(fn, arch: str, big_endian: bool, label) -> Print:
                  [a for _, _, a in relocs], raw_digest=_raw_digest(raw), alt_key=alt)
 
 
+def rom_prints_rust(rows, arch_name: str, big_endian: bool, label) -> dict[int, Print] | None:
+    """Run `decomp-mcp-gateway twins-prints` when available; return None on missing binary or error."""
+    import subprocess
+
+    from . import mcp_gateway
+
+    exe = mcp_gateway.program()
+    if exe is None:
+        return None
+    masks = {
+        str(rtype): list(spec)
+        for (a, rtype), spec in MASKS_BY_ARCH.items()
+        if a == arch_name
+    }
+    payload = {
+        "arch": arch_name,
+        "big_endian": bool(big_endian),
+        "masks": masks,
+        "functions": [
+            {
+                "id": int(r["id"]),
+                "target_hex": bytes(r["target"] or b"").hex(),
+                "relocs": [
+                    [int(x[0]), int(x[1]), int(x[2])]
+                    for x in json.loads(r["relocs"] or "[]")
+                    if len(x) >= 3
+                ],
+            }
+            for r in rows
+        ],
+    }
+    try:
+        proc = subprocess.run(
+            [str(exe), "twins-prints"],
+            input=json.dumps(payload),
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        raw = json.loads(proc.stdout)
+    except ValueError:
+        return None
+    out: dict[int, Print] = {}
+    for item in raw.get("prints", ()):
+        addrs = [int(a) for a in item["addrs"]]
+        out[int(item["id"])] = Print(
+            item["key"],
+            [label(a) for a in addrs],
+            int(item["size"]),
+            addrs,
+            raw_digest=item["raw_digest"],
+            alt_key=item["alt_key"],
+        )
+    return out
+
+
 def rom_renames(syms, source: str, a: Print, b: Print, a_name: str, b_name: str, syms_b=None) -> dict[str, str] | None:
     """renames() for a ROM project, where relocations are addresses: for each address a's code refers to, the
     name a's C writes for it (the nearest symbol at or below it that the C mentions: a struct whose field it is,
@@ -480,10 +541,20 @@ class Twins:
         cfg = self.net.cfg(proj)
         syms = self.net.symbols(proj["id"])
         from .maintenance import checkpoint
+        rows = self.net.project_store(proj['id']).all(
+            "SELECT id, target, relocs FROM functions WHERE project_id=? AND status!='asm'",
+            proj["id"],
+        )
+        checkpoint()
+        arch_name = proj["arch"] or "mips"
+        big_endian = bool(cfg.get("big_endian", True))
+        rust_out = rom_prints_rust(rows, arch_name, big_endian, syms.label)
+        if rust_out is not None:
+            return rust_out
         out = {}
-        for row in self.net.project_store(proj['id']).all("SELECT id, target, relocs FROM functions WHERE project_id=? AND status!='asm'", proj["id"]):
+        for row in rows:
             checkpoint()
-            out[row["id"]] = rom_print(row, proj["arch"] or "mips", bool(cfg.get("big_endian", True)), syms.label)
+            out[row["id"]] = rom_print(row, arch_name, big_endian, syms.label)
         return out
 
     def _fork_prints(self, proj, *, matched_only=False, function_ids=None, job=None) -> dict[int, Print]:

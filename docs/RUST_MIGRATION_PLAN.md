@@ -12,14 +12,14 @@ Today, the main server is a single Python 3.12 process. Because all threads in t
 
 ## Phased Plan
 
-### Phase 1: Gateway & Read-Only Offloading (In Progress / Done)
+### Phase 1: Gateway & Read-Only Offloading (Done)
 - **MCP Gateway (`gateway/`):** Route MCP tool calls with strict deadlines (`decomp-mcp-gateway`).
 - **Read-only UI endpoints (`--window-reads`):** Serve high-frequency read-only routes (`/api/stats`, `/api/knowledge`, `/api/attempt-history`, `/api/projects?brief=1`) through the gateway rather than the main server's event loop.
 
 ### Phase 2: Pure CPU-Bound Analysis Workers
 Move pure, stateless byte/instruction analysis out of the main Python process:
-- **Boundary & entry fixes (`entry_fixes` / `_pointed_at`):** Single-pass ROM word scanning and MIPS boundary/epilogue rules in Rust, eliminating multi-minute GIL stalls during ROM import and `Check again`.
-- **Disassembly, scoring & fingerprinting (`scoring.py`, `twins.py`):** Offload Capstone/Rabbitizer disassembly, instruction-level diffs, and twin fingerprinting to Rust.
+- **Boundary & entry fixes (`entry_fixes` / `_pointed_at`) (Done):** Single-pass ROM word scanning and MIPS boundary/epilogue rules in Rust, eliminating multi-minute GIL stalls during ROM import and `Check again`.
+- **Disassembly, scoring & fingerprinting (`scoring.py`, `twins.py`):** Offload Capstone/Rabbitizer disassembly, instruction-level diffs, and twin fingerprinting (`twins-prints` done) to Rust.
 - **ROM splitting & asset recognition:** Gradually replace pure-Python post-`splat` analysis and `decompassets` recognizers with Rust workers.
 
 ### Phase 3: High-Frequency State, Claims & Judge
