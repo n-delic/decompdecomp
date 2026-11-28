@@ -762,6 +762,9 @@ def test_unresolved_scoped_automatic_names_keep_their_address():
     assert _auto_addresses(['jal func_8026E0B4_\n.word func_8026A964_'], set()) == {
         'func_8026E0B4_': 0x8026E0B4, 'func_8026A964_': 0x8026A964,
     }
+    assert _auto_addresses(['%hi(D_800A8130_code_8009B340_987A0)'], set()) == {
+        'D_800A8130_code_8009B340_987A0': 0x800A8130,
+    }
 
 
 def test_nonmatching_data_block_is_not_an_entry_function():

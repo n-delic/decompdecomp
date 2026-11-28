@@ -161,17 +161,23 @@ def refine(config, workdir, image, console, log=print, *, visited=None):
             probes.append((offset,target,row))
     # Quiet code: a framed body nobody calls or points at, inside a raw chunk, is accepted when it saves and restores
     # $ra and itself calls a function the project already has (loader_code's linked_frame). A data table seldom does.
-    entry_vrams={}
+    # A call outside this bank is useful evidence only when its address identifies
+    # one known entry; overlapping banks can otherwise make a caller ambiguous.
+    entry_vrams={};all_entries={}
     for fn in functions:
         entry_vrams.setdefault(fn.vram-fn.rom,set()).add(fn.vram)
+        all_entries[fn.vram] = all_entries.get(fn.vram, 0) + 1
+    unambiguous_entries = {address for address,count in all_entries.items() if count == 1}
     for start,end,segment,raw,_ in dropped:
         mapping=segment.vram-segment.rom_start
-        known_entries=entry_vrams.get(mapping,())
+        known_entries=entry_vrams.get(mapping,set()) | unambiguous_entries
         if not known_entries:continue
         for at in range(start,end-8,4):
             if not is_frame(int.from_bytes(rom[at:at+4],'big')) or (at,at+mapping,end) in visited:continue
             if any(at==o for o,_,_ in probes):continue
-            words=[int.from_bytes(rom[x:x+4],'big') for x in range(at,min(at+0x400,end),4)]
+            # Some valid functions restore $ra after the first KiB; the complete
+            # extent is still checked by the processor-specific validator below.
+            words=[int.from_bytes(rom[x:x+4],'big') for x in range(at,min(at+0x800,end),4)]
             if not ({w&0xffff for w in words if w&0xffff0000==0xafbf0000}&{w&0xffff for w in words if w&0xffff0000==0x8fbf0000}):continue
             if any(w>>26==3 and (((at+mapping)&0xF0000000)|((w&0x3FFFFFF)<<2)) in known_entries for w in words):
                 probes.append((at,at+mapping,next(r for r in dropped if r[0]<=at<r[1])))  # visited is set when probed
@@ -224,7 +230,7 @@ def refine(config, workdir, image, console, log=print, *, visited=None):
     notes=json.loads(note_path.read_text()) if note_path.is_file() else []
     if changed:
         config.write_text(yaml.safe_dump(cfg,sort_keys=False,default_flow_style=None),encoding='utf-8')
-        message=f'Recovered {len(accepted)} directly called framed entries from raw disassembler output; unmatched code still needs normal exact judging.'
+        message=f'Recovered {len(accepted)} framed entries with call evidence from raw disassembler output; unmatched code still needs normal exact judging.'
         log(message);notes.append(message)
     if len(probes)>MAX_CANDIDATES:
         notes.append(f'Mixed-code recovery reached its {MAX_CANDIDATES}-candidate pass limit; coverage remains incomplete.')

@@ -289,3 +289,27 @@ def test_anchor_does_not_create_a_source_unit_on_unentered_nop(tmp_path):
     starts = [part[0] for part in yaml.safe_load(path.read_text())['segments'][0]['subsegments']]
     assert 0x20 not in starts
     assert 0x40 in starts
+
+
+def test_quiet_long_frame_can_call_an_unambiguous_other_segment(tmp_path):
+    caller = [0x27BDFFE8, 0xAFBF0014, 0x24020001, 0, 0x8FBF0014, 0x03E00008, 0x27BD0018, 0]
+    body = [0x27BDFFE8, 0xAFBF0014, 0x0C000000 | ((BASE >> 2) & 0x3FFFFFF), 0]
+    body += [0x24020001] * 300
+    body += [0x8FBF0014, 0x03E00008, 0x27BD0018]
+    words = caller + [0x7000003F] * 8 + body + [0] * 4
+    (tmp_path/'rom.bin').write_bytes(packed(words))
+    cfg = {'options': {}, 'segments': [
+        {'name': 'caller', 'type': 'code', 'start': 0, 'vram': BASE, 'subsegments': [[0, 'c', 'caller']]},
+        {'name': 'unit', 'type': 'code', 'start': 32, 'vram': BASE+0x1000, 'subsegments': [[32, 'c', 'unit']]},
+        [len(words)*4]]}
+    path = tmp_path/'game.yaml'; path.write_text(yaml.safe_dump(cfg, sort_keys=False))
+    asm(tmp_path/'asm/nonmatchings/caller/caller.s', caller, 0)
+    raw = tmp_path/'asm/nonmatchings/unit/dropped.s'
+    asm(raw, words[8:], 32, raw=True)
+    text = raw.read_text()
+    for offset in reversed(range(32, len(words)*4, 4)):
+        text = text.replace(f'{BASE+offset:08X}', f'{BASE+0x1000+offset-32:08X}')
+    raw.write_text(text)
+    assert mixed_code.refine(path, tmp_path, 'rom.bin', get('n64'), log=lambda _: None)
+    cuts = [x[0] for x in yaml.safe_load(path.read_text())['segments'][1]['subsegments']]
+    assert 0x40 in cuts and 0x40+len(body)*4 in cuts
