@@ -84,6 +84,31 @@ def test_runtime_range_can_cover_only_part_of_inferred_code():
     assert changed=={0}
 
 
+def test_runtime_bank_continuation_needs_shared_observation_and_two_closed_callees():
+    image,_=fixture();base=0x80100000
+    first=(0,0x4000,0x80040000);second=(0x4000,0x5000,0x80090000)
+    observed=(0,0x5000,base)
+    body=(0x27bdffe8,0xafbf0014,0x24020007,0x8fbf0014,0x03e00008,0x27bd0018)
+    for at in (0x4000,0x4040):struct.pack_into('>6I',image,at,*body)
+    def jal(address):return 0x0c000000|((address>>2)&0x3ffffff)
+    struct.pack_into('>2I',image,0x3200,jal(base+0x4000),jal(base+0x4040))
+    mapped,changed=inferred_overlays.runtime_mappings(image,[first,second],[observed])
+    assert mapped==[(0,0x4000,base),(0x4000,0x5000,base+0x4000)] and changed=={0,0x4000}
+    # Two independently observed pieces do not establish that they coexisted.
+    assert inferred_overlays.runtime_mappings(image,[first,second],[(0,0x4000,base),(0x4000,0x5000,base+0x4000)])[0][1]==second
+    saved=image[0x3000:0x3000+4*48];image[0x3000:0x3000+4*48]=bytes(4*48)
+    assert inferred_overlays.runtime_mappings(image,[first,second],[observed])[0]==[first,second]
+    image[0x3000:0x3000+4*48]=saved
+    struct.pack_into('>I',image,0x3204,0)
+    assert inferred_overlays.runtime_mappings(image,[first,second],[observed])[0][1]==second
+    struct.pack_into('>I',image,0x3204,jal(base+0x4040))
+    struct.pack_into('>I',image,0x4040,0)
+    assert inferred_overlays.runtime_mappings(image,[first,second],[observed])[0][1]==second
+    struct.pack_into('>6I',image,0x4040,*body)
+    struct.pack_into('>I',image,0x3208,jal(second[2]))
+    assert inferred_overlays.runtime_mappings(image,[first,second],[observed])[0][1]==second
+
+
 def test_rejected_partial_runtime_range_does_not_split_the_inferred_segment():
     image,found=fixture()
     image[0x3000:0x3000+4*48]=bytes(4*48)
