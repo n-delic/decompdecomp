@@ -56,8 +56,8 @@ def restore_cut_banks(config, *, restored=None):
     return result
 
 
-def restore_matched_entries(config, functions, restored):
-    """Keep saved entries visible in the portion of a rejoined bank Splat missed."""
+def restore_matched_entries(config, functions, restored, *, only_matched=True):
+    """Keep selected entries visible in a code bank Splat may otherwise miss."""
     for bank_start, tail_start, bank_end in restored:
         bank = next(s for s in config['segments'] if isinstance(s, dict) and s.get('start') == bank_start)
         subs = bank.get('subsegments', [])
@@ -65,7 +65,7 @@ def restore_matched_entries(config, functions, restored):
         for fn in functions:
             row = dict(fn)
             lo, size, vram = row.get('rom_offset'), row.get('size'), row.get('vram')
-            if (row.get('status') != 'matched' or type(lo) is not int or type(size) is not int
+            if ((only_matched and row.get('status') != 'matched') or type(lo) is not int or type(size) is not int
                     or type(vram) is not int or size <= 0 or not tail_start <= lo < lo + size <= bank_end
                     or bank['vram'] + lo - bank_start != vram):
                 continue
