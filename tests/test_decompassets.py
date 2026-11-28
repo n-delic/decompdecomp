@@ -168,3 +168,19 @@ def test_paged_audio_reaches_console_previews():
     for layout in ('big-indexed-audio', 'big-sam-audio'):
         bank = next(item for item in assets if item.get('layout') == layout)
         assert console.asset_preview(image, bank, {})['mime'] == 'audio/wav'
+
+
+def test_chunked_indexed_image_reaches_console_preview():
+    import struct
+
+    from decompnet.consoles import get
+
+    decoded = (struct.pack(">4HI2H", 8, 1, 1, 0xffff, 72, 8, 8) + bytes(range(64))
+               + bytes.fromhex("020601000008") + bytes(512))
+    chunks = [decoded[i:i+127] for i in range(0, len(decoded), 127)]
+    packed = b"12345" + b"".join(bytes([0x80 | len(chunk)]) + chunk for chunk in chunks) + b"\0"
+    asset = dict(layout="chunked-lz-indexed-image", offset=0, size=len(packed),
+                 expanded=len(decoded), reason="Validated directory and embedded palette.")
+    result = get("n64").asset_preview(packed, asset, {})
+    assert result["media"] == "image"
+    assert (result["details"]["width"], result["details"]["height"]) == (8, 8)
