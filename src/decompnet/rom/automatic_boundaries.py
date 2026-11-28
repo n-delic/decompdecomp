@@ -298,6 +298,76 @@ def _discard_payload_pointers(pointers, image, order, ranges):
     return pointers
 
 
+def _closed_loop_tails(functions, image, order, console, owner, explicit, references, direct_calls, data):
+    """Leave unentered words after a closed self-loop out of its function."""
+    from ..arch.mips_gaps import extent
+
+    result, removed = [], set()
+    ordered = sorted(functions, key=lambda fn: (owner(fn), fn.rom))
+    for i, fn in enumerate(ordered):
+        following = ordered[i+1] if i+1 < len(ordered) else None
+        if (following is None or owner(fn)[0] < 0 or owner(fn) != owner(following)
+                or fn.rom+fn.size != following.rom or fn.vram+fn.size != following.vram
+                or following.vram % 16 or following.vram not in direct_calls or not is_frame(fn.lines[0].word)
+                or not any(not fn.rom <= src < fn.rom+fn.size for src, _ in references.get(fn.vram, ()))):
+            result.append(fn)
+            continue
+        cut = None
+        for tail in (4, 8, 12):
+            k = len(fn.lines)-tail//4
+            if k < 2:
+                continue
+            loop, delay = fn.lines[k-2:k]
+            if loop.word != 0x08000000 | ((loop.vram >> 2) & 0x3ffffff) or delay.word:
+                continue
+            start = fn.vram+4*k
+            if (any(references.get(a) for a in range(start,fn.vram+fn.size,4))
+                    or any(d.rom is not None and d.rom < fn.rom+fn.size and fn.rom+4*k < d.rom+d.size for d in data)):
+                continue
+            # A swallowed callback can be a second independent root. Follow every
+            # externally named, branched-to, stored or directly materialized root.
+            roots = {fn.vram} | {a for a in explicit | set(fn.entry_aliases)
+                                 if fn.vram <= a < fn.vram+fn.size}
+            for address in range(fn.vram+4,fn.vram+fn.size,4):
+                if any(not fn.rom <= src < fn.rom+fn.size for src, _ in references.get(address, ())):
+                    roots.add(address)
+            fmt = '>I' if order == 'big' else '<I'
+            roots.update(word for (word,) in struct.iter_unpack(fmt,image[:len(image)//4*4])
+                         if fn.vram <= word < fn.vram+fn.size and word%4 == 0)
+            for body in functions:
+                for index, line in enumerate(body.lines):
+                    w = line.word
+                    if w >> 26 != 15 or not (reg := (w >> 16) & 31):
+                        continue
+                    high = (w & 0xffff) << 16
+                    for later in body.lines[index+1:index+9]:
+                        v = later.word
+                        if v >> 26 in (9,13) and (v >> 21) & 31 == reg:
+                            low = v & 0xffff
+                            value = (high+(low-0x10000 if v >> 26 == 9 and low & 0x8000 else low)) & 0xffffffff
+                            if fn.vram <= value < fn.vram+fn.size and value%4 == 0:
+                                roots.add(value)
+                            break
+            if any(root >= start for root in roots):
+                continue
+            flows = [(root,extent(image,fn.rom+root-fn.vram,fn.rom+fn.size,root,order,console.cpu_variant))
+                     for root in roots]
+            if (any(not flow['flow_bounded'] or root+flow['extent_bytes'] > start for root,flow in flows)
+                    or max(root+flow['extent_bytes'] for root,flow in flows) != start):
+                continue
+            if image[fn.rom:fn.rom+fn.size] != b''.join(line.word.to_bytes(4,order) for line in fn.lines):
+                continue
+            cut = k
+            break
+        if cut is None:
+            result.append(fn)
+        else:
+            removed.update(line.rom for line in fn.lines[cut:])
+            result.append(replace(fn,lines=fn.lines[:cut],labels={a for a in fn.labels if a < fn.vram+4*cut}))
+    replacements = {id(old):new for old,new in zip(ordered,result)}
+    return [replacements[id(fn)] for fn in functions], removed
+
+
 def repair(functions, data, image, console, segments, *, symbols=(), log=print, inline_data=()):
     """Keep all original instructions while joining/splitting strictly validated bodies."""
     if console.arch!='mips':return functions
@@ -346,6 +416,19 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
     for dest,offset,segment in shared:
         references[dest].discard((offset,segment))
         if not references[dest]:del references[dest]
+    functions, loop_tails = _closed_loop_tails(functions,image,order,console,owner,explicit,references,direct_calls,data)
+    if loop_tails:
+        for target in list(references):
+            references[target] = {(source, unit) for source, unit in references[target] if source not in loop_tails}
+            if not references[target]:
+                del references[target]
+        direct_calls = {target for target in direct_calls if any(
+            int.from_bytes(image[source:source+4],order) >> 26 == 3 for source, _ in references.get(target,()))}
+        transfer_targets = {target for target in transfer_targets if any(
+            int.from_bytes(image[source:source+4],order) >> 26 in (1,2,3,4,5,6,7,17,20,21,22,23)
+            for source, _ in references.get(target,()))}
+        lines_by_rom = {line.rom:line for fn in functions for line in fn.lines}
+        log(f'Left {len(loop_tails)} unreachable words after closed loops in the original image.')
     stale = stale_code_copies(functions, image, order, console, segments, owner, explicit,
                               references, direct_calls, data)
     distant = distant_stale_fragments(functions, image, order, console, segments, owner, explicit,
