@@ -15,6 +15,8 @@ MAX_MEMBER = 4 * 1024 * 1024
 # text member. Their consumers load them as data. Match the full audited spans
 # so versions that change a table still go through the normal boundary review.
 INLINE_TABLES = (
+    (bytes.fromhex('800838d000000000800c3e6800000000'), 40,
+     'a7fc74bb39c1ba40e5f3911db5f6fd9ee028308f5eb206a0be65a5b8a33f4949'),
     (bytes.fromhex('8005a6848005a6848005a6648005a670'), 64,
      '89861ba83028659d467c7a8de5b65f5f4ec558f35c354c57fb3e6111645bab49'),
     (bytes.fromhex('07aa01010003ffffffff00200020000a'), 0x8b0,
