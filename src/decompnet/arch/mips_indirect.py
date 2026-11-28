@@ -184,16 +184,40 @@ def _ido_register_guard(image,start,at,order):
     return None
 
 
-def _guard_slot(word, index, condition):
+def _guard_slot(word, index, condition, cpu=''):
     # Unrelated integer and FP operations can fill an IDO scheduler slot.
     return (not word or word >> 21 == 0x57d
             or word & 0xfc1f07ff in (33, 37) and (word >> 11) & 31 not in (index, condition)
+            or cpu == 'vr4300' and word & 0xfc1f07ff == 45 and (word >> 11) & 31 not in (index, condition)
             or word >> 26 in (9, 10, 11, 12, 13, 14) and (word >> 16) & 31 not in (index, condition)
             # A scheduled load may fill the same gap if it preserves both
             # registers used by the bounds check and table index.
             or word >> 26 == 35 and (word >> 16) & 31 not in (index, condition)
             # These FP operations cannot change either general-purpose guard register.
             or word & 0xffe0003f in (0x46000001, 0x46000002, 0x46000006))
+
+
+def _guard_stack_save(image, start, guard, word, order):
+    """Allow a callee-save spill inside an unchanged, bounded stack frame."""
+    import rabbitizer
+
+    from .mips import _mips_uses
+
+    first = int.from_bytes(image[start:start+4], order)
+    if first >> 16 != 0x27bd or not first & 0x8000:
+        return False
+    frame = (-first) & 0xffff
+    op, base, reg, offset = word >> 26, (word >> 21) & 31, (word >> 16) & 31, word & 0xffff
+    width = 4 if op == 43 and reg in (*range(16, 24), 30, 31) else 8 if op == 61 and 20 <= reg <= 30 else 0
+    if not width or base != 29 or not 8 <= frame <= 0x1000 or frame % 8 or offset+width > frame or offset % width:
+        return False
+    for at in range(start+4, guard, 4):
+        item = int.from_bytes(image[at:at+4], order)
+        ins = rabbitizer.Instruction(item)
+        uses = _mips_uses(item, '')
+        if not ins.isValid() or ins.hasDelaySlot() or uses is None or 29 in uses[1]:
+            return False
+    return True
 
 
 def _prescaled_guard(image, start, end, at, order, vram):
@@ -276,7 +300,7 @@ def _prechecked_guard(image, start, end, at, order, vram):
     return guard, branch, count, (((hi & 0xffff) << 16)+signed(load)) & 0xffffffff
 
 
-def jump_table(image,start,end,vram,at,order,ranges=(),mappings=(),*,reader=None, allow_saved_base=False):
+def jump_table(image,start,end,vram,at,order,ranges=(),mappings=(),*,reader=None, allow_saved_base=False, cpu=''):
     """Recognize one exact guard/scale/LUI/add/load/JR idiom (its scale in the guard's delay slot or after it),
     with no interior entry. Import data classification may also follow an early saved-register base."""
     if at+8>end:return None
@@ -305,15 +329,17 @@ def jump_table(image,start,end,vram,at,order,ranges=(),mappings=(),*,reader=None
             words = [int.from_bytes(image[p:p+4], order) for p in range(previous, guard, 4)] + [bound]
             for offset in range(len(words) - 2, -1, -1):
                 prior = words[offset]
-                if prior >> 26 == 11 and all(_guard_slot(word, (prior >> 21) & 31, (prior >> 16) & 31)
-                                             for word in words[offset + 1:]):
+                if prior >> 26 == 11 and all(
+                        _guard_slot(word, (prior >> 21) & 31, (prior >> 16) & 31, cpu)
+                        or _guard_stack_save(image, start, branch_pc, word, order)
+                        for word in words[offset + 1:]):
                     guard, bound = previous + offset * 4, prior
                     break
         index=(bound>>21)&31;condition=(bound>>16)&31;count=bound&0xffff
         dest=(jump>>21)&31;base=(hi>>16)&31;scaled=(scale>>11)&31
         if bound>>26!=11 or not 0<count<=MAX_ENTRIES or not index or not condition or condition==index:continue
         if branch>>26 not in (4,20) or {(branch>>21)&31,(branch>>16)&31}!={0,condition}:continue
-        if not _guard_slot(delay, index, condition):continue
+        if not _guard_slot(delay, index, condition, cpu):continue
         if scale>>26 or scale&63 or (scale>>6)&31!=2 or (scale>>16)&31!=index or (scale>>21)&31:continue
         if hi>>26!=15 or not base or not scaled or base==scaled:continue
         if add>>26 or add&63!=33 or (add>>11)&31!=base or {(add>>21)&31,(add>>16)&31}!={base,scaled}:continue

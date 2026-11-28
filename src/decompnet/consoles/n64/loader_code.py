@@ -89,7 +89,7 @@ def complete(image, segments, banks, taken=(), log=print, *, table_ranges=(), wh
         for at in range(lo,hi-3,4):
             if at%0x1000==0:check()
             if not is_frame(int.from_bytes(image[at:at+4],'big')):continue
-            size=called_extent(image,at,hi,vram+at-lo,table_ranges=table_ranges)
+            size=called_extent(image,at,hi,vram+at-lo,cpu='vr4300',table_ranges=table_ranges)
             if size:bodies[at]=(at,at+size,vram+at-lo)
             # Some compilers load a global just before allocating the frame.
             # Start only at a two-instruction address/load pair after a hard
@@ -97,7 +97,7 @@ def complete(image, segments, banks, taken=(), log=print, *, table_ranges=(), wh
             entry=at-8
             if entry < lo or not _leading_global_load(image, entry, lo):
                 continue
-            size=called_extent(image,entry,hi,vram+entry-lo,table_ranges=table_ranges)
+            size=called_extent(image,entry,hi,vram+entry-lo,cpu='vr4300',table_ranges=table_ranges)
             if size:bodies[entry]=(entry,entry+size,vram+entry-lo)
     # A quiet framed function can be dead code or a callback. Its own calls to
     # independently established CPU callees corroborate it even without an incoming
@@ -109,7 +109,7 @@ def complete(image, segments, banks, taken=(), log=print, *, table_ranges=(), wh
             valid=False
             if len(owners)==1:
                 lo,hi,ram=owners[0];at=lo+target-ram
-                valid=bool(called_extent(image,at,hi,target,table_ranges=table_ranges) or leaf_extent(image,at,hi,target,table_ranges=table_ranges))
+                valid=bool(called_extent(image,at,hi,target,cpu='vr4300',table_ranges=table_ranges) or leaf_extent(image,at,hi,target,cpu='vr4300',table_ranges=table_ranges))
             callee_cache[target]=valid
         return callee_cache[target]
     def linked_frame(a,b,v):
@@ -132,8 +132,8 @@ def complete(image, segments, banks, taken=(), log=print, *, table_ranges=(), wh
             lo,_,v=owners[0];at=lo+target-v;i=bisect_right(starts,at)-1
             if i<0 or not gaps[i][0]<=at<gaps[i][1]:continue
             if at not in bodies:
-                size=(called_extent(image,at,gaps[i][1],target,table_ranges=table_ranges)
-                      or leaf_extent(image,at,gaps[i][1],target,table_ranges=table_ranges))
+                size=(called_extent(image,at,gaps[i][1],target,cpu='vr4300',table_ranges=table_ranges)
+                      or leaf_extent(image,at,gaps[i][1],target,cpu='vr4300',table_ranges=table_ranges))
                 if not size and target in calls:
                     size=_called_trapping_frame(image,at,gaps[i][1],target,table_ranges)
                 if not size and target in calls:

@@ -45,6 +45,27 @@ def test_switch_guard_allows_float_subtraction_in_delay_slot(order):
     assert jump_table(image, 0x1000, 0x103c, 0x80001000, 0x101c, order, ranges) is None
 
 
+@pytest.mark.parametrize('order', ['big', 'little'])
+def test_switch_guard_allows_bounded_stack_saves_on_vr4300(order):
+    words = [0x27bdffd0, 0x2ca20002, 0xafbf0018, 0xf7b60028, 0xf7b40020,
+             0x1040000b, 0x0080882d, 0x00051080, 0x3c018000, 0x00220821,
+             0x8c221100, 0x00400008, 0, 0x03e00008, 0, 0x03e00008, 0, 0x03e00008, 0]
+    image = bytearray(0x1200)
+    image[0x1000:0x104c] = b''.join(word.to_bytes(4, order) for word in words)
+    image[0x1100:0x1108] = b''.join(word.to_bytes(4, order) for word in (0x80001034, 0x8000103c))
+    ranges = [dict(rom_start=0x1100, rom_end=0x1108, vram=0x80001100)]
+    def probe(cpu='vr4300'):
+        return jump_table(image, 0x1000, 0x104c, 0x80001000, 0x102c, order, ranges, cpu=cpu)
+    assert probe()['state'] == 'validated'
+    assert probe('') is None  # DADDU is not valid on every MIPS processor.
+    for bad in (0xf7a20028, 0xf7b60030):  # non-save register or outside the frame
+        image[0x100c:0x1010] = bad.to_bytes(4, order)
+        assert probe() is None
+    image[0x100c:0x1010] = words[3].to_bytes(4, order)
+    image[0x1008:0x100c] = (0x27bdfff8).to_bytes(4, order)
+    assert probe() is None  # the saved slots no longer use the proven frame
+
+
 def test_callback_candidate_matching_checks_for_cancellation(monkeypatch):
     from decompnet.arch import mips_indirect
 

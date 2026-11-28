@@ -106,7 +106,7 @@ def extent(image, start, end, vram, order, cpu="", *, table_ranges=(), mapping_c
                                  'targets':[vram+t for t in destinations], 'source':'loader relocation'})
                 pending.extend(start+t for t in destinations)
                 continue
-            table=jump_table(image,start,end,vram,at,order,table_ranges,mapping_choices) if len(tables)<8 else None
+            table=jump_table(image,start,end,vram,at,order,table_ranges,mapping_choices,cpu=cpu) if len(tables)<8 else None
             if table:
                 tables.append(table)
                 if table['state']=='validated':
