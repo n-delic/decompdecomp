@@ -31,3 +31,17 @@ def test_recover_only_the_callers_declared_bank(caller_bank):
     cfg['segments'][caller_bank]['subsegments'][1][1] = 'bin'
     cfg['segments'][caller_bank].pop('exclusive_ram_id')
     assert not _called_scoped_bin_bodies(cfg, bytes(image), known, lambda _: None)
+
+
+def test_skip_a_bank_when_its_calls_only_enter_existing_code(monkeypatch):
+    from decompnet.consoles.n64 import loader_code
+
+    vram = 0x80001000
+    image = bytearray(0x180)
+    call = 0x0c000000 | (((vram + 0x10) & 0x0fffffff) >> 2)
+    image[0x100:0x110] = call.to_bytes(4, 'big') + bytes.fromhex('00000000 03e00008 00000000')
+    cfg = {'segments': [
+        {'name': 'a', 'type': 'code', 'start': 0x100, 'vram': vram, 'exclusive_ram_id': 'slot',
+         'subsegments': [[0x100, 'c', 'a'], [0x120, 'bin', 'gap']]}, [0x180]]}
+    monkeypatch.setattr(loader_code, 'complete', lambda *args, **kwargs: pytest.fail('scanned an uncalled gap'))
+    assert not _called_scoped_bin_bodies(cfg, bytes(image), [(0x100, 0x110, vram)], lambda _: None)

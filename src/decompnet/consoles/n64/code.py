@@ -1317,15 +1317,18 @@ def _called_scoped_bin_bodies(cfg, rom, known, log):
         check()
         progress({'phase': 'Checking called code in overlay gaps', 'done': index, 'total': len(parents)})
         parent = raw.get(bank.rom_start, {})
-        subs = [s for s in parent.get('subsegments', []) if isinstance(s, list) and len(s) >= 2]
+        subs = sorted((s for s in parent.get('subsegments', []) if isinstance(s, list) and len(s) >= 2),
+                      key=lambda s: s[0])
         if not bank.exclusive_ram_id or not any(s[1] == 'bin' for s in subs):
             continue
         scope = [(lo, hi, vram) for lo, hi, vram in known
                  if bank.rom_start <= lo < hi <= bank.rom_end and vram - lo == bank.vram - bank.rom_start]
         if not scope:
             continue
+        gaps = [(s[0], subs[i + 1][0] if i + 1 < len(subs) else bank.rom_end)
+                for i, s in enumerate(subs) if s[1] == 'bin']
         calls = {target for lo, hi, vram in scope for target, _, kind in references(rom, lo, hi, vram)
-                 if kind == 'call'}
+                 if kind == 'call' and any(a <= bank.rom_start + target - bank.vram < b for a, b in gaps)}
         if not calls:
             continue
         bounds = (bank.rom_start, bank.rom_end, bank.vram)
