@@ -155,3 +155,52 @@ def test_idle_textures_do_not_prevent_scripted_gameplay_capture(tmp_path, monkey
     assets = runtime_textures.observe(b'image', rom, sha1(rom.read_bytes()).hexdigest())
     assert len(calls) == 2 and calls[1]['inputs']
     assert [asset['offset'] for asset in assets] == [100, 200]
+
+
+def test_expansion_retry_after_a_video_warning_screen(tmp_path, monkeypatch):
+    from decompassets.n64 import runtime_packed_graphics
+
+    rom = tmp_path / 'game.z64'
+    rom.write_bytes(bytes.fromhex('80371240') + b'original')
+    monkeypatch.setattr(runtime_textures.emulator, 'installed', lambda: tmp_path)
+    calls = []
+
+    def run(path, vis, *, dumps, **kwargs):
+        calls.append(kwargs)
+        for dump in dumps.values():
+            dump.write_bytes(b'expansion' if kwargs.get('expansion_pak') else b'warning')
+        return runtime_textures.emulator.Run(vis=vis)
+
+    monkeypatch.setattr(runtime_textures.emulator, 'run', run)
+    monkeypatch.setattr(detector, 'regions', lambda image, snapshots:
+                        [dict(offset=200, size=16, layout='texture')] if b'expansion' in snapshots else [])
+    monkeypatch.setattr(runtime_packed_graphics, 'regions', lambda image, snapshots, *, progress:
+                        [dict(offset=100, layout='model')])
+    assets = runtime_textures.observe(b'image', rom, sha1(rom.read_bytes()).hexdigest())
+    assert [c.get('expansion_pak', False) for c in calls] == [False, False, True, True]
+    assert calls[1]['inputs'] and calls[3]['inputs']
+    assert {a['offset'] for a in assets} == {100, 200}
+
+
+def test_failed_expansion_retry_keeps_existing_models_and_can_retry(tmp_path, monkeypatch):
+    from decompassets.n64 import runtime_packed_graphics
+
+    rom = tmp_path / 'game.z64'
+    rom.write_bytes(bytes.fromhex('80371240') + b'original')
+    monkeypatch.setattr(runtime_textures.emulator, 'installed', lambda: tmp_path)
+
+    def run(path, vis, *, dumps, **kwargs):
+        if kwargs.get('expansion_pak'):
+            raise runtime_textures.emulator.EmulatorError('failed')
+        for dump in dumps.values():
+            dump.write_bytes(b'warning')
+        return runtime_textures.emulator.Run(vis=vis)
+
+    monkeypatch.setattr(runtime_textures.emulator, 'run', run)
+    monkeypatch.setattr(detector, 'regions', lambda image, snapshots: [])
+    monkeypatch.setattr(runtime_packed_graphics, 'regions', lambda image, snapshots, *, progress:
+                        [dict(offset=100, layout='model')])
+    status = {}
+    assert runtime_textures.observe(b'image', rom, sha1(rom.read_bytes()).hexdigest(), status=status) == [
+        dict(offset=100, layout='model')]
+    assert status['state'] == 'failed'
