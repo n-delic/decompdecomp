@@ -209,9 +209,11 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
                         log(f'Extended image observation skipped: {error}')
             # The submitted task, not an arbitrary later retrace, supplies the
             # palette: the game may reuse its memory before the next snapshot.
-            from decompassets.n64 import runtime_lzw_textures
-            lzw_assets = []
-            if runtime_lzw_textures.has_resources(image, check) and not run.timed_out:
+            from decompassets.n64 import runtime_deflate_ci8, runtime_lzw_textures
+            frame_assets = []
+            recognizers = [module for module in (runtime_lzw_textures, runtime_deflate_ci8)
+                           if module.has_resources(image, check)]
+            if recognizers and not run.timed_out:
                 log('Checking submitted graphics frames for compressed textures.')
                 for inputs in ('', loaded_code.inputs(VIS[-1])):
                     frames = {n: Path(folder)/f'lzw-{n}.ram' for n in (500, 1000, 1400, 1800, 2200)}
@@ -224,7 +226,8 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
                         pairs = [(path.read_bytes(), Path(str(path)+'.task').read_bytes())
                                  for path in captured.frame_dumps.values()
                                  if path.is_file() and Path(str(path)+'.task').is_file()]
-                        lzw_assets += runtime_lzw_textures.regions(image, pairs, check=check)
+                        for module in recognizers:
+                            frame_assets += module.regions(image, pairs, check=check)
                         if captured.timed_out:
                             expansion_failed = True
                             log('Frame observation timed out; completed frames are still included.')
@@ -234,7 +237,7 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
                         log(f'Frame observation skipped: {error}')
                         break
             merged = {}
-            for asset in packed + lzw_assets:
+            for asset in packed + frame_assets:
                 key = asset['offset'], asset.get('layout')
                 if key in merged and asset.get('textures'):
                     previous = merged[key]['textures']
