@@ -16,7 +16,8 @@ def _macro_variant(fn, source, header, candidate, info, extra):
     if span is None:
         return None
     clean = csource._blank(source)
-    calls = list(re.finditer(r'\b(?:CALL|FCALL)\s*\(\s*[A-Za-z_]\w*\s*\)', clean[span[0]:span[1]]))
+    calls = list(re.finditer(r'\b(?:(?:CALL|FCALL)\s*\(\s*[A-Za-z_]\w*\s*\)|D_80000000(?=\s*\())',
+                             clean[span[0]:span[1]]))
     calls = [(span[0] + match.start(), span[0] + match.end()) for match in calls]
     relocs = []
     target = fn['target']
