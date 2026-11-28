@@ -8,8 +8,8 @@ date: 2026-11-28
 
 An 18-instruction stack pop of a small state record. The saved draft declared the global `extern u8 D_x[];` and read it
 with `M2C_FIELD`, under the project's KMC GCC 2.7.2 profile. Profile:
-`sn-n64-281 -G0 -mips3 -O2 -mgas -meb -mcpu=VR4300 -mhard-float -mfp32` (the `-mfp64` form judged 0 as well in
-isolation).
+`sn-n64-281 -G0 -mips3 -O2 -mgas -meb -mcpu=VR4300 -mhard-float -mfp32` (`-mfp64` was not
+tried).
 
 The source: one struct (`top`, a free count, a `u8` depth, an `s32` array of marks), declared
 `extern State D_x;`, with `D_x.depth--; mark = D_x.marks[D_x.depth];` inside `if (D_x.depth != 0)`. Written plainly it
