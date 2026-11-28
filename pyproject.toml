@@ -20,7 +20,7 @@ dependencies = [
     # the repair families, RetroReversing/decomp-repair: a tagged archive, so installing needs no git
     "decomprepair @ https://github.com/RetroReversing/decomp-repair/archive/refs/tags/v0.6.477.tar.gz",
     # the asset recognisers (N64 textures, sound banks, models, fonts; RNC), RetroReversing/decomp-assets
-    "decompassets @ https://github.com/RetroReversing/decomp-assets/archive/refs/tags/v0.307.0.tar.gz",
+    "decompassets @ https://github.com/RetroReversing/decomp-assets/archive/refs/tags/v0.309.0.tar.gz",
     # compile decomprepair on this machine (app/native_library.py)
     "cython>=3.1",
     "setuptools>=75",
