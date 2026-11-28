@@ -14,7 +14,7 @@
 - indexed_overlays.py: shared RAM slots and DMA bounds recovered from loader arrays and cache calls.
 - indexed_runtime_code.py: executable archive members mapped at their declared runtime addresses.
 - indexed_tlb_code.py: loader-indexed compressed pages and data mapped by a TLB program.
-- runtime_zlib.py, runtime_refpack.py: compressed programs corroborated by runtime call targets and loaded bytes.
+- runtime_zlib.py, runtime_refpack.py, runtime_table_ring.py: compressed programs corroborated by loaded bytes and calls.
 - runtime_overlays.py: overlapping code banks corroborated by runtime caller and target bytes.
 - runtime_mio.py, runtime_mio_chunks.py: source-backed MIO0 programs corroborated against RAM.
 - runtime_ring.py: a source-backed ring-buffer program identified by its loader and runtime bytes.
