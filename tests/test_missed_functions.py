@@ -483,11 +483,12 @@ def test_observed_overlapping_bank_is_staged_in_its_own_scope(tmp_path, monkeypa
         assert config.read_text() == original
 
 
-def test_runtime_overlap_does_not_rescope_a_bss_bearing_segment(tmp_path, monkeypatch):
+@pytest.mark.parametrize('setting', [{'bss_size': 0x20}, {'symbol_name_format': 'custom_$VRAM'}])
+def test_runtime_overlap_keeps_existing_layout_and_custom_names(tmp_path, monkeypatch, setting):
     from decompnet.consoles.n64 import code, emulator, loaded_code, loader_code
 
     cfg = splat_config()
-    cfg['segments'][1]['bss_size'] = 0x20
+    cfg['segments'][1].update(setting)
     config = tmp_path / 'game.yaml'
     original = yaml.safe_dump(cfg)
     config.write_text(original)

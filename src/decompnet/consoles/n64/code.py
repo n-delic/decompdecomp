@@ -1084,6 +1084,9 @@ def _observed_overlap_scopes(banks, overlaps, known, config):
         # every function still splits; leave that case for explicit review.
         if any(not raw.get(known[i].rom_start, {}).get('name')
                or raw.get(known[i].rom_start, {}).get('bss_size')
+               or not known[i].exclusive_ram_id and any(
+                   key in raw.get(known[i].rom_start, {})
+                   for key in ('symbol_name_format', 'symbol_name_format_no_rom'))
                or any(isinstance(sub, dict) and sub.get('type') == 'bss'
                       or isinstance(sub, list) and len(sub) > 1 and sub[1] == 'bss'
                       for sub in raw.get(known[i].rom_start, {}).get('subsegments', ()))
