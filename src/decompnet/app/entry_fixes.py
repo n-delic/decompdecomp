@@ -375,13 +375,44 @@ def decide(entries, *, big_endian=True, word_at=None, stored=frozenset(), review
         if fix is not None:
             found[e.name] = fix
     for before, after in zip(entries, entries[1:]):
-        if before.name in found or after.name in found:
+        if before.name in found or (after.name in found and found[after.name].confidence == 'auto'):
             continue
-        fix = (_shared_frame_prefix(before, after, pointed, shared, flow, stored, word, big_endian)
-               or _runs_on(before, after, pointed, shared, big_endian))
+        fix = _fallthrough_epilogue(before, after, pointed, shared, flow, stored, big_endian)
+        if fix is None and after.name not in found:
+            fix = (_shared_frame_prefix(before, after, pointed, shared, flow, stored, word, big_endian)
+                   or _runs_on(before, after, pointed, shared, big_endian))
         if fix:
             found[after.name] = fix
     return found
+
+
+def _fallthrough_epilogue(before, after, pointed, shared, flow, stored, big_endian):
+    """Join an unentered stack-restoring epilogue cut from a framed function."""
+    if ('matched' in (before.status, after.status) or before.vram + len(before.code) != after.vram):
+        return None
+    end = after.vram + len(after.code)
+    if any(a in shared for a in range(before.vram, end, 4)):
+        return None
+    if any(a in stored or pointed.get(a)
+           or any(not before.vram <= source < end for source in flow.get(a, ()))
+           for a in range(after.vram, end, 4)):
+        return None
+    first, rest = _words(before.code, big_endian), _words(after.code, big_endian)
+    words = first + rest
+    if (len(first) < 2 or len(rest) < 3 or first[-1] >> 16 != 0x8fbf or rest[-2] != JR_RA
+            or _unconditional(first[-1]) or _unconditional(first[-2])
+            or not _frame_shape(words, 0) or _closed(words, before.vram, 0) != len(words)):
+        return None
+    # Require a saved register restored in the tail and the same return-address slot restored somewhere.
+    saved = {(w >> 16 & 31, w & 0xffff) for w in first
+             if w >> 26 == 43 and w >> 21 & 31 == 29 and w >> 16 & 31 in (*range(16, 24), 31)}
+    restored_tail = {(w >> 16 & 31, w & 0xffff) for w in rest if w >> 26 == 35 and w >> 21 & 31 == 29}
+    restored = {(w >> 16 & 31, w & 0xffff) for w in words if w >> 26 == 35 and w >> 21 & 31 == 29}
+    if not saved & restored_tail or not any(reg == 31 and (reg, slot) in restored for reg, slot in saved) or _handwritten(words, before.vram):
+        return None
+    return Fix(after.name, after.vram, 'join_previous', before.vram, 'auto', [
+        f'{before.name} falls through into {after.name}, which restores a saved register and its stack frame.',
+        'No external reference or stored address enters the epilogue.'])
 
 
 def _shared_frame_prefix(before, after, pointed, shared, flow, stored, word, big_endian):

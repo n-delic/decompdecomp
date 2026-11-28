@@ -278,6 +278,22 @@ def test_a_function_cut_where_its_first_part_branches_into_the_rest_is_joined():
     assert 'b' not in ef.decide([prev, a, framed])
 
 
+def test_unentered_fallthrough_epilogue_is_joined():
+    start = 0x80001000
+    first = [addiu(SP, SP, -0x18), sw(S0, SP, 0x10), sw(RA, SP, 0x14),
+             jal(0x80023D58), NOP, lw(RA, SP, 0x14)]
+    rest = [lw(S0, SP, 0x10), addiu(SP, SP, 0x18), JR_RA, NOP]
+    head = entry('head', start, first)
+    tail = entry('tail', start + 4 * len(first), rest)
+    fix = ef.decide([head, tail])['tail']
+    assert (fix.kind, fix.at, fix.confidence) == ('join_previous', start, 'auto')
+    caller = entry('caller', 0x80002000, [JR_RA, NOP], pointer_to(tail.vram))
+    assert 'tail' not in ef.decide([head, tail, caller]) or ef.decide([head, tail, caller])['tail'].kind != 'join_previous'
+    assert 'tail' not in ef.decide([head, tail], stored={tail.vram}) or ef.decide([head, tail], stored={tail.vram})['tail'].kind != 'join_previous'
+    wrong = entry('tail', tail.vram, [lw(S0, SP, 0x0c), *rest[1:]])
+    assert 'tail' not in ef.decide([head, wrong]) or ef.decide([head, wrong])['tail'].kind != 'join_previous'
+
+
 def test_called_frame_shared_with_previous_return_delay_slot_joins_continuation():
     start = 0x80001000
     head = entry('head', start, [addiu(SP, SP, -0x18)])
