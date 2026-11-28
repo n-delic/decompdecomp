@@ -119,6 +119,9 @@
   text/data member boundaries. Rebuildable exports check the linked bytes against those members
   before retaining the cartridge's original gzip encoding. Audited embedded tables use full-span
   fingerprints to keep their bytes out of the function inventory.
+- Done: N64 imports recover an audited adaptive-Huffman boot program when both its loader and
+  decoded text match their full fingerprints. Exports verify the decoded program before keeping
+  the original compressed cartridge; other loader variants still need their own evidence.
 - Done: N64 imports recover boot programs stored in loader-referenced ERZ pages, checking each
   page's RNC checksum and the loader's destination and call. Exports verify the linked program
   against the decoded pages before retaining the original cartridge encoding.
