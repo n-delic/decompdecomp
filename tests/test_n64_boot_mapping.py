@@ -133,6 +133,25 @@ def test_startup_trap_before_cp0_helper_preserves_its_entry(tmp_path, case):
         assert not preserved_startup_trap(cfg,image,at,vram,8)
 
 
+@pytest.mark.parametrize('case', ['valid', 'named', 'pointer', 'branch', 'no_rsp'])
+def test_startup_trap_before_verified_graphics_bootstrap(tmp_path, monkeypatch, case):
+    from decompnet.consoles.n64 import rsp_prefix
+    from decompnet.consoles.n64.boot_mapping import extend_startup_trap, preserved_startup_trap
+
+    path, rom, _, _ = layout(tmp_path)
+    image = bytearray(rom);at=0x1080;vram=at+0x7ffff400
+    target = vram if case=='named' else vram+0x100
+    struct.pack_into('>4I',image,at-8,0x0c000000 | ((target>>2)&0x3ffffff),0,0x0001008d,0x8c430760)
+    if case=='pointer':struct.pack_into('>I',image,0x1010,vram+4)
+    if case=='branch':struct.pack_into('>I',image,at+28,0x08000000 | ((vram>>2)&0x3ffffff))
+    monkeypatch.setattr(rsp_prefix,'graphics_spans',lambda _:[(at+8,at+0x100)] if case!='no_rsp' else [])
+    assert extend_startup_trap(path,image,log=lambda *_:None) == (case=='valid')
+    if case=='valid':
+        cfg=yaml.safe_load(path.read_text())
+        assert preserved_startup_trap(cfg,image,at,vram,8)
+        assert not preserved_startup_trap(cfg,image,at,vram,4)
+
+
 @pytest.mark.parametrize('referenced', [False, True])
 def test_boot_data_terminator_precedes_a_called_aligned_frame(tmp_path, referenced):
     from decompnet.consoles.n64.boot_mapping import extend_startup_data

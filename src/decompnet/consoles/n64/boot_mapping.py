@@ -90,11 +90,26 @@ def _cp0_trap(cfg, rom, at, vram, call, padding, callers):
                    for target, _, _ in references(rom,segment.rom_start,segment.rom_end,segment.vram))
 
 
+def _rsp_trap(cfg, rom, at, vram, call, padding, callers):
+    """A terminal boot trap immediately before a verified RSP graphics program."""
+    from .rsp_prefix import graphics_spans
+
+    if (padding != 0x8c430760 or vram in callers or vram+4 in callers
+            or any(struct.pack('>I', address) in rom for address in (vram, vram+4))
+            or not any(start == at+8 for start, _ in graphics_spans(rom))):
+        return False
+    from ...arch.mips_references import references
+
+    return not any(target in (vram, vram+4) for segment in segments_from_config_data(cfg)
+                   if 0 <= segment.rom_start < segment.rom_end <= len(rom)
+                   for target, _, _ in references(rom,segment.rom_start,segment.rom_end,segment.vram))
+
+
 def preserved_startup_trap(cfg, rom, offset, vram, size):
     """Whether an old standalone trap is now part of the proven startup stub."""
     entries = {s.get('name'):s for s in cfg['segments'] if isinstance(s, dict)}
     entry, main = entries.get('entry'), entries.get('main')
-    if (size != 4 or not entry or not main or main.get('start') != offset+8
+    if (size not in (4,8) or not entry or not main or main.get('start') != offset+8
             or main.get('follows_vram') != 'entry' or entry.get('subsegments') != [[entry.get('start'),'hasm']]
             or entry.get('vram',0)-entry.get('start',0) != vram-offset or offset < entry['start']+8
             or offset+8 > len(rom)):
@@ -103,7 +118,9 @@ def preserved_startup_trap(cfg, rom, offset, vram, size):
     if call >> 26 != 3 or delay or trap & 0xfc00003f != 0xd:
         return False
     words = [word for word, in struct.iter_unpack('>I',rom[entry['start']:offset])]
-    return _cp0_trap(cfg,rom,offset,vram,call,padding,set(jal_targets(words,entry['vram'])))
+    callers = set(jal_targets(words,entry['vram']))
+    return (size == 4 and _cp0_trap(cfg,rom,offset,vram,call,padding,callers)
+            or size == 8 and _rsp_trap(cfg,rom,offset,vram,call,padding,callers))
 
 
 def extend_startup_trap(config: Path, rom: bytes, log=print) -> bool:
@@ -129,6 +146,10 @@ def extend_startup_trap(config: Path, rom: bytes, log=print) -> bool:
     elif _cp0_trap(cfg,rom,at,vram,call,padding,callers):
         # The startup call returns to a trap and zero before a complete CP0
         # helper. Preserve the helper at its own entry, not inside startup.
+        skip = 8
+    elif _rsp_trap(cfg,rom,at,vram,call,padding,callers):
+        # A lone word after the terminal trap precedes the RSP bootstrap;
+        # neither word is a callable CPU function.
         skip = 8
     elif not padding and vram + 4 not in callers:
         # A startup call can return to a trap followed immediately by RSP audio rather than another CPU entry.
