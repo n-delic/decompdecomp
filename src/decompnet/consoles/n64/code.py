@@ -574,6 +574,7 @@ def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_rep
         boot_chunked_bits,
         boot_gzip,
         boot_huffman,
+        boot_paired_rle,
         boot_rnx,
         copied_overlays,
         dma_overlays,
@@ -612,7 +613,7 @@ def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_rep
     if taken and (result := resident_deflate.add(config,workdir,image,rom,taken,log)):
         return result
     if taken and not skip_replacing_boot and (boot_huffman.streamed(rom, boot_gzip._coalesce_boot_ranges(taken))
-                                               or boot_rnx.present(rom)
+                                               or boot_rnx.present(rom) or boot_paired_rle.present(rom)
                                                or boot_chunked_bits.find(rom, boot_gzip._coalesce_boot_ranges(taken))):
         # The same loader also DMA-loads raw code elsewhere. Keep those banks
         # before adding the independently verified expanded program.
