@@ -50,3 +50,20 @@ def test_linked_identity_rejects_a_changed_body_or_image(monkeypatch):
     assert sdk_linked.identify(code, 'a'*40)['name'] == 'conversion'
     assert sdk_linked.identify(code[:-1] + b'\xff', 'a'*40) is None
     assert sdk_linked.identify(code, 'b'*40) is None
+
+
+@pytest.mark.parametrize(('digest', 'size', 'name'), [
+    ('48aaeb35564e08822c2bdb27216388c251c5694800d6ecdfcf7e097b9a755ac0', 28, '__d_to_ll'),
+    ('f8bea959cb8ea987ad5d91b842cf546fb7d18ff8fc740c2e8417d4270aad84cd', 28, '__f_to_ll'),
+    ('dcff610b8bf0a19cae292358d4dc3be7813ca66df72ab3e63e365fbd2665a814', 160, '__d_to_ull'),
+    ('00dc74dfb22b0b1c45e63f0c92c27b961bc5b9e4dd13d1714fefb39495e8ce0e', 156, '__f_to_ull'),
+    ('3ba11f1a28a9802b21e5d730228be65dacb4301cb4c994f6806afc96828168e9', 24, '__ll_to_d'),
+    ('2982a1e508fc621881ff0dd7f87fbd3b7c4887c2e03cfb32508c90fe86bb5fe5', 24, '__ll_to_f'),
+])
+def test_another_linked_conversion_build_is_image_and_size_bound(monkeypatch, digest, size, name):
+    image = '6da1a6a2bda687d50e798d80c342948ad1738202'
+    monkeypatch.setattr(sdk_linked.hashlib, 'sha256', lambda _: SimpleNamespace(hexdigest=lambda: digest))
+    proof = sdk_linked.identify(bytes(size), image)
+    assert proof['name'] == name and proof['from_c'] and proof['bytes'] == size
+    assert sdk_linked.identify(bytes(size), '0' * 40) is None
+    assert sdk_linked.identify(bytes(size + 4), image) is None
