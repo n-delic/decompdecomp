@@ -7,6 +7,24 @@ from decompnet.arch.mips_gaps import extent
 from decompnet.arch.mips_indirect import calls, consumers, jump_table
 
 
+def test_consumer_index_matches_exhaustive_search_in_trace_order():
+    from decompnet.arch.mips_indirect import _consumer_index, _possible_consumers
+
+    traced=[{'load_address':(base,terms)} for base in range(0x1000,0x1100,4)
+            for terms in ({}, {'index':4}, {'index':12}, {'index':256},
+                          {'index':3}, {'a':4,'b':8})]
+    exact,indexed=_consumer_index(traced,lambda:None)
+    for cell in (0xffc,0x1000,0x1044,0x10fc,0x1100,0x1ffc):
+        expected=[]
+        for i,call in enumerate(traced):
+            base,terms=call['load_address']
+            stride=next(iter(terms.values())) if len(terms)==1 else None
+            if (not terms and base==cell) or (stride and 4<=stride<=256 and stride%4==0
+                    and 0<=cell-base<stride*256 and (cell-base)%stride==0):
+                expected.append(i)
+        assert _possible_consumers({(cell,True)},exact,indexed,sorted({s for s,_ in indexed}))==expected
+
+
 def fixture(order='big'):
     image=bytearray(0x1200)
     words=[0x2c620002,0x1040000b,0,0x00031080,0x3c018000,0x00220821,0x8c221100,0x00400008,0,
