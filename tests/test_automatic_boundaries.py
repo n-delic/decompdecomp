@@ -898,6 +898,24 @@ def test_called_frame_after_repeated_double_at_the_start_of_a_mapping(named):
     assert (20 in {fn.rom for fn in result}) == named
 
 
+@pytest.mark.parametrize('named', [False, True])
+def test_called_frame_directly_after_repeated_double(named):
+    call = 0x0c000000 | ((BASE+32)>>2)&0x3ffffff
+    words = [call, 0, 0, 0, 0x400921fb, 0x54442d18, 0x400921fb, 0x54442d18, *BODY]
+    image, all_functions, _ = fixture(words, cuts=(0, 16, 28, 32, 64))
+    functions = [all_functions[i] for i in (0, 2, 3)]
+    segments = [Segment('entry', 0, 28, BASE), Segment('code', 28, 64, BASE+28)]
+    symbols = [f'entry_mid = 0x{BASE+28:08X};'] if named else []
+    result = repair(functions, [], image, consoles.get('n64'), segments, symbols=symbols)
+    assert (28 in {fn.rom for fn in result}) == named
+    # The same call can come from boot assembly outside the function list.
+    from decompnet.rom.automatic_boundaries import leading_repeated_double
+    assert leading_repeated_double(functions[1], functions[2], image, 'big', segments, set())
+    changed = bytearray(image)
+    changed[:4] = bytes(4)
+    assert not leading_repeated_double(functions[1], functions[2], changed, 'big', segments, set())
+
+
 def test_independent_assembly_tail_is_retained_inside_a_closed_leaf():
     from decompnet.rom.split import function_from_text
 

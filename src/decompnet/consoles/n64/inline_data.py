@@ -276,6 +276,74 @@ def _unentered_call_words(image, ranges):
             yield offsets[0], offsets[0]+4
 
 
+def _unentered_call_fragments(image, ranges):
+    """Exclude a dead call fragment that falsely enters another frame's delay slot."""
+    from ...arch.mips import is_frame
+    from ...arch.mips_code_recovery import called_extent
+    from ...arch.mips_references import references
+
+    candidates = []
+    for lo, hi, base in ranges:
+        for match in re.finditer(rb'\x03\xe0\x00\x08....', image[lo:min(hi, len(image))], re.S):
+            at = lo+match.end()
+            if at%4 or at+16 > min(hi, len(image)):
+                continue
+            call, delay, address_load, frame = struct.unpack_from('>4I', image, at)
+            if (call >> 26 == 3 and delay >> 26 in (8, 9, 12, 13, 14)
+                    and address_load >> 26 == 15 and is_frame(frame)):
+                candidates.append((lo, hi, base, at, call))
+    if not candidates:
+        return
+    calls = {}
+    entries = set()
+    for lo, hi, base in ranges:
+        for target, _, kind in references(image, lo, min(hi, len(image)), base):
+            if kind == 'address':
+                entries.add(target)
+        for at in range(lo, min(hi, len(image))-3, 4):
+            word = int.from_bytes(image[at:at+4], 'big')
+            op, pc = word >> 26, base+at-lo
+            if op in (2, 3):
+                target = ((pc+4)&0xf0000000) | ((word&0x3ffffff)<<2)
+                if op == 3:
+                    calls.setdefault(target, set()).add(at)
+            elif op in (1, 4, 5, 6, 7, 20, 21, 22, 23) or op == 17 and (word >> 21)&31 == 8:
+                delta = word&0xffff
+                target = pc+4+(delta-0x10000 if delta&0x8000 else delta)*4
+            else:
+                continue
+            entries.add(target)
+    for lo, hi, base, at, call in candidates:
+        addr = base+at-lo
+        if (not called_extent(image, at+12, min(hi, len(image)), addr+12, cpu='vr4300')
+                or any(addr+i in entries or (addr+i).to_bytes(4, 'big') in image for i in (0, 4, 8))
+                or any(sum(a <= at+i < b for a, b, _ in ranges) != 1 for i in (0, 4, 8))
+                or any(sum(v <= addr+i < v+b-a for a, b, v in ranges) != 1 for i in (0, 4, 8))):
+            continue
+        target = ((addr+4)&0xf0000000) | ((call&0x3ffffff)<<2)
+        owners = [(a, b, v) for a, b, v in ranges if v <= target < v+b-a]
+        if len(owners) != 1:
+            continue
+        a, b, v = owners[0]
+        target_offset = a+target-v
+        # The apparent callee is a transfer's delay slot inside a closed,
+        # independently called frame. It cannot establish a new entry.
+        if target_offset < a+4:
+            continue
+        previous = int.from_bytes(image[target_offset-4:target_offset], 'big')
+        if previous >> 26 not in (1, 4, 5, 6, 7, 20, 21, 22, 23):
+            continue
+        for start in range(max(a, target_offset-512), target_offset-3, 4):
+            entry = v+start-a
+            if entry not in calls or not is_frame(int.from_bytes(image[start:start+4], 'big')):
+                continue
+            size = called_extent(image, start, min(b, len(image)), entry, cpu='vr4300')
+            if (size and start < target_offset < start+size
+                    and sum(not start <= source < start+size and not at <= source < at+12
+                            for source in calls[entry]) >= 2):
+                yield at, at+12
+                break
+
 def _unentered_invalid_jump_prefixes(image, ranges):
     """A text range can begin with data before an independently closed frame."""
     from ...arch.mips import is_frame
@@ -394,7 +462,8 @@ def apply(config, image, log=print):
     code = split.code_ranges(config)
     regions = sorted([*spans(image), *_startup_padding(image, code), *_stack_padding(image, code),
                       *_leading_code_pointer_tables(image, code), *_unentered_call_words(image, code),
-                      *_unentered_invalid_jump_prefixes(image, code), *unentered_rsp_markers(image, code),
+                      *_unentered_invalid_jump_prefixes(image, code), *_unentered_call_fragments(image, code),
+                      *unentered_rsp_markers(image, code),
                       *_unentered_source_fragments(image, code)])
     if not regions:
         return

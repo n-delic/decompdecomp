@@ -227,6 +227,25 @@ def test_unentered_call_word_between_return_and_frame_is_data():
     assert not list(inline_data._unentered_call_words(image, ranges))
 
 
+def test_dead_call_fragment_cannot_split_a_closed_called_frame():
+    import struct
+
+    image = bytearray(256)
+    jal = lambda offset: 0x0c000000 | ((0x80000000+offset)>>2)&0x3ffffff
+    struct.pack_into('>3I', image, 16, jal(128), 0, jal(128))
+    struct.pack_into('>6I', image, 32, 0x03e00008, 0x27bd0020, jal(148), 0x2407001a,
+                     0x3c048007, 0x27bdffe0)
+    struct.pack_into('>3I', image, 56, 0xafbf001c, 0x03e00008, 0x27bd0020)
+    struct.pack_into('>10I', image, 128, 0x27bdffe0, 0xafb10010, 0xafbf001c, 0x24020001, 0x10400001, 0x00408821,
+                     0x8fbf001c, 0x8fb10010, 0x03e00008, 0x27bd0020)
+    ranges = [(0, len(image), 0x80000000)]
+    assert list(inline_data._unentered_call_fragments(image, ranges)) == [(40, 52)]
+    for at, value in ((0, jal(40)), (4, 0x8000002c), (16, 0), (144, 0)):
+        damaged = bytearray(image)
+        struct.pack_into('>I', damaged, at, value)
+        assert not list(inline_data._unentered_call_fragments(damaged, ranges))
+
+
 def test_unentered_invalid_jump_before_closed_frame_is_data():
     import struct
 

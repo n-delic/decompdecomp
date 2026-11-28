@@ -724,7 +724,8 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
             recovered_data.append(DataSymbol(fn.name, fn.vram, fn.rom, fn.size, 'data'))
             continue
         if leading_repeated_double(fn, following, image, order, segments, direct_calls) and not referenced(fn):
-            dropped+=1;continue
+            recovered_data.append(DataSymbol(fn.name, fn.vram, fn.rom, fn.size, 'data', boundary_proven=True))
+            continue
         if (fn.vram in data_only and predecessor is not None and owner(fn)==owner(predecessor)
                 and predecessor.lines[-2].word==JR_RA
                 and (not fn.lines[0].word or fn.size==8)):
@@ -1624,16 +1625,29 @@ def terminal_display_modes(fn, previous, image, order, segments):
 def leading_repeated_double(fn, following, image, order, segments, calls):
     """Recognize the last half of a repeated double where a split starts early."""
     start = fn.rom
-    if (fn.size != 8 or start < 12 or start%8 != 4 or following is None
-            or following.rom != start+12 or following.vram != fn.vram+12
-            or following.vram%16 or following.vram not in calls
+    if (fn.size not in (4, 8) or start < 12 or start%8 != 4 or following is None
+            or following.rom != start+(4 if fn.size == 4 else 12)
+            or following.vram != fn.vram+(4 if fn.size == 4 else 12)
+            or following.vram%16
             or not is_frame(following.lines[0].word)
             or fn.lines[0].word>>26 not in (4,5,6,7,20,21,22,23)
-            or any(image[start+4:start+12])):
+            or fn.size == 8 and any(image[start+4:start+12])):
         return False
     if not any(s.rom_start == start and s.vram == fn.vram
                and following.rom+following.size <= s.rom_end for s in segments):
         return False
+    if following.vram not in calls:
+        # The caller can live in a boot assembly segment, which is not part
+        # of the function inventory used to build the direct-call set.
+        opcode = (0x0c000000 | ((following.vram >> 2) & 0x3ffffff)).to_bytes(4, order)
+        if not any(image[at:at+4] == opcode and
+                   ((s.vram+at-s.rom_start+4)&0xf0000000) == (following.vram&0xf0000000)
+                   for s in segments for at in range(s.rom_start, min(s.rom_end, len(image))-3, 4)):
+            return False
+        from ..arch.mips_code_recovery import called_extent
+        if called_extent(image, following.rom, following.rom+following.size, following.vram,
+                         big_endian=order == 'big') != following.size:
+            return False
     pair = image[start-4:start+4]
     if image[start-12:start-4] != pair:
         return False
