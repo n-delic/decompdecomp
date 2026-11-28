@@ -105,6 +105,33 @@ def _rsp_trap(cfg, rom, at, vram, call, padding, callers):
                    for target, _, _ in references(rom,segment.rom_start,segment.rom_end,segment.vram))
 
 
+def _table_trap(cfg, rom, at, vram, padding, callers, found=()):
+    """A terminal trap before a bounded code-pointer table and printable data."""
+    from ...arch.mips_references import references
+
+    if (padding or vram in callers or vram+4 in callers
+            or any(struct.pack('>I', address) in rom for address in (vram, vram+4))):
+        return False
+    segments = [s for s in segments_from_config_data(cfg) if 0 <= s.rom_start < s.rom_end <= len(rom)]
+    mappings = [(s.rom_start, s.rom_end, s.vram) for s in segments]
+    mappings += [(lo, hi, base) for lo, hi, base in found if 0 <= lo < hi <= len(rom)]
+    at_table = at + 8
+    pointers = []
+    while at_table + 4 <= len(rom) and len(pointers) < 64:
+        value = struct.unpack_from('>I', rom, at_table)[0]
+        if value & 3 or not any(base <= value < base + hi - lo for lo, hi, base in mappings):
+            break
+        pointers.append(value)
+        at_table += 4
+    if len(pointers) < 4 or len(set(pointers)) < 3:
+        return False
+    end = rom.find(b'\0', at_table, min(len(rom), at_table + 128))
+    if end < at_table + 8 or not all(32 <= b < 127 for b in rom[at_table:end]):
+        return False
+    return not any(target in (vram, vram+4) for lo, hi, base in mappings
+                   for target, _, _ in references(rom, lo, hi, base))
+
+
 def preserved_startup_trap(cfg, rom, offset, vram, size):
     """Whether an old standalone trap is now part of the proven startup stub."""
     entries = {s.get('name'):s for s in cfg['segments'] if isinstance(s, dict)}
@@ -119,11 +146,12 @@ def preserved_startup_trap(cfg, rom, offset, vram, size):
         return False
     words = [word for word, in struct.iter_unpack('>I',rom[entry['start']:offset])]
     callers = set(jal_targets(words,entry['vram']))
-    return (size == 4 and _cp0_trap(cfg,rom,offset,vram,call,padding,callers)
+    return (size == 4 and (_cp0_trap(cfg,rom,offset,vram,call,padding,callers)
+                           or _table_trap(cfg,rom,offset,vram,padding,callers))
             or size == 8 and _rsp_trap(cfg,rom,offset,vram,call,padding,callers))
 
 
-def extend_startup_trap(config: Path, rom: bytes, log=print) -> bool:
+def extend_startup_trap(config: Path, rom: bytes, log=print, *, found=()) -> bool:
     """Keep a break after the boot stub's final call in handwritten startup."""
     cfg = yaml.safe_load(config.read_text(encoding='utf-8'))
     by_name = {s.get('name'):s for s in cfg['segments'] if isinstance(s, dict)}
@@ -146,6 +174,9 @@ def extend_startup_trap(config: Path, rom: bytes, log=print) -> bool:
     elif _cp0_trap(cfg,rom,at,vram,call,padding,callers):
         # The startup call returns to a trap and zero before a complete CP0
         # helper. Preserve the helper at its own entry, not inside startup.
+        skip = 8
+    elif _table_trap(cfg,rom,at,vram,padding,callers,found):
+        # The next bytes are a code-pointer table and printable data, not another entry.
         skip = 8
     elif _rsp_trap(cfg,rom,at,vram,call,padding,callers):
         # A lone word after the terminal trap precedes the RSP bootstrap;
