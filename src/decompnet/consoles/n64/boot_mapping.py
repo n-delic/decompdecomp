@@ -76,6 +76,36 @@ def recover(config: Path, rom: bytes, found, log=print) -> bool:
     return True
 
 
+def _cp0_trap(cfg, rom, at, vram, call, padding, callers):
+    """A startup trap and zero before a separate CP0 helper, with no outside entry."""
+    if not (not padding and vram not in callers and vram+4 not in callers and at+24 <= len(rom)
+            and tuple(struct.unpack_from('>4I', rom, at+8)) == (0x40849000, 0x40809800, 0x03e00008, 0)
+            and vram+24 <= ((vram-4) & 0xf0000000) | ((call & 0x3ffffff) << 2) < vram+0x100
+            and all(struct.pack('>I', address) not in rom for address in (vram, vram+4))):
+        return False
+    from ...arch.mips_references import references
+
+    return not any(target in (vram, vram+4) for segment in segments_from_config_data(cfg)
+                   if 0 <= segment.rom_start < segment.rom_end <= len(rom)
+                   for target, _, _ in references(rom,segment.rom_start,segment.rom_end,segment.vram))
+
+
+def preserved_startup_trap(cfg, rom, offset, vram, size):
+    """Whether an old standalone trap is now part of the proven startup stub."""
+    entries = {s.get('name'):s for s in cfg['segments'] if isinstance(s, dict)}
+    entry, main = entries.get('entry'), entries.get('main')
+    if (size != 4 or not entry or not main or main.get('start') != offset+8
+            or main.get('follows_vram') != 'entry' or entry.get('subsegments') != [[entry.get('start'),'hasm']]
+            or entry.get('vram',0)-entry.get('start',0) != vram-offset or offset < entry['start']+8
+            or offset+8 > len(rom)):
+        return False
+    call, delay, trap, padding = struct.unpack_from('>4I',rom,offset-8)
+    if call >> 26 != 3 or delay or trap & 0xfc00003f != 0xd:
+        return False
+    words = [word for word, in struct.iter_unpack('>I',rom[entry['start']:offset])]
+    return _cp0_trap(cfg,rom,offset,vram,call,padding,set(jal_targets(words,entry['vram'])))
+
+
 def extend_startup_trap(config: Path, rom: bytes, log=print) -> bool:
     """Keep a break after the boot stub's final call in handwritten startup."""
     cfg = yaml.safe_load(config.read_text(encoding='utf-8'))
@@ -95,6 +125,10 @@ def extend_startup_trap(config: Path, rom: bytes, log=print) -> bool:
     if call >> 26 != 3 or delay or trap & 0xfc00003f != 0xd or vram in callers:
         return False
     if not padding and vram + 8 in callers and vram + 4 not in callers:
+        skip = 8
+    elif _cp0_trap(cfg,rom,at,vram,call,padding,callers):
+        # The startup call returns to a trap and zero before a complete CP0
+        # helper. Preserve the helper at its own entry, not inside startup.
         skip = 8
     elif not padding and vram + 4 not in callers:
         # A startup call can return to a trap followed immediately by RSP audio rather than another CPU entry.

@@ -159,6 +159,8 @@ def preserve(net, project, result, image, rows, log=print):
     # in recovery notes when its function disappears.
     proven_data = [(d.rom, d.vram, d.size) for d in getattr(result, 'data', ())
                    if getattr(d, 'boundary_proven', False) and d.rom is not None and d.vram is not None]
+    from .boot_mapping import preserved_startup_trap
+
     eligible = []
     for raw in rows:
         check()
@@ -168,6 +170,7 @@ def preserve(net, project, result, image, rows, log=print):
                 or size <= 0 or size % 4 or lo < 0 or lo + size > len(image)
                 or any(vram-lo == address-start and start < lo+size and lo < start+length
                        for start,address,length in proven_data)
+                or preserved_startup_trap(cfg, image, lo, vram, size)
                 or not isinstance(target, bytes) or target != image[lo:lo + size]
                 or any(a < lo + size and lo < b for a, b in ranges)
                 or not code._cut_ok(cfg, (lo, lo + size, vram))):
