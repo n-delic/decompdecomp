@@ -113,9 +113,9 @@ def pair_old_functions(rows, functions) -> dict:
     return paired
 
 
-def _recreated_matches(net, pid, gone, same_analysis):
+def _recreated_matches(net, pid, gone, compatible_analysis):
     """Keep and rejudge saved C if boundary repair recreated the exact entry."""
-    if not same_analysis:
+    if not compatible_analysis:
         return []
     store = net.project_store(pid)
     saved = [old for old in gone.values() if old['rom_offset'] is not None and
@@ -268,7 +268,8 @@ class ImportMixin:
 
         analysis_sha1 = hashlib.sha1(rom).hexdigest()
         retained_reimport_snapshot = None
-        if reimport is not None and _same_or_extended_analysis(reimport, rom, analysis_sha1):
+        compatible_analysis = reimport is not None and _same_or_extended_analysis(reimport, rom, analysis_sha1)
+        if compatible_analysis:
             old_rows = self.project_store(reimport['id']).all(
                 'SELECT name,rom_offset,vram,size,target,unit FROM functions WHERE project_id=? ORDER BY id', reimport['id'])
             if console.preserve_reimport_entries(self, reimport, res, rom, old_rows, log):
@@ -672,7 +673,7 @@ class ImportMixin:
         # on an extent no C can match (boundary_repairs.apply_entry_fixes; each fix undoable in Review boundaries).
         from ..boundary_repairs import apply_entry_fixes
         try:
-            if reimport is not None and same_analysis:
+            if compatible_analysis:
                 identities=[(r['rom_offset'],r['vram'],r['size'],r['target']) for r in gone.values()
                             if r['rom_offset'] is not None and r['vram'] is not None and r['target']]
                 counts=Counter(identities)
@@ -685,7 +686,7 @@ class ImportMixin:
         except NetworkError as e:
             log(f"function boundaries were not fixed automatically: {e}")
         if reimport is not None:
-            recovered = _recreated_matches(self, pid, gone, same_analysis)
+            recovered = _recreated_matches(self, pid, gone, compatible_analysis)
             if recovered:
                 rejudge.extend(recovered)
                 log(f'{len(recovered)} saved entries returned after boundary repair; their C will be checked again.')

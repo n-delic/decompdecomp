@@ -596,6 +596,7 @@ def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_rep
         boot_huffman,
         boot_paired_rle,
         boot_rnx,
+        boot_xor,
         copied_overlays,
         dma_overlays,
         indexed_overlays,
@@ -642,7 +643,7 @@ def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_rep
             if result := boot_gzip.add(config, workdir, image, rom, split.code_ranges(config), log):
                 return result
         return base
-    if taken and not skip_replacing_boot and boot_brs.find(rom, taken):
+    if taken and not skip_replacing_boot and (boot_brs.find(rom, taken) or boot_xor.find(rom, taken)):
         # The replacement program reuses the boot addresses. Recover the boot
         # code first, before the expanded image introduces overlapping banks.
         base = add_segments(config, workdir, image, log, skip_replacing_boot=True)

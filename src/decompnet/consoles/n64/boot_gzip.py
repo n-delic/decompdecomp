@@ -223,12 +223,13 @@ def find(rom, boot_ranges):
         boot_rnc2,
         boot_rnx,
         boot_two_bit,
+        boot_xor,
     )
     return (boot_compact_mio.find(rom, boot_ranges) or boot_raw_deflate.find(rom, boot_ranges) or boot_brs.find(rom, boot_ranges)
             or boot_byte_lz.find(rom, boot_ranges) or boot_chunked_bits.find(rom, boot_ranges)
             or boot_lzss.find(rom, boot_ranges) or boot_huffman.find(rom, boot_ranges) or boot_refpack.find(rom, boot_ranges)
             or boot_two_bit.find(rom, boot_ranges) or boot_rnc2.find(rom, boot_ranges) or boot_erz.find(rom, boot_ranges)
-            or boot_rnx.find(rom, boot_ranges) or boot_paired_rle.find(rom, boot_ranges))
+            or boot_rnx.find(rom, boot_ranges) or boot_paired_rle.find(rom, boot_ranges) or boot_xor.find(rom, boot_ranges))
 
 
 def verify_analysis(rom, expanded, boot_ranges):
@@ -360,7 +361,7 @@ def add(config, workdir, image, rom, boot_ranges, log):
     cfg['options']['target_path'] = filename
     cfg['sha1'] = hashlib.sha1(expanded).hexdigest()
     config.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding='utf-8')
-    log(f'Unpacked {len(programs)} compressed program(s) at the addresses supplied by the boot loader')
+    log(f'Recovered {len(programs)} encoded boot program(s) at the addresses supplied by the loader')
     # Some boot programs load further compressed executables themselves.
     # Observe their calls against the expanded boot program before splitting.
     from ...rom import split

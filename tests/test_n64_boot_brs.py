@@ -2,6 +2,8 @@
 
 import struct
 
+import pytest
+
 from decompnet.consoles.n64.boot_brs import _decode, unpack
 
 
@@ -66,8 +68,9 @@ def test_replacement_image_keeps_the_two_original_entry_words(tmp_path, monkeypa
     assert boot_gzip.verify_analysis(image, image + b''.join(blocks), boot)
 
 
-def test_boot_ranges_are_recovered_before_the_replacement(tmp_path, monkeypatch):
-    from decompnet.consoles.n64 import boot_brs, boot_gzip, code, overlays, resident_deflate
+@pytest.mark.parametrize('decoder', ['brs', 'xor'])
+def test_boot_ranges_are_recovered_before_the_replacement(tmp_path, monkeypatch, decoder):
+    from decompnet.consoles.n64 import boot_brs, boot_gzip, boot_xor, code, overlays, resident_deflate
     from decompnet.rom import split
 
     (tmp_path / 'game.z64').write_bytes(bytes(0x2000))
@@ -79,7 +82,8 @@ def test_boot_ranges_are_recovered_before_the_replacement(tmp_path, monkeypatch)
     monkeypatch.setattr(split, 'code_ranges', lambda _: next(calls))
     monkeypatch.setattr(overlays, 'add', lambda *args: None)
     monkeypatch.setattr(resident_deflate, 'add', lambda *args: None)
-    monkeypatch.setattr(boot_brs, 'find', lambda *args: True)
+    monkeypatch.setattr(boot_brs, 'find', lambda *args: decoder == 'brs')
+    monkeypatch.setattr(boot_xor, 'find', lambda *args: decoder == 'xor')
     captured = []
     monkeypatch.setattr(boot_gzip, 'add', lambda *args: captured.append(args[4]) or 'game.unpacked.z64')
     add = code.add_segments

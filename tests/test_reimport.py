@@ -648,16 +648,18 @@ def test_reimport_keeps_a_recreated_open_entrys_best_attempt_before_recheck(tmp_
     assert row['status']=='open' and row['best_source']==old['best_source'] and row['best_score']==200
 
 
-def test_reimport_queues_a_match_recreated_by_boundary_repair(tmp_path, monkeypatch):
+@pytest.mark.parametrize('extended', [False, True])
+def test_reimport_queues_a_match_recreated_by_boundary_repair(tmp_path, monkeypatch, extended):
     import hashlib
 
     root = tmp_path/'game'
     root.mkdir()
-    (root/'old.z64').write_bytes(b'original')
+    old_image = bytes(16)
+    (root/'old.z64').write_bytes(old_image)
     net = RomNetwork(tmp_path/'app.db', tmp_path)
-    image = bytes(16)
+    image = old_image + (bytes(16) if extended else b'')
     cfg = {'kind':'rom', 'platform':'n64', 'big_endian':True,
-           'rom':{'file':'old.z64','sha1':'same','analysis_sha1':hashlib.sha1(image).hexdigest()},
+           'rom':{'file':'old.z64','sha1':'same','analysis_sha1':hashlib.sha1(old_image).hexdigest()},
            'segments':[], 'compiler':{'toolchain':'gcc-2.7.2-kmc','flags':['-O2']}}
     with net.store.tx() as db:
         pid = db.execute('INSERT INTO projects(slug,name,root,arch,config) VALUES(?,?,?,?,?)',
