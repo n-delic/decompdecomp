@@ -150,6 +150,42 @@ def test_search_continues_when_one_recovery_reveals_another(tmp_path, monkeypatc
     assert 'No further functions' in result['message']
 
 
+def test_runtime_bank_shortens_its_old_data_mapping_in_the_project_catalog(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import Nintendo64, code
+
+    net, pid = project(tmp_path)
+    store = net.project_store(pid)
+    config = {'options': {'target_path': 'rom.z64'}, 'segments': [
+        {'name': 'main', 'type': 'code', 'start': 0x1000, 'vram': 0x80001000,
+         'subsegments': [[0x1000, 'c', 'main'], [0x1028, 'data']]}, [0x2000]]}
+    (tmp_path / 'game.yaml').write_text(yaml.safe_dump(config))
+    rom = bytearray(image())
+    for index, word in enumerate(LEAF):
+        rom[0x1030 + index * 4:0x1034 + index * 4] = word.to_bytes(4, 'big')
+    (tmp_path / 'rom.z64').write_bytes(rom)
+    with store.tx() as db:
+        cfg = json.loads(db.execute('SELECT config FROM projects WHERE id=?', (pid,)).fetchone()['config'])
+        cfg['segments'] = [vars(split.Segment('main', 0x1000, 0x2000, 0x80001000))]
+        db.execute('UPDATE projects SET config=? WHERE id=?', (json.dumps(cfg), pid))
+    body = (0x1030, 0x1040, 0x80021030)
+
+    def recover(self, path, image, log, known, **kwargs):
+        if body in known:
+            return []
+        cfg = yaml.safe_load(path.read_text())
+        code.insert_segments(path, cfg, [body], len(image), runtime_data={body})
+        return [body]
+
+    monkeypatch.setattr(Nintendo64, 'missed_functions', recover)
+    result = net.find_missed_functions('game', log=lambda *_: None)
+    assert [item['vram'] for item in result['added']] == [body[2]]
+    cfg = json.loads(store.one('SELECT config FROM projects WHERE id=?', pid)['config'])
+    assert any(s['rom_start'] == 0x1000 and s['rom_end'] == 0x1030 for s in cfg['segments'])
+    assert any(s['rom_start'] == 0x1030 and s['rom_end'] == 0x1040 and s['vram'] == body[2]
+               for s in cfg['segments'])
+    assert store.one("SELECT status FROM functions WHERE project_id=? AND name='a'", pid)['status'] == 'matched'
+
+
 def test_search_checks_cartridge_split_without_treating_appended_banks_as_code_parents(tmp_path, monkeypatch):
     from decompnet.consoles.n64 import Nintendo64
 

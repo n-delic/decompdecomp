@@ -955,7 +955,7 @@ def bridge_loaded_prologues(image, found, loaded, taken=(), log=print):
     return result
 
 
-def insert_segments(config: Path, cfg: dict, found, size: int, *, scopes=None) -> None:
+def insert_segments(config: Path, cfg: dict, found, size: int, *, scopes=None, runtime_data=()) -> None:
     """Write `found` (rom_start, rom_end, vram) into splat's config `cfg` as code segments of their own, each
     followed by raw bytes up to the next segment, and save it to `config`. Used by the import, and by
     missed_functions on a project that already exists."""
@@ -970,6 +970,9 @@ def insert_segments(config: Path, cfg: dict, found, size: int, *, scopes=None) -
         overlaps = [s for s in parents if s.rom_start < hi and lo < s.rom_end]
         if overlaps:
             parent = overlaps[0]
+            if len(overlaps) == 1 and body in runtime_data and _movable_data_tail(cfg, body):
+                outside.append(body)
+                continue
             if len(overlaps) == 1 and parent.rom_start <= lo < hi <= parent.rom_end and _cut_ok(cfg, body):
                 children.append(body)
                 continue
@@ -1132,12 +1135,13 @@ def missed_functions(config: Path, rom: bytes, log=print, known_functions=(), *,
     inside = _bodies_inside_code(cfg, rom, taken, known_functions, log) if known_functions else []
     # Existing projects can predate the runtime import scan. Observed ranges still need
     # function-boundary analysis and staged verification before they can be added.
-    from . import emulator, loaded_code, runtime_scoped
+    from . import emulator, loaded_code, runtime_data, runtime_scoped
 
     image = config.parent / (cfg.get('options', {}).get('target_path') or 'rom.z64')
     samples = []
     runtime_banks = []
     overlap_banks = []
+    moved_data = set()
     if emulator.installed() and image.is_file() and image.read_bytes() == rom:
         log('Running the game to check for directly called code missing from its mappings.')
         cancel = getattr(log, 'cancel_event', None)
@@ -1146,6 +1150,8 @@ def missed_functions(config: Path, rom: bytes, log=print, known_functions=(), *,
         def inspect(dumps):
             reviews.extend(loaded_code.moved_banks(rom, declared, found + inside, known_functions, dumps,
                                                    getattr(log, 'check_cancel', lambda: None)))
+            moved_data.update(runtime_data.discover(rom, cfg, known_functions, dumps,
+                                                    getattr(log, 'check_cancel', lambda: None)))
             if any(s.exclusive_ram_id for s in known):
                 samples.append(dumps)
 
@@ -1207,7 +1213,7 @@ def missed_functions(config: Path, rom: bytes, log=print, known_functions=(), *,
     if rejected:
         log(f'Deferred {rejected} candidate bodies whose parent mapping or raw boundary needs review.')
     inside = sorted(set(inside + cuttable))
-    new = [body for body in new if body not in children]
+    new = sorted({body for body in new if body not in children} | moved_data)
     bank_scopes, existing_scopes = _observed_overlap_scopes(runtime_banks, overlap_banks, known, cfg)
 
     def overlap_scope(body):
@@ -1268,7 +1274,7 @@ def missed_functions(config: Path, rom: bytes, log=print, known_functions=(), *,
                 _apply_overlap_scopes(proposed, existing_scopes,
                                       {scopes.get(body[0], '') for body in chosen})
                 if inserts := sorted(new_bodies & chosen):
-                    insert_segments(staged, proposed, inserts, len(rom), scopes=scopes)
+                    insert_segments(staged, proposed, inserts, len(rom), scopes=scopes, runtime_data=moved_data)
                     proposed = yaml.safe_load(staged.read_text(encoding='utf-8'))
                 if cuts := sorted(inside_bodies & chosen):
                     _cut_inside(proposed, cuts, allow_data=called_data)
@@ -1391,7 +1397,7 @@ def missed_functions(config: Path, rom: bytes, log=print, known_functions=(), *,
         cfg = yaml.safe_load(initial_text)
         _apply_overlap_scopes(cfg, existing_scopes, {scopes.get(body[0], '') for body in new})
         if new:
-            insert_segments(staged, cfg, new, len(rom), scopes=scopes)
+            insert_segments(staged, cfg, new, len(rom), scopes=scopes, runtime_data=moved_data)
             cfg = yaml.safe_load(staged.read_text(encoding='utf-8'))
         if inside:
             _cut_inside(cfg, inside, allow_data=called_data)
@@ -1531,6 +1537,18 @@ def _replaceable_parent_tail(cfg, body):
     seg = _owner(cfg, lo, hi)
     if (seg is None or seg.get('type') != 'code' or not isinstance(seg.get('vram'), int)
             or seg['vram'] + lo - seg['start'] != vram):
+        return False
+    subs = [s for s in seg.get('subsegments', []) if isinstance(s, list) and len(s) >= 2]
+    source = max((s for s in subs if s[0] <= lo), key=lambda s: s[0], default=None)
+    return (source is not None and source[1] in ('data', '.data', 'rodata', '.rodata')
+            and not any(s[0] > lo or s[0] == lo and s is not source for s in subs))
+
+
+def _movable_data_tail(cfg, body):
+    """A separately verified runtime bank can replace only the final data child of a code parent."""
+    lo, hi, _ = body
+    seg = _owner(cfg, lo, hi)
+    if seg is None or seg.get('type') != 'code':
         return False
     subs = [s for s in seg.get('subsegments', []) if isinstance(s, list) and len(s) >= 2]
     source = max((s for s in subs if s[0] <= lo), key=lambda s: s[0], default=None)

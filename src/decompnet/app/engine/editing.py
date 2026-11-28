@@ -306,6 +306,22 @@ class EditMixin:
                         or cfg.get('donor_overlays') != original_cfg.get('donor_overlays')
                         or current_symbols != original_symbols):
                     raise NetworkError('The project code or mappings changed during the search. Retry with the current project.')
+                # A verified runtime bank can replace an unowned data tail at a different address. The staged
+                # split shortened its original parent; keeping the old catalog range would make both mappings
+                # claim those ROM bytes. Preserve all other catalog segments, including analysis-only banks.
+                for old in list(cfg.get('segments', [])):
+                    moved = [(lo, hi) for lo, hi, vram in fresh
+                             if old['rom_start'] <= lo < hi <= old['rom_end']
+                             and old['vram'] + lo - old['rom_start'] != vram]
+                    if not moved:
+                        continue
+                    replacements = [s for s in mappings if s.rom_start == old['rom_start'] and s.vram == old['vram']
+                                    and s.rom_end <= min(lo for lo, _ in moved)]
+                    if len(replacements) != 1 or any(row[1] is not None and isinstance(row[2], int)
+                                                     and row[1] + row[2] > replacements[0].rom_end
+                                                     and row[1] < old['rom_end'] for row in current_entries):
+                        raise NetworkError('The original data mapping could not be shortened safely. Review the bank before adding code.')
+                    cfg['segments'][cfg['segments'].index(old)] = vars(replacements[0])
                 for lo, hi, vram in fresh:
                     check_cancel()
                     name = f"func_{vram:08X}"
