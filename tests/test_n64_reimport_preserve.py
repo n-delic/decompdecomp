@@ -261,3 +261,39 @@ def test_matched_module_entry_is_preserved_only_with_unchanged_unoccupied_bank()
     assert _matched_module_entries(occupied, image, [row]) == 0
 
 
+
+
+def test_payload_only_alignment_entry_requires_full_surroundings_and_no_incoming(monkeypatch):
+    import hashlib
+
+    image = bytearray(0x500)
+    before = bytes.fromhex('24020001') * 7 + bytes.fromhex('03e00008 00000000')
+    after = bytes.fromhex('24020002') * 62 + bytes.fromhex('03e00008 00000000')
+    image[0x104:0x128] = before
+    image[0x128:0x130] = bytes.fromhex('24087fff 256b0001')
+    image[0x130:0x230] = after
+    image[0x300:0x308] = bytes.fromhex('0c00004c 00000000')  # calls 0x80000130
+    image[0x400:0x404] = (0x80000128).to_bytes(4, 'big')
+    monkeypatch.setattr(reimport_preserve, '_ALIGNMENT_BEFORE', hashlib.sha256(before).hexdigest())
+    monkeypatch.setattr(reimport_preserve, '_ALIGNMENT_AFTER', {hashlib.sha256(after).hexdigest()})
+    functions = [split.function_from_bytes('head', bytes(image[0x104:0x128]), 0x104, 0x80000104, 'bank'),
+                 split.function_from_bytes('tail', bytes(image[0x130:0x230]), 0x130, 0x80000130, 'bank'),
+                 split.function_from_bytes('caller', bytes(image[0x300:0x308]), 0x300, 0x80000300, 'bank')]
+    result = SimpleNamespace(functions=functions)
+    row = dict(name='func_80000128', rom_offset=0x128, vram=0x80000128, size=8,
+               status='open', target=bytes(image[0x128:0x130]), meta='{}')
+    ranges = [(0x400, 0x404)]
+    probe = lambda data, old=row: reimport_preserve._payload_only_alignment_entries(result, bytes(data), [old], ranges, lambda: None)
+    assert probe(image) == {row['name']}
+    assert not probe(image, {**row, 'status': 'matched'})
+    assert not probe(image, {**row, 'meta': '{"boundary_decision":{"action":"keep"}}'})
+    outside = bytearray(image); outside[0x410:0x414] = image[0x400:0x404]
+    assert not probe(outside)
+    outside[0x410:0x414] = (0x8000012c).to_bytes(4, 'big')
+    assert not probe(outside)
+    changed = bytearray(image); changed[0x134] ^= 1
+    assert not probe(changed)
+    called = bytearray(image); called[0x300:0x304] = bytes.fromhex('0c00004a')
+    assert not probe(called)
+    called[0x300:0x304] = bytes.fromhex('0c00004b')
+    assert not probe(called)
