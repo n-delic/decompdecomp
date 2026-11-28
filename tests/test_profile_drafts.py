@@ -2,6 +2,7 @@
 under, the bounded and durable pass over one function, the drafter running it over every open function, and the N64
 demo game with its real compiler."""
 import json
+import sqlite3
 import struct
 import threading
 import time
@@ -73,6 +74,32 @@ def test_a_toolchain_that_is_not_installed_is_not_used(monkeypatch):
     assert profile_drafts.used_profiles(net, {}) == []
 
 
+def test_a_rare_profile_of_a_matched_neighbour_is_planned_though_the_most_used_leave_it_out(monkeypatch):
+    """A file built its own way: its two matched functions are far below the project's four most used profiles."""
+    rare = {'toolchain': 't', 'flags': ['-rare']}
+    common = [({'toolchain': 't', 'flags': [f'-O{n}']}, 100 - n) for n in range(4)]
+    everyone = used(*common, (rare, 2))
+    rows = sqlite3.connect(':memory:')
+    rows.row_factory = sqlite3.Row
+    rows.execute('CREATE TABLE functions(project_id, name, vram, rom_offset, status)')
+    rows.executemany('INSERT INTO functions VALUES(1,?,?,?,?)', [
+        ('far', 0x80001000, 0x1000, 'matched'), ('mid', 0x80001100, 0x1100, 'matched'),
+        ('near', 0x80001200, 0x1200, 'matched'), ('open', 0x80001300, 0x1300, 'open'),
+        ('next', 0x80001400, 0x1400, 'open'), ('after', 0x80001500, 0x1500, 'matched')])
+    store = SimpleNamespace(all=lambda sql, *args: rows.execute(sql, args).fetchall())
+    net = SimpleNamespace(project_store=lambda pid: store)
+    monkeypatch.setattr('decompnet.project.compiler_for', lambda cfg, vram, fn=None: {
+        'far': rare, 'mid': common[0][0], 'near': common[0][0], 'after': common[1][0]}[fn['name']])
+    fn = {'rom_offset': 0x1300, 'vram': 0x80001300}
+    assert 'rare' not in str(profile_drafts.neighbour_profiles(net, PROJ, {}, fn, everyone)), 'three functions away'
+    monkeypatch.setattr('decompnet.project.compiler_for', lambda cfg, vram, fn=None: {
+        'far': common[0][0], 'mid': rare, 'near': common[0][0], 'after': common[1][0]}[fn['name']])
+    near = profile_drafts.neighbour_profiles(net, PROJ, {}, fn, everyone)
+    assert keys(near) == [('t', '-O0'), ('t', '-O1'), ('t', '-rare')]
+    plan = profile_drafts.plan('mips', KMC, everyone, b'', near=near)
+    assert keys(plan) == [('t', '-O0'), ('t', '-O1'), ('t', '-O2'), ('t', '-O3'), ('t', '-rare')]
+
+
 # --- one function's pass ----------------------------------------------------------------------------------------------
 
 class Store:
@@ -81,6 +108,9 @@ class Store:
 
     def one(self, sql, *args):
         return {'x': 1} if (args[0], args[1]) in self.trials else None
+
+    def all(self, sql, *args):
+        return []
 
     def tx(self):
         trials = self.trials
