@@ -62,6 +62,17 @@ def _data_variant(fn, source, header, candidate, target):
     clean = csource._blank(source)
     pattern = r'\bXDATA\s*\(\s*([A-Za-z_]\w*)\s*,'
     sites = list(re.finditer(pattern, clean[span[0]:span[1]]))
+    definitions = csource._blank(header + '\n' + source)
+    for site in sites:
+        token = site.group(1)
+        if token == 'D_00000000':
+            continue
+        pattern = r'(?m)^\s*#\s*define\s+' + re.escape(token) + r'\s+([^\n]*)$'
+        values = re.findall(pattern, definitions)
+        if not values or any(value.strip() != 'D_00000000' for value in values):
+            return None
+        if re.search(r'(?m)^\s*#\s*undef\s+' + re.escape(token) + r'\b', definitions):
+            return None
     sites = [(span[0] + m.start(1), span[0] + m.end(1)) for m in sites]
     low = sorted((r for r in candidate.relocs if r.type == 6 and r.symbol == 'D_00000000'),
                  key=lambda r: r.offset)
