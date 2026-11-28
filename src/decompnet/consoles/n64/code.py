@@ -559,7 +559,8 @@ def unpack_code(rom: bytes) -> list[tuple[int, bytes]]:
 
 # ---------------------------------------------------------------------------------------------- into splat's config
 
-def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_replacing_boot=False) -> str:
+def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_replacing_boot=False,
+                 skip_paged=False) -> str:
     """An N64 game's code outside the main segment (n64code.py), added to splat's config as code segments of their
     own. Compressed code (Rare's, Yaz0, RNC method 1) is unpacked first and appended to a working copy of the ROM, which splat then
     reads instead (and an export rebuilds). Code the search can't place is then found by running the game, when the
@@ -575,6 +576,7 @@ def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_rep
         dma_overlays,
         indexed_overlays,
         indexed_runtime_code,
+        indexed_tlb_code,
         level_overlay_table,
         named_dma,
         overlays,
@@ -595,6 +597,15 @@ def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_rep
     taken = split.code_ranges(config)
     if taken and (result := indexed_runtime_code.add(config,workdir,image,rom,taken,log)):
         return result
+    if taken and not skip_paged and indexed_tlb_code.find(rom, taken):
+        # Keep all ordinary cartridge mappings first. The paged program is an
+        # addition, not a replacement for independently discovered ROM code.
+        base = add_segments(config, workdir, image, log, skip_replacing_boot=skip_replacing_boot, skip_paged=True)
+        if base != original:
+            return base
+        taken = split.code_ranges(config)
+        if result := indexed_tlb_code.add(config, workdir, image, rom, taken, log):
+            return result
     if taken and (result := resident_deflate.add(config,workdir,image,rom,taken,log)):
         return result
     if taken and not skip_replacing_boot and boot_brs.find(rom, taken):

@@ -166,6 +166,7 @@ def test_mips_abi_retry_requires_only_abi_diagnostics(tmp_path, monkeypatch):
     diagnostics = ('ld: entry.o: linking 32-bit code with 64-bit code\n'
                    'ld: entry.o: failed to merge target specific data of file entry.o\n')
     assert module.mixed_mips_abi(diagnostics)
+    assert module.mixed_mips_abi(diagnostics + "ld: warning: dot moved backwards before `.own_0'\n")
     assert not module.mixed_mips_abi(diagnostics + 'ld: undefined reference to missing\n')
     assert not module.mixed_mips_abi('ld: cannot find entry.o\n')
 

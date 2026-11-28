@@ -164,7 +164,8 @@
   their overlay scopes and existing symbols are retained. Conflicting groups are subdivided; a stopped search
   retains its verified groups and rechecks them on resume. The cartridge split is checked separately from appended
   relocatable analysis banks, whose records remain intact. Games with unverified mappings remain for review.
-  Planned: equivalent runtime adapters for the other consoles and project-mode targets.
+  Planned: equivalent runtime adapters for the other consoles and project-mode targets; trace virtual TLB
+  addresses in paged N64 programs when runtime observations currently expose only physical RAM.
 
 - Full MIPS coverage scans trace indirect calls in every detected function, with a bounded search per function.
   Completed groups are checkpointed against the image, layout and tracing implementation, so Stop and resume do
@@ -206,6 +207,10 @@
   distinct direct calls strongly agree with an established later load mapping.
   Explicit data/BSS, competing mappings and uncertain boundaries are left unchanged.
   Existing projects need a reviewed reimport; running projects are not rewritten.
+
+- Done: N64 imports recover loader-indexed compressed code pages mapped through a
+  TLB, together with their separately loaded data, when the loader and every page
+  agree. Rebuilds verify the decoded image against the original cartridge.
 
 - Done: saved-match recovery eligibility scans use the current database without
   triggering implicit progress-folder exports on every project/fork lookup. Explicit
