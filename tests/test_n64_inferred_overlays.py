@@ -354,6 +354,19 @@ def test_single_inferred_bank_scopes_resident_bss():
     assert config['segments'][0]['exclusive_ram_id'] == config['segments'][1]['exclusive_ram_id']
 
 
+def test_resident_scope_cannot_cross_remaining_global_code_envelope():
+    config = {'segments': [
+        {'type': 'code', 'name': 'entry', 'start': 0x1000, 'vram': 0x80000400},
+        {'type': 'code', 'name': 'main', 'start': 0x1060, 'vram': 0x80000460, 'bss_size': 0x3000},
+        {'type': 'code', 'name': 'other', 'start': 0x2000, 'vram': 0x80004000},
+        {'type': 'code', 'name': 'bank', 'start': 0x2800, 'vram': 0x80003000,
+         'exclusive_ram_id': 'slot'},
+        [0x3000],
+    ]}
+    assert not inferred_overlays.scope_resident_bss(config)
+    assert 'exclusive_ram_id' not in config['segments'][1]
+
+
 def test_child_range_cannot_scope_its_entire_resident_parent():
     config = {'segments': [
         {'type': 'code', 'name': 'main', 'start': 0x1000, 'vram': 0x80000400,

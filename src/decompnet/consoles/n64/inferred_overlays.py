@@ -374,6 +374,36 @@ def scope_resident_bss(config):
             return False
         if identities:
             updates.append((segment, identities.pop()))
+    # Splat treats all remaining global code as one range, including gaps.
+    # Scoping a resident BSS also scopes its text; an earlier global startup
+    # or a later global bank can make that text overlap the global envelope.
+    # Leave the original mappings in place when that would make splitting fail.
+    changed = {id(segment) for segment, _ in updates}
+    global_ranges = []
+    for index, segment in enumerate(rows[:-1]):
+        if (not isinstance(segment, dict) or segment.get('type') != 'code'
+                or segment.get('exclusive_ram_id') or id(segment) in changed
+                or not isinstance(segment.get('vram'), int)):
+            continue
+        following = rows[index+1]
+        end = following[0] if isinstance(following, list) else following.get('start')
+        if not isinstance(end, int):
+            return False
+        start = segment['vram']
+        bss = segment.get('bss_size') or 0
+        if not isinstance(bss, int) or bss < 0:
+            return False
+        global_ranges.append((start, start+end-segment['start']+bss))
+    if global_ranges:
+        low = min(start for start, _ in global_ranges)
+        high = max(end for _, end in global_ranges)
+        for segment, _ in updates:
+            index = next(i for i, row in enumerate(rows) if row is segment)
+            following = rows[index+1]
+            end = following[0] if isinstance(following, list) else following['start']
+            start = segment['vram']
+            if start < high and low < start+end-segment['start']+segment['bss_size']:
+                return False
     for segment, ident in updates:
         segment['exclusive_ram_id'] = ident
     return True
