@@ -1486,6 +1486,8 @@ def test_reimport_direct_retry_separates_each_placeholder_and_preserves_port_cal
     assert '#define decomp_overlay_direct_1 uso_1_sym_2' in result
     assert '#define decomp_overlay_direct_2 uso_1_sym_3' in result
     assert 'decomp_overlay_direct_1(1)' in result and 'decomp_overlay_direct_2(2)' in result
+    pointer_result = _direct_variant(fn, source, 'void *func_00000000();', candidate, target, '')
+    assert 'void *uso_1_sym_2();' in pointer_result and 'void *uso_1_sym_3();' in pointer_result
     candidate.relocs.pop()
     assert _direct_variant(fn, source, header, candidate, target, '') is None
 

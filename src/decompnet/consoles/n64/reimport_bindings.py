@@ -133,7 +133,8 @@ def _direct_variant(fn, source, header, candidate, target, extra):
         wanted = [expected.get((r.offset, r.type)) for r in ordered]
         if any(r is None or not re.fullmatch(r'[A-Za-z_]\w*', r.symbol) for r in wanted):
             return None
-        pattern = (r'(?m)^[ \t]*extern[ \t]+[^;{}#\n]+\b' + re.escape(symbol)
+        pattern = (r'(?m)^[ \t]*(?!(?:return|if|while|for|switch)\b)'
+                   r'[A-Za-z_]\w*(?:[ \t*]+[A-Za-z_]\w*)*[ \t*]+' + re.escape(symbol)
                    + r'[ \t]*\([^;{}#\n]*\)[ \t]*;')
         declaration = re.search(pattern, clean_combined)
         prototype = combined[declaration.start():declaration.end()] if declaration else f'extern int {symbol}();'
