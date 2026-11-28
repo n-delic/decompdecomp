@@ -623,6 +623,12 @@ def build() -> bool:
                 if not verify_analysis(original, out, boot_ranges):
                     fail("Rebuilt code differs from the original compressed boot programs.")
                 out = original
+            elif cipher_ranges := cartridge.get("byte_cipher_ranges"):
+                from decompnet.consoles.n64.runtime_byte_cipher import verify_analysis
+
+                if not verify_analysis(original, out, cipher_ranges):
+                    fail("Rebuilt code differs from the original runtime-decoded program.")
+                out = original
             elif cartridge.get("indexed_archive"):
                 from decompnet.consoles.n64.indexed_runtime_code import verify_analysis
 
