@@ -6,6 +6,6 @@ evidence: observation
 date: 2026-11-28
 ---
 
-A 583-instruction N64 state handler computes a byte-table row address inside a nested call. Staging the same row address in a pointer immediately before the call improved the linked O1 diagnostic from 3,480 to 3,260. The other argument expressions in this case have no side effects, and both table reads remain.
+A 583-instruction N64 state handler computes a byte-table row address inside a nested call. Staging the same row address in a pointer immediately before the call improved the linked O1 diagnostic from 3,480 to 3,260. After other steps, moving the row address ahead of the column calculation improved 1,420 to 1,400; staging their sum immediately before the call improved it further to 1,160, with an O2 score of 20,768. The other argument expressions in this case have no side effects, and both table reads remain.
 
 The generated child scored 21,483 under the saved `-O2` profile, worse than its saved 20,754; it was not submitted or used to change the profile. This is one function observation, not an exact match or a controlled regression test.
