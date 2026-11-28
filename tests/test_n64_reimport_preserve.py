@@ -2,6 +2,7 @@
 
 from types import SimpleNamespace
 
+import pytest
 import yaml
 
 from decompnet.consoles.n64 import reimport_preserve, runtime_staging
@@ -59,3 +60,41 @@ def test_preserve_does_not_restore_a_proven_data_range_as_code(tmp_path, monkeyp
     # An ordinary data label alone is weaker evidence: keep the old entry.
     result.data[0].boundary_proven = False
     assert reimport_preserve.preserve(None, None, result, image, [row], lambda *_: None) == 1
+
+
+@pytest.mark.parametrize('obstacle', ['none', 'referenced_fragment', 'old_fragment', 'proven_data', 'staging'])
+def test_preserve_restores_contiguous_called_code_misclassified_as_data(tmp_path, monkeypatch, obstacle):
+    from decompnet.arch import mips_gaps, mips_references
+
+    cfg = {'options':{'target_path':'game.z64'}, 'segments':[
+        {'name':'bank','type':'code','start':0x100,'vram':0x80001000,
+         'subsegments':[[0x100,'rodata','wrong'],[0x120,'c','tail']]}, [0x180]]}
+    path = tmp_path/'game.yaml';path.write_text(yaml.safe_dump(cfg))
+    body = bytes.fromhex('27bdfff0 03e00008 27bd0010')
+    image = bytearray(0x180);image[0x100:0x124] = body*3
+    fragment = split.function_from_bytes('fragment',bytes(image[0x120:0x124]),0x120,0x80001020,'tail')
+    caller = split.function_from_bytes('caller',bytes.fromhex('03e00008 00000000'),0x140,0x80001040,'tail')
+    result = SimpleNamespace(config_path=path,functions=[fragment,caller],segments=split.segments_from_config(path),data=[])
+    rows = [dict(name=f'old{i}',rom_offset=0x100+i*12,vram=0x80001000+i*12,size=12,target=body,unit='bank')
+            for i in range(3)]
+    targets = [r['vram'] for r in rows]
+    if obstacle == 'referenced_fragment':
+        targets.append(fragment.vram)
+    if obstacle == 'old_fragment':
+        rows.append(dict(name='other_old_name',rom_offset=fragment.rom,vram=fragment.vram,size=fragment.size,
+                         target=bytes(image[0x120:0x124]),unit='tail'))
+    if obstacle == 'proven_data':
+        result.data.append(SimpleNamespace(rom=0x108,vram=0x80001008,size=4,boundary_proven=True))
+    monkeypatch.setattr(mips_references,'references',lambda *_:[(target,0x140,'call') for target in targets])
+    monkeypatch.setattr(mips_gaps,'extent',lambda image,lo,hi,*args,**kwargs:
+                        {'direct_flow_closed':True,'step_limit':False,'extent_bytes':hi-lo})
+    monkeypatch.setattr(runtime_staging,'verify',lambda *args,**kwargs: obstacle != 'staging')
+    count = reimport_preserve.preserve(None,None,result,bytes(image),rows,lambda *_:None)
+    if obstacle == 'none':
+        assert count == 3
+        assert {f.name for f in result.functions} == {'caller','old0','old1','old2'}
+        assert yaml.safe_load(path.read_text())['segments'][0]['subsegments'][0][1] == 'c'
+    else:
+        assert count == 0
+        assert {f.name for f in result.functions} == {'caller','fragment'}
+        assert yaml.safe_load(path.read_text()) == cfg
