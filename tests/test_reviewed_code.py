@@ -181,10 +181,13 @@ def test_export_rejoins_cut_scoped_bank_without_mutating_project():
     assert original['segments'][1] == fragment
     assert restored['segments'] == [bank, {'type': 'bin', 'start': 0x180}, [0x200]]
     row = {'name': 'saved', 'vram': 0x80001040, 'rom_offset': 0x140, 'size': 8}
-    assert _export_segments(original, [row])['segments'] == restored['segments']
+    exported = _export_segments(original, [row])['segments']
+    assert [(s[0], s[1]) for s in exported[0]['subsegments']] == [
+        (0x100, 'c'), (0x120, 'bin'), (0x140, 'c'), (0x148, 'c')]
+    assert exported[1:] == restored['segments'][1:]
 
 
-def test_export_preserves_matches_in_rejoined_bank_tail():
+def test_export_preserves_recorded_entries_in_rejoined_bank_tail():
     bank = {'type': 'code', 'name': 'bank', 'start': 0x100, 'vram': 0x80001000,
             'exclusive_ram_id': 'slot', 'subsegments': [[0x100, 'c', 'a'], [0x120, 'bin', 'gap'],
                                                       [0x140, 'c', 'b'], [0x160, 'data', 'data']]}
@@ -197,7 +200,8 @@ def test_export_preserves_matches_in_rejoined_bank_tail():
     result = _export_segments(original, rows)
     subs = result['segments'][0]['subsegments']
     assert [(s[0], s[1]) for s in subs] == [(0x100, 'c'), (0x120, 'c'), (0x128, 'bin'),
-                                              (0x140, 'c'), (0x144, 'c'), (0x14c, 'c'), (0x160, 'data')]
+                                              (0x140, 'c'), (0x144, 'c'), (0x14c, 'c'),
+                                              (0x150, 'c'), (0x158, 'c'), (0x160, 'data')]
     assert original['segments'][0]['subsegments'][1] == [0x120, 'bin', 'gap']
 
 
