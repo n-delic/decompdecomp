@@ -5,8 +5,12 @@ closed single-frame body may cross generated fragment boundaries, but not explic
 symbols, data, independent references, image gaps or competing mappings.
 """
 import heapq
+import json
+import os
 import re
 import struct
+import subprocess
+import tempfile
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from dataclasses import replace
@@ -142,6 +146,137 @@ def _indexed_store_references(fn):
     return out
 
 
+def _scan_image_and_references_python(functions, image, console, starts, slots, store_tails, shared, names):
+    """Pure-Python full-ROM pointer scan and per-instruction reference extraction."""
+    fmt = '>I' if console.big_endian else '<I'
+    zero_entries = {fn.vram for fn in functions if fn.size == 4 and not fn.lines[0].word}
+    pointers = {w for i, (w,) in enumerate(struct.iter_unpack(fmt, image[:len(image) // 4 * 4]))
+                if w in starts and not any(s.contains(w, 4) for s in slots)
+                and (w not in zero_entries or not console.import_pointer_is_data(image, 4 * i))}
+    references = defaultdict(set)
+    direct_calls = set()
+    transfer_targets = set()
+    shared_calls = set(shared)
+    reference_bodies = {}
+    for fn in functions:
+        store_refs = _indexed_store_references(fn) if slots else {}
+        for index, line in enumerate(fn.lines):
+            op = line.word >> 26
+            # A conditional link with a transfer in its delay slot has no defined MIPS execution. In particular,
+            # instruction-shaped data can look like a call into the middle of a real framed function. Do not
+            # treat that impossible link as an independent entry, while retaining all ordinary calls and pointers.
+            if (op == 1 and (line.word >> 16) & 31 in (16, 17, 18, 19) and index + 1 < len(fn.lines)
+                    and _has_delay_slot(fn.lines[index + 1].word)):
+                continue
+            if op in (2, 3):
+                dest = ((line.vram + 4) & 0xf0000000) | ((line.word & 0x3ffffff) << 2)
+                references[dest].add((line.rom, fn.segment))
+                transfer_targets.add(dest)
+                if op == 3 and (dest, line.rom, fn.segment) not in shared_calls:
+                    direct_calls.add(dest)
+            elif op in (1, 4, 5, 6, 7, 20, 21, 22, 23) or op == 17 and (line.word >> 21) & 31 == 8:
+                delta = line.word & 0xffff
+                dest = line.vram + 4 + (delta - 0x10000 if delta & 0x8000 else delta) * 4
+                references[dest].add((line.rom, fn.segment))
+                transfer_targets.add(dest)
+            for token in re.findall(r'[\w.]+', line.operands):
+                if token in names:
+                    address = names[token]
+                    if (address in store_tails and token in store_refs.get(line.rom, ())
+                            and any(s.contains(address, 4) and not s.rom_start <= line.rom < s.rom_end for s in slots)):
+                        continue
+                    references[address].add((line.rom, fn.segment))
+                    reference_bodies[line.rom] = fn
+    return pointers, references, direct_calls, transfer_targets, reference_bodies
+
+
+def _scan_image_and_references_rust(functions, image, console, starts, slots, store_tails, shared, names):
+    """Run `decomp-mcp-gateway automatic-boundaries` when available; return None on missing binary or error."""
+    from ..app import mcp_gateway
+    exe = mcp_gateway.program()
+    if exe is None:
+        return None
+    zero_entries = {fn.vram for fn in functions if fn.size == 4 and not fn.lines[0].word}
+    func_payload = []
+    for fn in functions:
+        store_refs = _indexed_store_references(fn) if slots else {}
+        func_payload.append({
+            'segment': fn.segment,
+            'lines': [
+                {'rom': line.rom, 'vram': line.vram, 'word': line.word, 'operands': line.operands}
+                for line in fn.lines
+            ],
+            'store_refs': [
+                [rom, sym]
+                for rom, syms in store_refs.items()
+                for sym in syms
+            ],
+        })
+    payload = {
+        'big_endian': bool(console.big_endian),
+        'starts': list(starts),
+        'zero_entries': list(zero_entries),
+        'slots': [
+            {'vram': s.vram, 'rom_start': s.rom_start, 'rom_end': s.rom_end}
+            for s in slots
+        ],
+        'store_tails': list(store_tails),
+        'shared_calls': [[dest, off, seg] for dest, off, seg in shared],
+        'names': dict(names),
+        'functions': func_payload,
+    }
+    tmp_path = None
+    try:
+        if len(image) > 65536:
+            with tempfile.NamedTemporaryFile(prefix='decomp-ab-', suffix='.bin', delete=False) as tmp:
+                tmp.write(image)
+                tmp_path = tmp.name
+            payload['image_path'] = tmp_path
+        else:
+            payload['image_hex'] = bytes(image).hex()
+        try:
+            proc = subprocess.run(
+                [str(exe), 'automatic-boundaries'],
+                input=json.dumps(payload),
+                text=True,
+                capture_output=True,
+                timeout=120,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+    finally:
+        if tmp_path is not None:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+    if proc.returncode != 0:
+        return None
+    try:
+        raw = json.loads(proc.stdout)
+    except ValueError:
+        return None
+    pointers = set(raw['pointers'])
+    for addr, offsets in raw['zero_entry_offsets']:
+        if any(not console.import_pointer_is_data(image, off) for off in offsets):
+            pointers.add(addr)
+    references = defaultdict(set)
+    for dest, rom, seg in raw['references']:
+        references[dest].add((rom, seg))
+    direct_calls = set(raw['direct_calls'])
+    transfer_targets = set(raw['transfer_targets'])
+    reference_bodies = {rom: functions[idx] for rom, idx in raw['reference_bodies']}
+    return pointers, references, direct_calls, transfer_targets, reference_bodies
+
+
+def _scan_image_and_references(functions, image, console, starts, slots, store_tails, shared, names):
+    """Scan ROM pointers and extract instruction references, preferring the Rust worker."""
+    result = _scan_image_and_references_rust(functions, image, console, starts, slots, store_tails, shared, names)
+    if result is not None:
+        return result
+    return _scan_image_and_references_python(functions, image, console, starts, slots, store_tails, shared, names)
+
+
 def repair(functions, data, image, console, segments, *, symbols=(), log=print, inline_data=()):
     """Keep all original instructions while joining/splitting strictly validated bodies."""
     if console.arch!='mips':return functions
@@ -156,7 +291,6 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
     starts={f.vram for f in functions}
     original_entries={(f.rom, f.vram):f for f in functions}
     order='big' if console.big_endian else 'little'
-    fmt='>I' if console.big_endian else '<I'
     # Generated C units can change at a false cut inside one mapped code segment.
     def owner(fn):
         mapped = [i for i, s in enumerate(segments)
@@ -181,47 +315,12 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
                 store_tails.add(tail.vram)
     # A stored word equal to an address in a shared slot may be any sibling overlay's table entry, and the segment's
     # own extent can run on over its siblings' images (the game above: five overlays in one segment's ROM range).
-    zero_entries = {fn.vram for fn in functions if fn.size == 4 and not fn.lines[0].word}
-    pointers={w for i,(w,) in enumerate(struct.iter_unpack(fmt,image[:len(image)//4*4]))
-              if w in starts and not any(s.contains(w,4) for s in slots)
-              and (w not in zero_entries or not console.import_pointer_is_data(image,4*i))}
-    named_or_pointed = explicit | pointers
-    references=defaultdict(set)
-    direct_calls=set()
-    transfer_targets=set()
-    shared_calls=set(shared)
     names={f.name:f.vram for f in functions}
     lines_by_rom={line.rom:line for fn in functions for line in fn.lines}
-    reference_bodies={}
-    for fn in functions:
-        store_refs = _indexed_store_references(fn) if slots else {}
-        for index,line in enumerate(fn.lines):
-            op=line.word>>26
-            # A conditional link with a transfer in its delay slot has no defined MIPS execution. In particular,
-            # instruction-shaped data can look like a call into the middle of a real framed function. Do not
-            # treat that impossible link as an independent entry, while retaining all ordinary calls and pointers.
-            if (op == 1 and (line.word >> 16) & 31 in (16, 17, 18, 19) and index+1 < len(fn.lines)
-                    and _has_delay_slot(fn.lines[index+1].word)):
-                continue
-            if op in (2,3):
-                dest=((line.vram+4)&0xf0000000)|((line.word&0x3ffffff)<<2)
-                references[dest].add((line.rom,fn.segment))
-                transfer_targets.add(dest)
-                if op==3 and (dest,line.rom,fn.segment) not in shared_calls:
-                    direct_calls.add(dest)
-            elif op in (1,4,5,6,7,20,21,22,23) or op==17 and (line.word>>21)&31==8:
-                delta=line.word&0xffff
-                dest=line.vram+4+(delta-0x10000 if delta&0x8000 else delta)*4
-                references[dest].add((line.rom,fn.segment))
-                transfer_targets.add(dest)
-            for token in re.findall(r'[\w.]+',line.operands):
-                if token in names:
-                    address = names[token]
-                    if (address in store_tails and token in store_refs.get(line.rom, ())
-                            and any(s.contains(address, 4) and not s.rom_start <= line.rom < s.rom_end for s in slots)):
-                        continue
-                    references[names[token]].add((line.rom,fn.segment))
-                    reference_bodies[line.rom]=fn
+    pointers, references, direct_calls, transfer_targets, reference_bodies = _scan_image_and_references(
+        functions, image, console, starts, slots, store_tails, shared, names,
+    )
+    named_or_pointed = explicit | pointers
     for dest,offset,segment in shared:
         references[dest].discard((offset,segment))
         if not references[dest]:del references[dest]
