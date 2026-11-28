@@ -1572,6 +1572,22 @@ def test_reimport_groups_named_objects_but_skips_macro_arguments():
     assert _group_object_data(fn, source.replace('saved_object +', 'READ(saved_object) +'), header, candidate) is None
 
 
+def test_reimport_float_prototype_retry_is_scoped_to_undeclared_loader_calls():
+    from types import SimpleNamespace
+
+    from decompnet.consoles.n64.reimport_bindings import _float_prototype_variants
+
+    fn = {'name': 'work'}
+    target = SimpleNamespace(relocs=[SimpleNamespace(type=4, symbol='uso_ABC_sym_7')])
+    source = 'void work(void) { uso_ABC_sym_7(ptr->value, nested(1, 2), 1.0f); }'
+    variants = _float_prototype_variants(fn, source, '', target)
+    assert len(variants) == 1
+    assert '#ifndef PORT\nextern int uso_ABC_sym_7(int, int, float);\n#endif' in variants[0]
+    assert _float_prototype_variants(fn, source, 'extern int uso_ABC_sym_7(int, int, float);', target) == []
+    assert _float_prototype_variants(fn, source, '', SimpleNamespace(relocs=[])) == []
+    assert _float_prototype_variants(fn, source.replace('1.0f', '1.0'), '', target) == []
+
+
 def test_reimport_binding_retry_returns_only_exact_result(monkeypatch):
     import json
     from types import SimpleNamespace
