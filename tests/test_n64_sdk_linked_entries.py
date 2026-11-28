@@ -1,4 +1,5 @@
 """Linked SDK fingerprints must be bound to the complete body and image."""
+import hashlib
 from types import SimpleNamespace
 
 import pytest
@@ -20,3 +21,32 @@ def test_known_linked_sdk_identity_is_image_and_size_bound(monkeypatch, digest, 
     assert proof['name'] == name and not proof['from_c'] and proof['bytes'] == size
     assert sdk_linked.identify(bytes(size), '0'*40) is None
     assert sdk_linked.identify(bytes(size + 4), image) is None
+
+
+@pytest.mark.parametrize('image', [
+    'cf806ff2603640a748fca5026ded28802f1f4a50',
+    '0f07d05f6696deb9df26481881723517833a134c',
+])
+@pytest.mark.parametrize(('digest', 'size', 'name'), [
+    ('48aaeb35564e08822c2bdb27216388c251c5694800d6ecdfcf7e097b9a755ac0', 28, '__d_to_ll'),
+    ('f8bea959cb8ea987ad5d91b842cf546fb7d18ff8fc740c2e8417d4270aad84cd', 28, '__f_to_ll'),
+    ('f827e7595e739486bed493f6652a7f4f147490ddcb4bf2134eaa2711cbaa426a', 160, '__d_to_ull'),
+    ('c026001547b5a50c4149ac721e28d292d23ba56d3986c458544b586143391b6c', 156, '__f_to_ull'),
+    ('3ba11f1a28a9802b21e5d730228be65dacb4301cb4c994f6806afc96828168e9', 24, '__ll_to_d'),
+    ('2982a1e508fc621881ff0dd7f87fbd3b7c4887c2e03cfb32508c90fe86bb5fe5', 24, '__ll_to_f'),
+])
+def test_linked_conversion_identity_requires_the_image_and_full_body(monkeypatch, image, digest, size, name):
+    monkeypatch.setattr(sdk_linked.hashlib, 'sha256', lambda _: SimpleNamespace(hexdigest=lambda: digest))
+    proof = sdk_linked.identify(bytes(size), image)
+    assert proof['name'] == name and proof['from_c'] and proof['bytes'] == size
+    assert sdk_linked.identify(bytes(size), '0'*40) is None
+    assert sdk_linked.identify(bytes(size+4), image) is None
+
+
+def test_linked_identity_rejects_a_changed_body_or_image(monkeypatch):
+    code = bytes(range(28))
+    digest = hashlib.sha256(code).hexdigest()
+    monkeypatch.setattr(sdk_linked, '_LIBULTRA', {'a'*40: {digest: ('conversion', 28, True, 'libc/llcvt.c')}})
+    assert sdk_linked.identify(code, 'a'*40)['name'] == 'conversion'
+    assert sdk_linked.identify(code[:-1] + b'\xff', 'a'*40) is None
+    assert sdk_linked.identify(code, 'b'*40) is None

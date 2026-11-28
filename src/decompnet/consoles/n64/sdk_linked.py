@@ -32,6 +32,24 @@ _KNOWN = {
 # The PI manager references the EPI DMA entry. The scheduler uses linked
 # addresses for queues and OS globals when saving and restoring context.
 _LIBULTRA = {
+    # Six consecutive conversion helpers were compared instruction by instruction with the pinned
+    # libultra 2.0I build of libc/llcvt.c. Four bodies are identical; the two unsigned conversions
+    # differ only in their linked constant addresses, and both eight-byte constants also match.
+    # Bind these short or relocated bodies to the complete original and expanded analysis images.
+    'cf806ff2603640a748fca5026ded28802f1f4a50': {
+        '48aaeb35564e08822c2bdb27216388c251c5694800d6ecdfcf7e097b9a755ac0':
+            ('__d_to_ll', 28, True, 'libc/llcvt.c'),
+        'f8bea959cb8ea987ad5d91b842cf546fb7d18ff8fc740c2e8417d4270aad84cd':
+            ('__f_to_ll', 28, True, 'libc/llcvt.c'),
+        'f827e7595e739486bed493f6652a7f4f147490ddcb4bf2134eaa2711cbaa426a':
+            ('__d_to_ull', 160, True, 'libc/llcvt.c'),
+        'c026001547b5a50c4149ac721e28d292d23ba56d3986c458544b586143391b6c':
+            ('__f_to_ull', 156, True, 'libc/llcvt.c'),
+        '3ba11f1a28a9802b21e5d730228be65dacb4301cb4c994f6806afc96828168e9':
+            ('__ll_to_d', 24, True, 'libc/llcvt.c'),
+        '2982a1e508fc621881ff0dd7f87fbd3b7c4887c2e03cfb32508c90fe86bb5fe5':
+            ('__ll_to_f', 24, True, 'libc/llcvt.c'),
+    },
     # Complete linked bytes from an image whose public symbol map identifies these entries.
     # The interrupt routines were compared instruction by instruction with a verified SDK build:
     # only the linked addresses of the same globals and interrupt-mask table differ. The table's
@@ -107,6 +125,7 @@ _LIBULTRA = {
             ('osSetIntMask', 160, False, 'os/setintmask.s'),
     },
 }
+_LIBULTRA['0f07d05f6696deb9df26481881723517833a134c'] = _LIBULTRA['cf806ff2603640a748fca5026ded28802f1f4a50']
 SIZES = tuple(sorted({size for entries in _KNOWN.values() for _, size in entries.values()}
                      | {entry[1] for entries in _LIBULTRA.values() for entry in entries.values()}))
 
