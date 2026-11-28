@@ -101,6 +101,20 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
                 except emulator.EmulatorError as error:
                     expansion_failed = True
                     log(f'Expanded-memory observation skipped: {error}')
+            # Some controller-pak prompts require B to continue without saving;
+            # A and the alternate menu path leave those games on the prompt.
+            if not run.timed_out and not direct and not any(a.get('textures') for a in packed):
+                log('No textures were observed; trying to continue without a controller pak.')
+                for path in dumps.values():
+                    path.unlink(missing_ok=True)
+                inputs = '120:B,128:,240:B,248:,360:B,368:,' + ','.join(
+                    f'{vi}:START,{vi+8}:,{vi+60}:A,{vi+68}:' for vi in range(600, VIS[-1], 120))
+                run = emulator.run(rom, VIS[-1], inputs=inputs, dumps=dumps,
+                                   timeout=120, expansion_pak=expansion)
+                snapshots = [path.read_bytes() for path in dumps.values() if path.is_file()]
+                direct += runtime_textures.regions(image, snapshots)
+                packed += runtime_packed_graphics.regions(image, snapshots, progress=progress)
+                sounds += runtime_audio.regions(image, snapshots) + (runtime_ptr_audio.regions(image, snapshots) if raw_samples else [])
             if scene:
                 log('Observing the requested later scene with the controller script.')
                 progress(dict(phase='Observing the requested scene',done=0,total=1))
