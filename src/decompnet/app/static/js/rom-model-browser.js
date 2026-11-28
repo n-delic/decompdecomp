@@ -35,10 +35,11 @@ function renderRomModelBrowser(view=romView()) {
     streamRomAssets('Model',rows,(batch,start)=>{
       const cells=batch.map((r,i)=>{
         const name=esc(r.name),meshes=`${(r.asset.meshes?.length || 1)} meshes`;
-        const link=`<button type="button" class="${icons?'ghost rom-model-card-open':'link-btn'}" data-model-region="${start+i}" ${report.stale?'disabled':''}>${icons?'<span aria-hidden="true">◇</span> ':''}${name}${icons?`<small>${meshes} · ${r.vertices.toLocaleString()} vertices · ${r.triangles.toLocaleString()} triangles</small>`:''}</button>`;
+        const count=value=>typeof value==='number'?value.toLocaleString():'—';
+        const link=`<button type="button" class="${icons?'ghost rom-model-card-open':'link-btn'}" data-model-region="${start+i}" ${report.stale?'disabled':''}>${icons?'<span aria-hidden="true">◇</span> ':''}${name}${icons?`<small>${meshes} · ${count(r.vertices)} vertices · ${count(r.triangles)} triangles</small>`:''}</button>`;
         const refs=[...new Set([...r.direct,...r.traced])].map(n=>`<button type="button" class="link-btn" data-model-function="${esc(n)}">${esc(n)}</button>`).join(' · ');
         return icons?[link,refs]:[
-          link+`<div class="small muted">${meshes}</div>`,r.vertices.toLocaleString(),r.triangles.toLocaleString(),refs||'None recorded',
+          link+`<div class="small muted">${meshes}</div>`,count(r.vertices),count(r.triangles),refs||'None recorded',
         ];
       });
       if(icons)host.insertAdjacentHTML('beforeend',cells.map(([link,refs])=>`<article class="rom-texture-card">${link}${refs?`<div class="small">${refs}</div>`:''}</article>`).join(''));

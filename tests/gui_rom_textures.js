@@ -164,5 +164,13 @@ const row=(n=0)=>({id:'r'+n,kind:'image',start:128+n*200,detected_asset:{...asse
   assert.match(html,/1 meshes · 4 vertices/);
   assert.doesNotMatch(html,/undefined/);
  }
+ {
+  const model={kind:'3d model',media:'model',offset:16,size:32,label:'Unknown geometry'};
+  const t=setup({available:true,regions:[{id:'unknown',kind:'3d model',detected_asset:model}]});
+  t.context.$('romAssetBrowser').open=true;
+  t.context.$('romModelPanel').hidden=false;
+  t.run('renderRomModelBrowser(romView())');
+  assert.match(t.context.$('romModelItems').innerHTML,/— vertices · — triangles/);
+ }
  console.log('Asset browser infinite scroll, usage, cancellation and playback passed');
 })().catch(error=>{console.error(error);process.exitCode=1;});
