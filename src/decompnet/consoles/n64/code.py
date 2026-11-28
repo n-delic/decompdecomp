@@ -396,7 +396,9 @@ def boot_switch_range(image, segments):
 
 def relocated_switch_ranges(image, segments):
     """Track the immediate data tail of code ranges that share an overlay load mapping."""
-    ranges = boot_switch_range(image, segments)
+    from . import stack_dma
+
+    ranges = boot_switch_range(image, segments) + stack_dma.ranges(image, segments)
     ordered = sorted(segments,key=lambda segment:segment.rom_start)
     for i,(previous,segment) in enumerate(zip(ordered,ordered[1:]), 1):
         delta = segment.vram-segment.rom_start

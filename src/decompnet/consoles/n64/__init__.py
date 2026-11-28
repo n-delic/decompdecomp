@@ -10,6 +10,7 @@
 - runtime_scoped.py: called code corroborated in RAM despite an overlapping overlay address.
 - reimport_preserve.py: stage existing byte-verified entries omitted by a replacement split.
 - loader_mapping.py: bank mappings corroborated by constant arguments to independent loader helpers.
+- stack_dma.py: stack-argument PI transfers that prove data mapped alongside independently placed code.
 - indexed_overlays.py: shared RAM slots and DMA bounds recovered from loader arrays and cache calls.
 - indexed_runtime_code.py: executable archive members mapped at their declared runtime addresses.
 - runtime_zlib.py, runtime_refpack.py: compressed programs corroborated by runtime call targets and loaded bytes.

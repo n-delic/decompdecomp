@@ -292,11 +292,17 @@ def jump_table(image,start,end,vram,at,order,ranges=(),mappings=(),*,reader=None
         if targets := destinations(image[offset:offset+count*4]):
             valid.append((offset,verified,targets))
     if not valid:
-        aliases = [r for r in ranges if r.get('target_prefix')==vram&0xe0000000
-                   and (r.get('boot_copy') or uses_ido_guard and r.get('code_delta')==vram-start)]
+        scoped = [r for r in ranges if r.get('scoped_copy') and r.get('target_prefix')==vram&0xe0000000
+                  and r.get('code_delta')==vram-start and r['vram'] <= address
+                  and address+count*4 <= r['vram']+r['rom_end']-r['rom_start']]
+        # A verified overlay replaces the initial boot copy at the same address. Only the record belonging to
+        # this code mapping may decide its table; sibling overlays and the older boot contents are not concurrent.
+        aliases = scoped or [r for r in ranges if r.get('target_prefix')==vram&0xe0000000
+                             and (r.get('boot_copy') or uses_ido_guard and r.get('code_delta')==vram-start)]
         choices,error = locations(address,count*4,image,aliases)
         if error:return {**result,'reason':error}
-        resident = [r for r in aliases if r.get('boot_copy') and r['vram']-r['rom_start']==vram-start]
+        resident = [r for r in aliases if (r.get('boot_copy') or r.get('scoped_copy'))
+                    and r['vram']-r['rom_start']==vram-start]
         absolute, _ = locations(address, count*4, image, resident)
         for offset,verified in choices:
             data = image[offset:offset+count*4]
