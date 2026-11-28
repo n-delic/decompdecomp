@@ -103,6 +103,31 @@ def test_a_stray_start_is_fixed_through_the_review_path(tmp_path, monkeypatch):
     assert history[0]['evidence'].startswith('Automatic: f starts 4 bytes late')
 
 
+def test_reimport_reuses_a_byte_exact_old_name_and_keeps_its_symbol_on_undo(tmp_path,monkeypatch):
+    net,_=stray_start(tmp_path,monkeypatch)
+    raw=net._function('f','game')['target'][4:]
+    with net.project_store(1).tx() as db:
+        db.execute("INSERT INTO symbols(project_id,name,address,size,kind) VALUES(1,'old_name',?,?,'func')",(BASE+0x14,len(raw)))
+    preferred={(0x14,BASE+0x14,len(raw),raw):'old_name'}
+    assert repair.apply_entry_fixes(net,'game',preferred_entries=preferred)['fixed']
+    assert net._function('old_name','game')['target']==raw
+    key=repair.audit(net,'game')['history'][0]['key']
+    repair.undo(net,'game',key)
+    assert net.project_store(1).one("SELECT name FROM symbols WHERE project_id=1 AND name='old_name'")
+
+
+def test_reimport_does_not_reuse_an_old_name_for_different_bytes_or_conflicting_symbol(tmp_path,monkeypatch):
+    for case in ('different_bytes','conflicting_symbol'):
+        net,_=stray_start(tmp_path/case,monkeypatch)
+        raw=net._function('f','game')['target'][4:]
+        if case=='conflicting_symbol':
+            with net.project_store(1).tx() as db:
+                db.execute("INSERT INTO symbols(project_id,name,address,size,kind) VALUES(1,'old_name',?,?,'func')",(BASE+0x100,len(raw)))
+        preferred={(0x14,BASE+0x14,len(raw),b'x'*len(raw) if case=='different_bytes' else raw):'old_name'}
+        assert repair.apply_entry_fixes(net,'game',preferred_entries=preferred)['fixed']
+        assert net._function('func_80001014','game')['target']==raw
+
+
 def test_entry_fixes_are_idempotent_and_an_undo_is_durable(tmp_path, monkeypatch):
     net, _ = stray_start(tmp_path, monkeypatch)
     before = dict(net._function('f', 'game'))
