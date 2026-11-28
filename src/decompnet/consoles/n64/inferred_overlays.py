@@ -296,6 +296,12 @@ def scope(config, found, scoped):
                            symbol_name_format_no_rom=f'$VRAM_{name}')
 
 
+def apply_scopes(config, found, scoped):
+    """Scope inferred banks and check every resident BSS they can touch."""
+    scope(config, found, scoped)
+    return scope_resident_bss(config)
+
+
 def scope_resident_bss(config):
     """Share an overlay scope when its RAM overlaps only a resident segment's BSS.
 
