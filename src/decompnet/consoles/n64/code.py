@@ -1420,6 +1420,53 @@ def missed_functions(config: Path, rom: bytes, log=print, known_functions=(), *,
     return result
 
 
+def finish_import(result, workdir, rom_name, console, *, symbols=None, log=print):
+    """Run the verified existing-project search on the new split until it stops finding code."""
+    while True:
+        getattr(log, 'check_cancel', lambda: None)()
+        known = [(fn.rom, fn.rom + fn.size, fn.vram) for fn in result.functions
+                 if fn.rom is not None and fn.vram is not None and fn.size > 0]
+        before = result.config_path.read_text(encoding='utf-8')
+        try:
+            bodies = missed_functions(result.config_path, (workdir / result.image).read_bytes(), log, known)
+        except (RomError, OSError, ValueError) as error:
+            getattr(log, 'check_cancel', lambda: None)()
+            if result.config_path.read_text(encoding='utf-8') != before:
+                split.write_config_atomic(result.config_path, before)
+            log(f'Kept the previous import split; additional code remains for review: {error}')
+            return result
+        if not bodies:
+            return result
+        log(f'Import found {len(bodies)} more verified code bodies; checking the updated split.')
+        try:
+            updated = split.resplit_prepared(workdir, rom_name, console, result, symbols=symbols, log=log)
+        except (RomError, OSError, ValueError) as error:
+            getattr(log, 'check_cancel', lambda: None)()
+            split.write_config_atomic(result.config_path, before)
+            restored = split.resplit_prepared(workdir, rom_name, console, result, symbols=symbols, log=log)
+            if not set(known).issubset({(fn.rom, fn.rom + fn.size, fn.vram) for fn in restored.functions
+                                        if fn.rom is not None}):
+                raise RomError('The previous import split could not be reproduced. Retry the import.') from error
+            log(f'Kept the previous import split; the updated split needs review: {error}')
+            return restored
+        retained = {(fn.rom, fn.rom + fn.size, fn.vram) for fn in updated.functions if fn.rom is not None}
+        lost = set(known) - retained
+        missed = set(bodies) - retained
+        if lost or not set(bodies) & retained:
+            split.write_config_atomic(result.config_path, before)
+            restored = split.resplit_prepared(workdir, rom_name, console, result, symbols=symbols, log=log)
+            if not set(known).issubset({(fn.rom, fn.rom + fn.size, fn.vram) for fn in restored.functions
+                                        if fn.rom is not None}):
+                raise RomError('The previous import split could not be reproduced. Retry the import.')
+            log(f'Kept the previous import split: the final boundary repair changed {len(lost)} existing '
+                f'and {len(missed)} staged function(s).')
+            return restored
+        if missed:
+            log(f'Left {len(missed)} staged bod{"y" if len(missed) == 1 else "ies"} for boundary review '
+                'after the final split combined or changed them.')
+        result = updated
+
+
 def _bodies_inside_code(cfg, rom, taken, known, log):
     """Closed bodies in a code segment's raw bytes: the gaps between the project's own functions, scanned as
     loader banks are (loader_code). The split left them as `.word` data, and an import now recovers them (mixed_code)

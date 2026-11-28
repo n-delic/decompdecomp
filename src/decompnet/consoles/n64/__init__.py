@@ -426,10 +426,11 @@ class Nintendo64(Console):
         return super().function_asm(replace(fn, lines=lines))
 
     def split_game(self, workdir: Path, picked: Picked, *, symbols: list[str] | None = None, log=print):
-        from .code import recover_terminal_display_lists
+        from .code import finish_import, recover_terminal_display_lists
         from .uso import add_to_split
 
         result = super().split_game(workdir, picked, symbols=symbols, log=log)
+        result = finish_import(result, workdir, picked.filename, self, symbols=symbols, log=log)
         sdk_linked.split_scheduler(result, picked.info.get('sha1', ''))
         recover_terminal_display_lists(result, (workdir / result.image).read_bytes(), log)
         add_to_split(result, workdir, picked.data, log)
