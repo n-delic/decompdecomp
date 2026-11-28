@@ -1,3 +1,4 @@
+import hashlib
 import struct
 
 import pytest
@@ -50,6 +51,26 @@ def test_does_not_cross_another_segment_or_forward_branch_target():
 def test_normal_completed_segment_is_unchanged():
     rom=image([0]*20+[0x03e00008,0x27bd0018])
     assert complete(rom,[(0,len(rom),0x80001000)])==[(0,len(rom),0x80001000)]
+
+
+@pytest.mark.parametrize('case', ['valid', 'uncalled', 'changed', 'rom_overlap', 'ram_overlap', 'interior'])
+def test_exact_called_sdk_body_crossing_segment_end(monkeypatch, case):
+    from decompnet.consoles.n64 import sdk_assembly
+
+    base = 0x80001000
+    body = struct.pack('>10I', 0x24840001, 0x03e00008, 0, 0x24840002, 0x03e00008, 0,
+                       0x24840003, 0x03e00008, 0, 0)
+    monkeypatch.setattr(sdk_assembly, 'KNOWN', {hashlib.sha256(body).hexdigest(): ('example', len(body), '', '')})
+    rom = bytes(8) + body + bytes(16)
+    if case == 'changed':
+        rom = rom[:32] + b'\x01' + rom[33:]
+    called = set() if case == 'uncalled' else {base+8}
+    if case == 'interior': called.add(base+16)
+    taken = [(32,36,0x90000000)] if case == 'rom_overlap' else []
+    if case == 'ram_overlap': taken = [(len(rom),len(rom)+4,base+32)]
+    segment = (0,28,base)
+    result = complete(rom,[segment],taken,called=called)
+    assert result == ([(0,48,base)] if case == 'valid' else [segment])
 
 
 def test_called_leaf_after_return_can_extend_through_closed_branches():
