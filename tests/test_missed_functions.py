@@ -356,6 +356,35 @@ def test_search_anchors_existing_entries_if_a_new_cut_would_hide_them(tmp_path, 
     assert yaml.safe_load(config.read_text()) == accepted[-1]
 
 
+@pytest.mark.parametrize(('caller', 'accepted'), [('same', True), ('absent', False), ('other', False)])
+def test_called_body_in_rodata_is_staged_without_replacing_surrounding_data(tmp_path, monkeypatch, caller, accepted):
+    from decompnet.consoles.n64 import code, emulator
+
+    cfg = {'segments': [{'name': 'bank', 'type': 'code', 'start': 0x1000, 'vram': 0x80001000,
+                         'subsegments': [[0x1000, 'c', 'bank'], [0x1020, 'rodata', 'constants'],
+                                         [0x1080, 'c', 'later']]}, [0x1100]]}
+    config = tmp_path / 'game.yaml'
+    config.write_text(yaml.safe_dump(cfg))
+    body = (0x1030, 0x1040, 0x80001030)
+    known = [(0x1000, 0x1010, 0x80001000), (0x1080, 0x1090, 0x80001080)]
+    if caller == 'other':
+        known[0] = (0x1000, 0x1010, 0x80011000)
+    rom = bytearray(0x1100)
+    if caller != 'absent':
+        rom[0x1000:0x1004] = (0x0c00040c).to_bytes(4, 'big')  # jal 0x80001030
+    monkeypatch.setattr(code, 'complete_gaps', lambda *a, **kw: [body])
+    monkeypatch.setattr(code, '_bodies_inside_code', lambda *a: [])
+    monkeypatch.setattr(emulator, 'installed', lambda: None)
+    result = missed_functions(config, bytes(rom), log=lambda *_: None, known_functions=known)
+    assert result == ([body] if accepted else [])
+    subs = yaml.safe_load(config.read_text())['segments'][0]['subsegments']
+    if accepted:
+        assert [(s[0], s[1]) for s in subs] == [(0x1000, 'c'), (0x1020, 'rodata'),
+                                                 (0x1030, 'c'), (0x1040, 'rodata'), (0x1080, 'c')]
+    else:
+        assert subs == cfg['segments'][0]['subsegments']
+
+
 def test_import_segment_in_a_raw_child_stays_inside_its_existing_parent(tmp_path):
     from decompnet.consoles.n64.code import insert_segments
     from decompnet.rom import RomError

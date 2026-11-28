@@ -1191,7 +1191,18 @@ def missed_functions(config: Path, rom: bytes, log=print, known_functions=(), *,
     # Inserting another top-level segment there truncates the parent's later children and breaks its split.
     children = [body for body in new if _owner(cfg, body[0], body[1]) is not None
                 and not _replaceable_parent_tail(cfg, body)]
-    cuttable = [body for body in children if _cut_ok(cfg, body)]
+    # Splat can mislabel a run of called code as rodata. Require a direct call
+    # from an existing function on the same mapping before cutting that data.
+    from ...arch.mips_references import references
+
+    data_candidates = [body for body in children if _cut_ok(cfg, body, allow_data=True)
+                       and not _cut_ok(cfg, body)]
+    called_data = set()
+    for lo, hi, vram in known_functions if data_candidates else ():
+        getattr(log, 'check_cancel', lambda: None)()
+        called_data.update(body for target, _, kind in references(rom, lo, hi, vram) if kind == 'call'
+                           for body in data_candidates if target == body[2] and vram - lo == body[2] - body[0])
+    cuttable = [body for body in children if _cut_ok(cfg, body) or body in called_data]
     rejected = len(children) - len(cuttable)
     if rejected:
         log(f'Deferred {rejected} candidate bodies whose parent mapping or raw boundary needs review.')
@@ -1260,7 +1271,7 @@ def missed_functions(config: Path, rom: bytes, log=print, known_functions=(), *,
                     insert_segments(staged, proposed, inserts, len(rom), scopes=scopes)
                     proposed = yaml.safe_load(staged.read_text(encoding='utf-8'))
                 if cuts := sorted(inside_bodies & chosen):
-                    _cut_inside(proposed, cuts)
+                    _cut_inside(proposed, cuts, allow_data=called_data)
                 anchors, attempted, conflicts, errors = [], set(), [], []
 
                 def check_split():
@@ -1383,7 +1394,7 @@ def missed_functions(config: Path, rom: bytes, log=print, known_functions=(), *,
             insert_segments(staged, cfg, new, len(rom), scopes=scopes)
             cfg = yaml.safe_load(staged.read_text(encoding='utf-8'))
         if inside:
-            _cut_inside(cfg, inside)
+            _cut_inside(cfg, inside, allow_data=called_data)
         for anchor in anchors:
             _cut_inside(cfg, [anchor])
         result = sorted(set(new) | {b for b in inside if _cut_ok(cfg, b)})
@@ -1499,7 +1510,7 @@ def _owner(cfg, lo, hi):
     return None
 
 
-def _cut_ok(cfg, body):
+def _cut_ok(cfg, body, *, allow_data=False):
     lo, hi, vram = body
     seg = _owner(cfg, lo, hi)
     if (seg is None or seg.get('type') != 'code' or not isinstance(seg.get('vram'), int)
@@ -1509,7 +1520,8 @@ def _cut_ok(cfg, body):
     containing = max((s for s in subs if s[0] <= lo), key=lambda s: s[0], default=None)
     # A called body can live after the boot jump in one handwritten assembly
     # unit. The staged split still has to reproduce it and every existing body.
-    return (containing is not None and containing[1] in ('c', 'bin', 'hasm') and
+    kinds = ('c', 'bin', 'hasm', 'rodata', '.rodata', 'data', '.data') if allow_data else ('c', 'bin', 'hasm')
+    return (containing is not None and containing[1] in kinds and
             not any(lo < s[0] < hi and s[1] != containing[1] for s in subs))
 
 
@@ -1526,7 +1538,7 @@ def _replaceable_parent_tail(cfg, body):
             and not any(s[0] > lo or s[0] == lo and s is not source for s in subs))
 
 
-def _cut_inside(cfg, bodies):
+def _cut_inside(cfg, bodies, *, allow_data=()):
     """Give each body its own C subsegment (cuts at its start and end) in the code segment that holds it."""
     changed = False
     # Pick the original parent, not a subsegment created for an earlier body. Repeatedly appending to the
@@ -1539,7 +1551,7 @@ def _cut_inside(cfg, bodies):
     ends = {id(seg): (after[0] if isinstance(after, list) else after['start'])
             for seg, after in zip(ordered, ordered[1:]) if isinstance(seg, dict)}
     for lo, hi, vram in bodies:
-        if not _cut_ok(cfg, (lo, hi, vram)):
+        if not _cut_ok(cfg, (lo, hi, vram), allow_data=(lo, hi, vram) in allow_data):
             continue
         seg = _owner(cfg, lo, hi)
         if seg is None:
