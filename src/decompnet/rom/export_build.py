@@ -80,8 +80,12 @@ def mixed_mips_abi(stderr: str) -> bool:
     width = r": linking (?:32-bit code with 64-bit code|64-bit code with 32-bit code)$"
     abi = r": ABI mismatch: linking \w+ module with previous \w+ modules$"
     merge = r": failed to merge target specific data of file .+$"
+    # Addressed NOLOAD pools can move the location counter backwards in a
+    # valid overlay link; this warning does not explain a failed link.
+    backwards = r": warning: dot moved backwards before .+$"
     return (any(re.search(width, line) or re.search(abi, line) for line in lines)
-            and all(re.search(width, line) or re.search(abi, line) or re.search(merge, line) for line in lines))
+            and all(re.search(width, line) or re.search(abi, line) or re.search(merge, line)
+                    or re.search(backwards, line) for line in lines))
 
 
 def binutils(tool: str) -> str:
@@ -624,6 +628,12 @@ def build() -> bool:
 
                 if not verify_analysis(original, out):
                     fail("Rebuilt code differs from the original compressed archive members.")
+                out = original
+            elif boot_ranges := cartridge.get("paged_boot_ranges"):
+                from decompnet.consoles.n64.indexed_tlb_code import verify_analysis
+
+                if not verify_analysis(original, out, boot_ranges):
+                    fail("Rebuilt code differs from the original paged programs.")
                 out = original
             else:
                 out = rebuild_cartridge(out, original, cartridge["blocks"])

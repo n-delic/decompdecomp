@@ -791,6 +791,7 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
             if not verify_unpacked_analysis(original, image):
                 raise ExportError("compressed analysis differs from its original cartridge and decoded blocks")
         gzip_boot_ranges = []
+        paged_boot_ranges = []
         archive_analysis = False
         if not blocks and not runtime_verified:
             gzip_boot_ranges = [entry for entry in split.code_ranges(configs[0]) if entry[1] <= len(original)]
@@ -798,7 +799,10 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
                 from ..consoles.n64 import indexed_runtime_code
                 archive_analysis = indexed_runtime_code.verify_analysis(original, image)
                 if not archive_analysis:
-                    if not runtime_zlib.verify_analysis(original, image, runtime_programs):
+                    from ..consoles.n64 import indexed_tlb_code
+                    if indexed_tlb_code.verify_analysis(original, image, gzip_boot_ranges):
+                        paged_boot_ranges = gzip_boot_ranges
+                    elif not runtime_zlib.verify_analysis(original, image, runtime_programs):
                         raise ExportError("expanded analysis image has no verified compressed-block reconstruction")
                 gzip_boot_ranges = []
         cartridge = f"baserom.cartridge{ext}"
@@ -810,6 +814,8 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
             build["cartridge"]["gzip_boot_ranges"] = gzip_boot_ranges
         if archive_analysis:
             build["cartridge"]["indexed_archive"] = True
+        if paged_boot_ranges:
+            build["cartridge"]["paged_boot_ranges"] = paged_boot_ranges
         if runtime_verified or runtime_programs and not blocks:
             build["cartridge"]["runtime_zlib"] = runtime_programs
     (out / "build.json").write_text(json.dumps(build, indent=1), encoding="utf-8")
@@ -839,7 +845,8 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
                             f"1. Keep both generated private inputs: `{base}` (expanded analysis image) and "
                             f"`{cartridge['image']}` (original normalized cartridge). Reimport and export your ROM "
                             "to regenerate them; the original cartridge alone is not the expanded analysis input.")
-        if cartridge.get('runtime_zlib') or cartridge.get('indexed_archive') or cartridge.get('gzip_boot_ranges'):
+        if (cartridge.get('runtime_zlib') or cartridge.get('indexed_archive') or cartridge.get('gzip_boot_ranges')
+                or cartridge.get('paged_boot_ranges')):
             text += ("\nThe build checks the linked analysis image against the original compressed programs and "
                      "verifies the original cartridge. Byte-changing edits require recompression.\n")
         else:
