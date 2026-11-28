@@ -208,6 +208,12 @@ def runtime_mappings(image, found, ranges, taken=()):
             offsets = [4*i for i, word in enumerate(words)
                        if is_frame(word) or i >= 2 and words[i-2] == JR_RA]
             calls = {0x80000000 | ((word & 0x03ffffff) << 2) for word in words if word >> 26 == 3}
+            if start == lo and address in calls and 0 not in offsets:
+                # A bank may start with a called leaf instead of a stack frame.
+                # Count it only when its complete body closes at this mapping.
+                from ...arch.mips_code_recovery import leaf_extent
+                if leaf_extent(image, start, end, address, cpu='vr4300'):
+                    offsets.append(0)
             actual = len(calls & {address+offset for offset in offsets})
             previous = len(calls & {old+offset for offset in offsets})
             if address != old and (actual >= 3 and actual > previous or

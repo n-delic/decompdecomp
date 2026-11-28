@@ -75,6 +75,23 @@ def test_runtime_observed_range_needs_internal_call_corroboration():
     assert inferred_overlays.runtime_mappings(image,[old],[observed])==([old],set())
 
 
+def test_runtime_bank_counts_a_closed_called_leaf_at_its_start():
+    image = bytearray(0x200)
+    base = 0x80100000
+    old = (0, len(image), 0x80040000)
+    observed = (0, len(image), base)
+    struct.pack_into('>3I', image, 0, 0x24020001, 0x03e00008, 0)
+    for at in (0x40, 0x80):
+        struct.pack_into('>3I', image, at, 0x27bdffe8, 0x03e00008, 0x27bd0018)
+    def jal(address):
+        return 0x0c000000 | ((address >> 2) & 0x3ffffff)
+    struct.pack_into('>3I', image, 0x100, jal(base), jal(base+0x40), jal(base+0x80))
+    assert inferred_overlays.runtime_mappings(image, [old], [observed]) == ([observed], {0})
+    assert inferred_overlays.runtime_mappings(image, [old], [observed], [(0x400, 0x500, base)]) == ([old], set())
+    struct.pack_into('>I', image, 4, 0x1000ffff)  # A looping entry is not a closed leaf.
+    assert inferred_overlays.runtime_mappings(image, [old], [observed]) == ([old], set())
+
+
 def test_runtime_range_can_cover_only_part_of_inferred_code():
     image,found=fixture()
     old=(0,0x5000,0x80040000)
