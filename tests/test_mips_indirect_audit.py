@@ -347,6 +347,20 @@ def test_a_switch_whose_scale_sits_in_the_guards_delay_slot_is_followed():
     assert result['flow_closed'] and result['return_sites']==3 and not result['unresolved_transfers']
 
 
+@pytest.mark.parametrize('order', ['big', 'little'])
+@pytest.mark.parametrize('load,valid', [(0x8e330020, True), (0x8e220020, False), (0x8e230020, False)])
+def test_switch_guard_allows_only_an_unrelated_scheduled_load(load, valid, order):
+    image = bytearray(0x1200)
+    words = [0x2c620002, load, 0x1040000a, 0x00031080, 0x3c018000, 0x00220821,
+             0x8c221100, 0x00400008, 0, 0x03e00008, 0, 0x03e00008, 0, 0x03e00008, 0]
+    prefix = '>' if order == 'big' else '<'
+    image[0x1000:0x103c] = struct.pack(prefix+'15I', *words)
+    image[0x1100:0x1108] = struct.pack(prefix+'2I', 0x80001024, 0x8000102c)
+    ranges = [dict(rom_start=0x1100, rom_end=0x1108, vram=0x80001100)]
+    result = jump_table(image, 0x1000, 0x103c, 0x80001000, 0x101c, order, ranges)
+    assert bool(result and result['state'] == 'validated') == valid
+
+
 def test_ido_switch_reads_unique_overlay_table_with_compact_addresses():
     # sltiu, beqz, LUI in the branch slot, ADDIU, index scale, ADDU, raw LW, JR.
     vram = 0x80200000

@@ -189,6 +189,9 @@ def _guard_slot(word, index, condition):
     return (not word or word >> 21 == 0x57d
             or word & 0xfc1f07ff in (33, 37) and (word >> 11) & 31 not in (index, condition)
             or word >> 26 in (9, 10, 11, 12, 13, 14) and (word >> 16) & 31 not in (index, condition)
+            # A scheduled load may fill the same gap if it preserves both
+            # registers used by the bounds check and table index.
+            or word >> 26 == 35 and (word >> 16) & 31 not in (index, condition)
             # FP multiply and move cannot change either general-purpose guard register.
             or word & 0xffe0003f in (0x46000002, 0x46000006))
 
