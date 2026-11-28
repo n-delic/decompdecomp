@@ -19,7 +19,7 @@ from __future__ import annotations
 import re
 import struct
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import cached_property
 from typing import Callable
 
@@ -675,6 +675,50 @@ class _Linker:
                           self.required_data_reads, dict(self.library_names))
 
 
+
+def equivalent_literal_relocs(target: FunctionObj, candidate: FunctionObj) -> FunctionObj:
+    """Show an identical linked literal with the target's automatic symbol.
+
+    A split can annotate a numeric constant as D_80000014 even when the
+    compiler writes the same immediate without a relocation.  Only a fixed
+    ROM target can prove those encodings equal.  Keep actual candidate relocs
+    untouched, and require identical fixed-width instructions at the same
+    position so a shifted instruction cannot inherit an unrelated annotation.
+    """
+    if (target.arch != 'mips' or candidate.arch != 'mips' or target.big_endian != candidate.big_endian
+            or len(target.code) != len(candidate.code) or len(target.code) % 4):
+        return candidate
+    occupied = {r.offset // 4 for r in candidate.relocs}
+    existing_symbols = {r.symbol for r in candidate.relocs}
+    added = []
+    for r in target.relocs:
+        off = r.offset
+        if (r.type not in (R_MIPS_HI16, R_MIPS_LO16) or not re.fullmatch(r'D_[0-9A-Fa-f]{8}', r.symbol)
+                or r.addend or r.symbol in existing_symbols or off < 0 or off % 4
+                or off + 4 > len(target.code) or off // 4 in occupied):
+            continue
+        if target.code[off:off + 4] == candidate.code[off:off + 4]:
+            added.append(r)
+    if not added:
+        return candidate
+    return replace(candidate, relocs=sorted([*candidate.relocs, *added], key=lambda r: r.offset))
+
+
+def _show_linked_literals(result: LinkResult, target: RomTarget, symbols: SymbolTable) -> LinkResult:
+    candidate = result.candidate
+    if candidate is None or result.problems or len(target.code) != len(candidate.code):
+        return result
+    # Most candidates have no such literal. Avoid constructing a canonical
+    # target in that common search path.
+    occupied = {r.offset // 4 for r in candidate.relocs}
+    if any(kind in (R_MIPS_HI16, R_MIPS_LO16) and off >= 0 and off % 4 == 0
+           and off + 4 <= len(target.code) and off // 4 not in occupied
+           and target.code[off:off + 4] == candidate.code[off:off + 4]
+           for off, kind, _ in target.relocs):
+        result.candidate = equivalent_literal_relocs(canonical_target(target, symbols), candidate)
+    return result
+
+
 def link(obj: bytes, name: str, target: RomTarget, symbols: SymbolTable, read: ReadFn) -> LinkResult:
     """Link a compiled candidate at the target's address and compare it with the ROM."""
     obj = unmangle(obj, lambda n: n in symbols.by_name or bool(AUTO_NAME.match(n)))  # C++ names: the game's
@@ -682,19 +726,20 @@ def link(obj: bytes, name: str, target: RomTarget, symbols: SymbolTable, read: R
     if native is not None:
         result = native(obj, target, symbols, read)
         if result is not None:
-            return result
+            return _show_linked_literals(result, target, symbols)
     prepare = elf_preparer.get()
     prepared = prepare(obj, name) if prepare else None
     first = _Linker(obj, name, target, symbols, read, prepared=prepared)
     result = first.run()
     if result.exact or not getattr(first, "bases", None):
-        return result
+        return _show_linked_literals(result, target, symbols)
     # Not a match: once the code above a literal is a word off, the target's reference at the same instruction is
     # some other datum (a global's %hi), so the first link names the wrong address. Link again placing the own
     # data by its voted base everywhere, and keep whichever has fewer problems (a pool the ROM keeps in pieces
     # gets data mismatches by the base and keeps the first). Only the diff changes: a match was decided above.
     again = _Linker(obj, name, target, symbols, read, prefer_base=True, prepared=prepared).run()
-    return again if len(again.problems) <= len(result.problems) else result
+    chosen = again if len(again.problems) <= len(result.problems) else result
+    return _show_linked_literals(chosen, target, symbols)
 
 
 def diff(target: FunctionObj, result: LinkResult) -> scoring.DiffResult:

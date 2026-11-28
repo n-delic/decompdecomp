@@ -148,6 +148,17 @@ class RustJudge:
         candidate = FunctionObj(target.name, canonical.arch, target.big_endian, bytes.fromhex(row["code"]),
                                 [Reloc.from_json(item) for item in row["relocs"]])
         score = 0 if row["exact"] else max(1, row["score"])
+        # Older downloaded gateways return the raw symbolic score. Repair only
+        # proven identical literal words here, so both batch paths agree with
+        # the ordinary ROM linker without requiring a gateway update.
+        from . import match
+        if row["clean"] and type(target) is match.RomTarget:
+            shown = match.equivalent_literal_relocs(canonical, candidate)
+            if shown is not candidate:
+                candidate = shown
+                # The batch already holds a gateway slot. Do not request a second
+                # one: concurrent batches could otherwise exhaust the pool.
+                score = 0 if row["exact"] else max(1, scoring.score(canonical, candidate, native=False).score)
         diff = scoring.DiffResult(score, row["max_score"], [], row["exact"])
         return candidate, diff, row["clean"]
 

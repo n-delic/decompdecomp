@@ -104,6 +104,10 @@ def test_judging_from_packs(tmp_path, monkeypatch):
     assert reply["score_evidence"] == {"version": SCORE_VERSION, "matched": False, "comparison": {
         "operand_penalty": 5, "missing": {"a": 1}, "extra": {"a": 1}, "bytes_match": False,
     }}
+    from decompnet.scoring import DiffResult
+    monkeypatch.setattr(RomNetwork, "_judge_with", lambda *args, **kwargs: (False, DiffResult(5, 100, [], False), ""))
+    old_gateway = packs.judge(trial | {"score_evidence": SCORE_VERSION - 1})
+    assert old_gateway["score"] == 5 and "score_evidence" not in old_gateway
 
     assert "no verification pack" in packs.judge(request | {"slug": "other"})["error"]
     assert "another build" in packs.judge(request | {"function": request["function"] | {"target": "00"}})["error"]
@@ -144,7 +148,7 @@ def test_only_verifiers_get_packs_and_a_verifier_keeps_them_current(tmp_path, ma
             from dataclasses import asdict
 
             from decompnet.elfobj import FunctionObj
-            from decompnet.scoring import SCORE_VERSION, score_evidence
+            from decompnet.scoring import SCORE_VERSION, score, score_evidence
 
             open(sys.argv[1], "w").write(json.dumps(sys.argv[2:]))
             for line in sys.stdin:
@@ -166,12 +170,15 @@ def test_only_verifiers_get_packs_and_a_verifier_keeps_them_current(tmp_path, ma
                         reply["score"] = 7
                     elif variant == "compile error":
                         reply["score"] = None
-                    else:
-                        assert request["score_evidence"] == SCORE_VERSION
+                    elif request["score_evidence"] == SCORE_VERSION:
                         reply["score_evidence"] = {
                             "version": SCORE_VERSION, "matched": variant == "match",
                             "comparison": asdict(score_evidence(target, candidates[variant])),
                         }
+                    else:
+                        # Older downloaded gateways request the previous scoring
+                        # version; the hosted judge returns a complete verdict.
+                        reply["score"] = 0 if variant == "match" else max(1, score(target, candidates[variant]).score)
                 print(json.dumps(reply), flush=True)
         """))
         mine = tmp_path / "mine"

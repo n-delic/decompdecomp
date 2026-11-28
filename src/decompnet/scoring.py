@@ -36,7 +36,8 @@ PENALTY_DELETION = 100
 # 3: a branch whose target is the instruction its counterpart's target aligns with costs nothing (_aligned_branch).
 # 4: the judge places a candidate's own float literals where the ROM holds those bytes (#3563, #3566, #3640): bests
 # saved before were thousands off either way (one saved at 9660 judged 11530, another at 9846 judged 7616).
-SCORE_VERSION = 4
+# 5: a fixed ROM literal with identical linked bytes no longer pays for an automatic symbol spelling.
+SCORE_VERSION = 5
 # Off, the score is version 2's: tests and the measurement of the change read both from the same pair of objects.
 ALIGN_BRANCH_TARGETS = True
 
@@ -536,9 +537,9 @@ def _comparison_key(fn):
     return (fn.name, fn.arch, fn.big_endian, fn.cpu, bytes(fn.code), tuple(r.key() for r in fn.relocs))
 
 
-def score(target: FunctionObj, candidate: FunctionObj) -> DiffResult:
+def score(target: FunctionObj, candidate: FunctionObj, *, native=True) -> DiffResult:
     """Identical scoring without allocating diagnostic rows for ordinary misses."""
-    return _candidate_diff(target, candidate, details=False)
+    return _candidate_diff(target, candidate, details=False, native=native)
 
 
 def _candidate_diff(target, candidate, *, details=True, native=True):

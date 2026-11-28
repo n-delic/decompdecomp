@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use serde_json::Value;
 
 // The adapter falls back to a complete Python verdict when it uses another scoring version.
-pub const SCORE_VERSION: u64 = 4;
+pub const SCORE_VERSION: u64 = 5;
 pub const REORDER: u64 = 60;
 pub const DELETION: u64 = 100;
 pub const INSERTION: u64 = 100;
