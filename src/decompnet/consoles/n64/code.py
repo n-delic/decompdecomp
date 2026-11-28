@@ -1294,7 +1294,54 @@ def _bodies_inside_code(cfg, rom, taken, known, log):
     banks = [(a, b, v) for a, b, v in taken]
     table = [dict(rom_start=a, rom_end=b, vram=v) for a, b, v in banks]
     found = complete(rom, spans, banks, (), log, table_ranges=table, what="the gaps inside code segments")
+    found += _called_scoped_bin_bodies(cfg, rom, spans, log)
     return sorted(set(found) - set(spans))
+
+
+def _called_scoped_bin_bodies(cfg, rom, known, log):
+    """Follow calls within each declared overlay into that bank's raw gaps."""
+    from ...arch.mips_references import references
+    from .loader_code import complete
+
+    check = getattr(log, 'check_cancel', lambda: None)
+    progress = getattr(log, 'progress', lambda _: None)
+    parents = split.segments_from_config_data(cfg)
+    raw = {s.get('start'): s for s in cfg.get('segments', []) if isinstance(s, dict)}
+    recovered = []
+
+    def quiet(_message):
+        pass
+
+    quiet.check_cancel = check
+    for index, bank in enumerate(parents):
+        check()
+        progress({'phase': 'Checking called code in overlay gaps', 'done': index, 'total': len(parents)})
+        parent = raw.get(bank.rom_start, {})
+        subs = [s for s in parent.get('subsegments', []) if isinstance(s, list) and len(s) >= 2]
+        if not bank.exclusive_ram_id or not any(s[1] == 'bin' for s in subs):
+            continue
+        scope = [(lo, hi, vram) for lo, hi, vram in known
+                 if bank.rom_start <= lo < hi <= bank.rom_end and vram - lo == bank.vram - bank.rom_start]
+        if not scope:
+            continue
+        calls = {target for lo, hi, vram in scope for target, _, kind in references(rom, lo, hi, vram)
+                 if kind == 'call'}
+        if not calls:
+            continue
+        bounds = (bank.rom_start, bank.rom_end, bank.vram)
+        table = [dict(rom_start=bank.rom_start, rom_end=bank.rom_end, vram=bank.vram)]
+        found = complete(rom, scope, [bounds], (), quiet, table_ranges=table,
+                         what='declared overlay banks')
+        for body in set(found) - set(scope):
+            lo, hi, vram = body
+            source = max((s for s in subs if s[0] <= lo), key=lambda s: s[0], default=None)
+            if (source and source[1] == 'bin' and vram in calls and _cut_ok(cfg, body)
+                    and not any(a < hi and lo < b for a, b, _ in known)):
+                recovered.append(body)
+    progress({'phase': 'Checking called code in overlay gaps', 'done': len(parents), 'total': len(parents)})
+    if recovered:
+        log(f'Found {len(recovered)} called bodies in declared overlay gaps for staged verification.')
+    return recovered
 
 
 def _owner(cfg, lo, hi):
