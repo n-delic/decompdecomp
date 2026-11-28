@@ -1,10 +1,97 @@
 """Carry byte-verified existing entries through a newly generated ROM split."""
 
 import copy
+import json
+import re
 
 import yaml
 
 from ...rom import split
+
+
+def _joined_bodies(result, image, rows):
+    """Keep an unchanged prior join only while its absorbed tail has no outside entry."""
+    from ...arch.mips_references import references
+
+    old = {row['name']:dict(row) for row in rows}
+    fresh = {fn.name:fn for fn in result.functions}
+    replacements = []
+    for tail_name, tail_old in old.items():
+        try:
+            tail_meta = json.loads(tail_old.get('meta') or '{}')
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(tail_meta, dict):
+            continue
+        head_name = tail_meta.get('boundary_absorbed_by')
+        head_old = old.get(head_name)
+        head, tail = fresh.get(head_name), fresh.get(tail_name)
+        if not head_old or not head or not tail or tail_old.get('gone_mark') is None:
+            continue
+        try:
+            head_meta = json.loads(head_old.get('meta') or '{}')
+        except (ValueError, TypeError):
+            continue
+        decision = head_meta.get('boundary_decision', {}) if isinstance(head_meta, dict) else {}
+        if not isinstance(decision, dict):
+            continue
+        start, size = head.rom, head.size+tail.size
+        if (decision.get('action') != 'join_previous' or head.rom is None or tail.rom is None
+                or head.rom+head.size != tail.rom or head.vram+head.size != tail.vram
+                or head.segment != tail.segment or head.entry_aliases or tail.entry_aliases
+                or head_old.get('rom_offset') != start or head_old.get('vram') != head.vram
+                or head_old.get('size') != size or head_old.get('target') != image[start:start+size]
+                or tail_old.get('rom_offset') != tail.rom or tail_old.get('vram') != tail.vram
+                or tail_old.get('size') != tail.size or tail_old.get('target') != image[tail.rom:tail.rom+tail.size]
+                or tail.size > 0x400
+                or any(d.rom is not None and d.size and d.rom < start+size and start < d.rom+d.size
+                       for d in getattr(result,'data', ()))):
+            continue
+        pointer_words = b'|'.join(re.escape(address.to_bytes(4,'big'))
+                                  for address in range(tail.vram,tail.vram+tail.size,4))
+        if any(match.start()%4 == 0 for match in re.finditer(b'(?=('+pointer_words+b'))',image)):
+            continue
+        all_edges = [(target,source,kind) for fn in result.functions if fn.rom is not None
+                     for target,source,kind in references(image,fn.rom,fn.rom+fn.size,fn.vram)]
+        padding = []
+        for row in old.values():
+            try:
+                meta = json.loads(row.get('meta') or '{}')
+            except (ValueError, TypeError):
+                continue
+            if not isinstance(meta, dict) or not isinstance(meta.get('boundary_decision'), dict):
+                continue
+            at, addr, length = row.get('rom_offset'), row.get('vram'), row.get('size')
+            if (row.get('gone_mark') is None or meta.get('boundary_classification') != 'padding'
+                    or meta.get('boundary_decision',{}).get('action') != 'trim_start'
+                    or type(at) is not int or type(addr) is not int or type(length) is not int
+                    or not 0 < length <= 0x400 or row.get('target') != image[at:at+length]
+                    or not any(at <= source < at+length and tail.vram <= target < tail.vram+tail.size
+                               for target,source,_ in all_edges)
+                    or any(addr <= target < addr+length and not at <= source < at+length
+                           for target,source,_ in all_edges)):
+                continue
+            words = b'|'.join(re.escape(address.to_bytes(4,'big')) for address in range(addr,addr+length,4))
+            if not any(match.start()%4 == 0 for match in re.finditer(b'(?=('+words+b'))',image)):
+                padding.append((at,at+length))
+        edges = [(source,kind) for target,source,kind in all_edges
+                 if tail.vram <= target < tail.vram+tail.size
+                 and not any(lo <= source < hi for lo,hi in padding)]
+        if (not any(kind == 'branch' and start <= source < tail.rom for source,kind in edges)
+                or any(kind != 'branch' or not start <= source < start+size for source,kind in edges)):
+            continue
+        replacements.append((head,tail,split.function_from_bytes(head.name,head_old['target'],start,head.vram,
+                                                                  head.segment,True)))
+    used = set()
+    archives = set()
+    for head,tail,joined in replacements:
+        if id(head) in used or id(tail) in used:
+            continue
+        used.update((id(head),id(tail)))
+        archives.add(tail.name)
+        result.functions = [fn for fn in result.functions if fn is not head and fn is not tail] + [joined]
+    result.retained_join_archives = archives
+    return len(used)//2
 
 
 def _called_suffixes(result, image, rows, log):
@@ -168,7 +255,9 @@ def preserve(net, project, result, image, rows, log=print):
 
     check = getattr(log, 'check_cancel', lambda: None)
     cfg = yaml.safe_load(result.config_path.read_text(encoding='utf-8'))
-    restored = 0
+    restored = _joined_bodies(result, image, rows)
+    if restored:
+        log(f'Kept {restored} previously proven joins with unchanged bytes and no outside entries.')
     while proposal := _covered_text(cfg, result, image, rows, log):
         proposed, selected, suppressed = proposal
         remaining = [fn for fn in result.functions if all(fn is not gone for gone in suppressed)]

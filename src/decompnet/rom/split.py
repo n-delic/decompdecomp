@@ -130,6 +130,7 @@ class SplitResult:
     coverage_notes: list[str] = field(default_factory=list)
     analysis_base: str = ""
     analysis_banks: dict[str, int] = field(default_factory=dict)
+    retained_join_archives: set[str] = field(default_factory=set)
 
 
 def segments_from_config(path: Path) -> list[Segment]:
