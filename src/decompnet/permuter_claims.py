@@ -14,7 +14,13 @@ def nonexclusive(agent):
 def clear(db, *, agent_ids=None):
     """Remove legacy permutation leases without recording an agent abandonment."""
     if agent_ids is not None:
-        db.executemany('DELETE FROM claims WHERE agent_id=?', [(aid,) for aid in agent_ids])
+        if not agent_ids:
+            return
+        targets = agent_ids if isinstance(agent_ids, (set, frozenset)) else set(agent_ids)
+        active = {row[0] for row in db.execute('SELECT DISTINCT agent_id FROM claims').fetchall()}
+        present = active & targets
+        if present:
+            db.executemany('DELETE FROM claims WHERE agent_id=?', [(aid,) for aid in present])
         return
     rows = db.execute("SELECT DISTINCT a.id,a.name,a.owner FROM agents a JOIN claims c ON c.agent_id=a.id "
                       "WHERE a.name LIKE '%permuter%'").fetchall()

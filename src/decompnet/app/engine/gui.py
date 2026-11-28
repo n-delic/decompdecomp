@@ -314,11 +314,17 @@ class GuiMixin:
                 state.clear() if slug is None else state.pop(slug, None)
 
     def _helper_match_count(self, proj):
-        ids = [r['id'] for r in self.store.all(
-            "SELECT id FROM agents WHERE origin='local' AND name NOT IN ('you','autopilot')")]
+        ids_json = self.store.read_cache.get(
+            'local-helper-agent-ids-json',
+            self.store.read_version('lease_identities'),
+            lambda: json.dumps([
+                r['id'] for r in self.store.all(
+                    "SELECT id FROM agents WHERE origin='local' AND name NOT IN ('you','autopilot')")
+            ]),
+        )
         return self.project_store(proj['id']).one(
             "SELECT COUNT(*) n FROM functions WHERE project_id=? AND status='matched' "
-            "AND matched_agent_id IN (SELECT value FROM json_each(?))", proj['id'], json.dumps(ids))['n']
+            "AND matched_agent_id IN (SELECT value FROM json_each(?))", proj['id'], ids_json)['n']
 
     def _overview(self, slug: str, proj, *, room_members=True, quick=False) -> dict:
         if (fork := self.fork_slug(slug)):
@@ -386,12 +392,19 @@ class GuiMixin:
                  "(SELECT MAX(created_at) FROM events e WHERE e.project_id=p.id) AS last_activity "
                  "FROM projects p LEFT JOIN project_totals t ON t.project_id=p.id")
         catalog = self.store.all(query + ' ORDER BY p.id DESC')
-        if all(self.project_store(row['id']) is self.store for row in catalog):
-            rows = catalog
-        else:
-            rows = [self.project_store(row['id']).one(query + ' WHERE p.id=?', row['id']) for row in catalog]
-            if any(row is None for row in rows):
-                raise RuntimeError('A project database is missing its summary; reopen the project.')
+        rows = []
+        for row in catalog:
+            store = self.project_store(row['id'])
+            if store is self.store:
+                rows.append(row)
+            else:
+                rows.append(store.read_cache.get(
+                    ('project-summary', row['id']),
+                    store.read_version(),
+                    lambda s=store, pid=row['id']: s.one(query + ' WHERE p.id=?', pid),
+                ))
+        if any(row is None for row in rows):
+            raise RuntimeError('A project database is missing its summary; reopen the project.')
         local.rows = {row['slug']:dict(row) for row in rows}
         try:
             yield rows

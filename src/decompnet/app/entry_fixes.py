@@ -426,7 +426,7 @@ def _shared_frame_prefix(before, after, pointed, shared, flow, stored, word, big
             or not any((word(source) or 0) >> 26 == 3
                        for name, source in pointed.get(before.vram, ()) if name != before.name)
             or any(any(name not in (before.name, after.name) or (word(source) or 0) >> 26 != 2
-                       for name, source in pointed.get(a, ())) or a in stored
+                       for name, source in pointed.get(a, ()))
                    or any(source < before.vram or source >= after.vram + len(after.code)
                           for source in flow.get(a, ()))
                    for a in range(after.vram, after.vram + len(after.code), 4))
@@ -446,7 +446,8 @@ def _shared_frame_prefix(before, after, pointed, shared, flow, stored, word, big
     if (frame is None or frame >= 0 or len(words) < 4
             or not any(offset % 4 == 0 and offset + 4 <= -frame for offset in saved & restored)
             or words[-2:] != [JR_RA, 0x27bd0000 | (-frame & 0xffff)]
-            or _closed(words, before.vram, 0) != len(words) or not _frame_shape(words, 0)):
+            or _closed(words, before.vram, 0) != len(words) or not _frame_shape(words, 0)
+            or any(a in stored for a in range(after.vram, after.vram + len(after.code), 4))):
         return None
     return Fix(after.name, after.vram, 'join_previous', before.vram, 'auto', [
         f'Calls enter 0x{before.vram:08X}, whose stack-frame instruction is also the preceding return delay slot.',
