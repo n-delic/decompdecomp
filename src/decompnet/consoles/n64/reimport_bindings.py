@@ -124,6 +124,9 @@ def retry(net, project, fn, source):
         bound = overlay_donor_aliases.explicit_symbol_bindings(
             source, header, candidate, target, net.console(project).separate_overlay_reference)
         extra = bound[1][len(header):] if bound and bound[1].startswith(header) else ''
+        if extra:
+            # These records prove ROM loader bindings; ports use their own symbols.
+            extra = '\n#ifndef PORT\n' + extra + '\n#endif\n'
         variants = [source + '\n' + extra] if extra else []
         macro = _macro_variant(fn, source, header, candidate, info, extra)
         if macro:
