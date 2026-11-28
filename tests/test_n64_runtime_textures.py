@@ -315,3 +315,40 @@ def test_chunked_meshes_keep_distinct_runtime_commands_for_the_same_vertices(tmp
     assets = runtime_textures.observe(b'image', rom, sha1(rom.read_bytes()).hexdigest())
     model = next(asset for asset in assets if asset['layout'] == 'runtime-chunked-model')
     assert [mesh['captured'] for mesh in model['meshes']] == ['aa', 'bb']
+
+
+@pytest.mark.parametrize('conflicting', [False, True])
+def test_observed_audio_is_deduplicated_and_conflicting_tables_are_rejected(tmp_path, monkeypatch, conflicting):
+    from decompassets.n64 import runtime_audio
+
+    rom = tmp_path / 'game.z64'
+    rom.write_bytes(bytes.fromhex('80371240') + b'original')
+    monkeypatch.setattr(runtime_textures.emulator, 'installed', lambda: tmp_path)
+
+    def run(path, vis, *, dumps, **kwargs):
+        for dump in dumps.values():
+            dump.write_bytes(b'menu' if kwargs.get('inputs') else b'title')
+        return SimpleNamespace(timed_out=False)
+
+    monkeypatch.setattr(runtime_textures.emulator, 'run', run)
+    monkeypatch.setattr(detector, 'regions', lambda *_: [dict(offset=1, size=1, layout='test')])
+    def sounds(image, snapshots):
+        base = 300 if conflicting and b'menu' in snapshots else 200
+        return [dict(kind='audio', audio_kind='sample bank', bank_offset=100, table_offset=base,
+                     offset=base, size=10)]
+    monkeypatch.setattr(runtime_audio, 'regions', sounds)
+    result = runtime_textures.observe(b'analysis', rom, sha1(rom.read_bytes()).hexdigest())
+    assert len([a for a in result if a.get('kind') == 'audio']) == (0 if conflicting else 1)
+
+
+def test_runtime_bank_replaces_unresolved_static_controls(monkeypatch):
+    from decompassets import n64
+    from decompnet.consoles.n64 import Nintendo64
+
+    unresolved = dict(kind='audio', audio_kind='unresolved bank', offset=100)
+    unrelated = dict(kind='audio', audio_kind='unresolved bank', offset=101)
+    observed = dict(kind='audio', audio_kind='sample bank', bank_offset=100, table_offset=200, offset=100)
+    monkeypatch.setattr(n64, 'regions', lambda *args, **kwargs: [unresolved, unrelated])
+    monkeypatch.setattr(runtime_textures, 'observe', lambda *args, **kwargs: [observed])
+    result = Nintendo64().asset_regions(b'image', context={'runtime_rom': 'game'})
+    assert result == [unrelated, observed]

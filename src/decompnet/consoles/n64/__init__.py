@@ -119,10 +119,15 @@ class Nintendo64(Console):
         evidence = context or {}
         assets = n64.regions(image, context={'read_code': read, **evidence}, **kwargs)
         if evidence.get('runtime_rom'):
-            assets += runtime_textures.observe(image, evidence['runtime_rom'], evidence.get('runtime_sha1'),
-                                               log=evidence.get('log', lambda _: None),
-                                               status=evidence.get('runtime_observation'),
-                                               progress=kwargs.get('progress', lambda _: None))
+            observed = runtime_textures.observe(image, evidence['runtime_rom'], evidence.get('runtime_sha1'),
+                                                log=evidence.get('log', lambda _: None),
+                                                status=evidence.get('runtime_observation'),
+                                                progress=kwargs.get('progress', lambda _: None))
+            banks = {a['bank_offset'] for a in observed if a.get('audio_kind') == 'sample bank'}
+            tables = {a['table_offset'] for a in observed if a.get('audio_kind') == 'sample bank'}
+            assets = [a for a in assets if not (a.get('audio_kind') == 'unresolved bank' and a['offset'] in banks
+                      or a.get('audio_kind') == 'sample bank' and a.get('table_offset') in tables)]
+            assets += observed
         return assets
 
     def asset_preview(self, data, asset, selection):

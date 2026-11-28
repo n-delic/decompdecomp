@@ -10,7 +10,7 @@ VIS = (1200, 2400, 4000, 5000)
 
 def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _: None, status=None):
     """Return assets backed by captured RAM and unique bytes in the analysis image."""
-    from decompassets.n64 import runtime_packed_graphics, runtime_textures
+    from decompassets.n64 import runtime_audio, runtime_packed_graphics, runtime_textures
 
     status = status if status is not None else {}
     status['state'] = 'unavailable'
@@ -38,6 +38,7 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
             snapshots = [path.read_bytes() for path in dumps.values() if path.is_file()]
             direct = runtime_textures.regions(image, snapshots)
             packed = runtime_packed_graphics.regions(image, snapshots, progress=progress)
+            sounds = runtime_audio.regions(image, snapshots)
             if not run.timed_out:
                 log('Observing title and gameplay textures with scripted input.')
                 for path in dumps.values():
@@ -47,6 +48,7 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
                 snapshots = [path.read_bytes() for path in dumps.values() if path.is_file()]
                 direct += runtime_textures.regions(image, snapshots)
                 packed += runtime_packed_graphics.regions(image, snapshots, progress=progress)
+                sounds += runtime_audio.regions(image, snapshots)
             # Some games display a memory-expansion warning using the base RAM
             # rather than stalling before video. A successful retrace alone does
             # not show that their title or gameplay ran. Retry without changing
@@ -63,6 +65,7 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
                         snapshots = [path.read_bytes() for path in dumps.values() if path.is_file()]
                         direct += runtime_textures.regions(image, snapshots)
                         packed += runtime_packed_graphics.regions(image, snapshots, progress=progress)
+                        sounds += runtime_audio.regions(image, snapshots)
                         if expanded.timed_out:
                             expansion_failed = True
                             log('Expanded-memory observation timed out; completed snapshots are still included.')
@@ -104,10 +107,20 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
                        asset.get('width'), asset.get('height'), asset.get('format'),
                        asset.get('palette_offset'), asset.get('palette_little_endian'), asset.get('palette'))
                 unique[key] = asset
-            assets = list(unique.values()) + list(merged.values())
+            # A bank may appear in several runs. Conflicting observed bases are
+            # ambiguous and must not be promoted to playable samples.
+            bases = {}
+            for asset in sounds:
+                bases.setdefault(asset['bank_offset'], set()).add(asset['table_offset'])
+            audio = {(asset['bank_offset'], asset['offset'], asset['size']): asset for asset in sounds
+                     if len(bases[asset['bank_offset']]) == 1}
+            assets = list(unique.values()) + list(merged.values()) + list(audio.values())
         if run.timed_out:
             log('Runtime observation timed out; any completed snapshots are still included.')
-        log(f'Found {len(assets)} graphics regions backed by runtime commands and cartridge bytes.')
+        graphics = sum(a.get('kind') != 'audio' for a in assets)
+        log(f'Found {graphics} graphics regions backed by runtime commands and cartridge bytes.')
+        if audio:
+            log(f'Found {len(audio)} audio regions backed by relocated runtime controls.')
         status['state'] = 'failed' if run.timed_out or expansion_failed else 'complete'
         progress(dict(phase='Observing runtime textures', done=1, total=1))
         return assets
