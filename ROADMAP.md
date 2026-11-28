@@ -110,6 +110,8 @@
   occupant. Rebuildable exports retain separate ROM placements and scoped symbols for overlapping banks.
   Strong, unambiguous self-call evidence also corrects inferred code placed over a sibling bank.
   Byte-matched emulator RAM ranges refine smaller inferred banks when their local calls corroborate the mapping.
+  An inferred KSEG0 address beyond the console's maximum RAM can be corrected from a unique observed placement
+  when two independently closed internal callees agree; conflicting observations still stay for review.
   A contiguous observed bank can carry that mapping into a neighbouring fragment when two closed entries
   there are called by the independently verified predecessor and no call supports its former placement.
   Existing projects can also add verified functions in independently corroborated overlapping banks: the search stages the

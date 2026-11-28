@@ -75,6 +75,24 @@ def test_runtime_observed_range_needs_internal_call_corroboration():
     assert inferred_overlays.runtime_mappings(image,[old],[observed])==([old],set())
 
 
+def test_unreachable_kseg0_mapping_needs_two_closed_runtime_callees():
+    image = bytearray(0x400)
+    base = 0x80300000
+    old = (0, len(image), 0x80890000)
+    observed = (0, len(image), base)
+    body = (0x27bdffe8, 0xafbf0014, 0x8fbf0014, 0x03e00008, 0x27bd0018)
+    for at in (0x40, 0x80):
+        struct.pack_into('>5I', image, at, *body)
+    for i, at in enumerate((0x40, 0x80)):
+        struct.pack_into('>I', image, 0x100 + i * 4, 0x0c000000 | ((base + at) >> 2 & 0x3ffffff))
+    assert inferred_overlays.runtime_mappings(image, [old], [observed]) == ([observed], {0})
+    assert inferred_overlays.runtime_mappings(image, [old], [observed], [(0x500, 0x600, base)]) == ([old], set())
+    assert inferred_overlays.runtime_mappings(image, [old], [observed, (0, len(image), base + 0x10000)]) == ([old], set())
+    assert inferred_overlays.runtime_mappings(image, [(0, len(image), 0x80790000)], [observed])[1] == set()
+    struct.pack_into('>I', image, 0x80 + 16, 0)  # The second callee no longer restores its frame.
+    assert inferred_overlays.runtime_mappings(image, [old], [observed]) == ([old], set())
+
+
 def test_runtime_bank_counts_a_closed_called_leaf_at_its_start():
     image = bytearray(0x200)
     base = 0x80100000
