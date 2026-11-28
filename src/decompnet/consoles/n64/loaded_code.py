@@ -300,6 +300,10 @@ def find(rom_path: Path, rom: bytes, taken, found=(), *, log=print, stop=lambda:
     occupied_programs = [(0, len(runtime_zlib._payload(rom, row)), row['vram']) for row in programs]
     programs += runtime_mio.find(Path(rom_path).read_bytes(), dumps, decoded,
                                  known+added+occupied_programs, check=check)
+    from . import runtime_ring
+    occupied_programs = [(0, len(runtime_zlib._payload(rom, row)), row['vram']) for row in programs]
+    programs += runtime_ring.find(Path(rom_path).read_bytes(), dumps, decoded,
+                                  known+added+occupied_programs, check=check)
     overlaps = runtime_overlays.regions(rom, dumps+late_dumps, known+added,
                                        check=getattr(log, 'check_cancel', lambda: None), moved=moved_ranges)
     if overlaps:

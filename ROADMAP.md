@@ -198,6 +198,8 @@
   observed RAM; its analysis image is reconstructed from the original cartridge again during export verification.
   Standard MIO0 streams and aligned raw DEFLATE streams are also recovered when three called targets and 64 KiB
   of loaded bytes agree with one unambiguous cartridge stream. Code that is never observed running can still be missing.
+  An audited ring-buffer loader also supplies its source and destination; its decoded program must match a called
+  entry and 64 KiB of runtime memory before import, and export decodes the original cartridge stream again.
   Existing projects need a saved-project restore or another supported migration to use the expanded image.
 
 - Saved projects retain fingerprints for post-import discoveries and re-run verified discovery before applying
