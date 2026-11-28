@@ -262,3 +262,35 @@ def test_a_search_reuses_its_baseline_but_rechecks_changed_inputs(tmp_path, monk
     symbols.write_text('second = 0x80000000;\n')
     assert runtime_staging.verify(config, b'code', cfg, [], lambda *_: None, cache=cache)
     assert runs == ['before', 'after', 'after', 'before', 'after']
+def test_stored_assembly_requires_exact_labeled_bytes(tmp_path):
+    from decompnet.consoles.n64 import runtime_staging
+
+    asm = tmp_path / 'asm'
+    asm.mkdir()
+    file = asm / 'entry.s'
+    file.write_text('glabel existing\n/* 0000 80000000 03E00008 */ jr $ra\n'
+                    '/* 0004 80000004 00000000 */ nop\nendlabel existing\n')
+    row = {'name': 'existing', 'status': 'asm', 'rom_offset': 0, 'vram': 0x80000000, 'size': 8}
+    image = bytes.fromhex('03e0000800000000')
+    found = {}
+    runtime_staging._stored_assembly(tmp_path, [row], image, found)
+    assert found[(0, 0x80000000)] == (8, image)
+    file.write_text('dlabel existing\n/* 0000 80000000 03E00008 */ .word 0x03E00008\n'
+                    '/* 0004 80000004 00000000 */ .word 0x00000000\nenddlabel existing\n')
+    found = {}
+    runtime_staging._stored_assembly(tmp_path, [row], image, found)
+    assert found[(0, 0x80000000)] == (8, image)
+    for altered in (file.read_text().replace('0x03E00008', '0x03E00009'),
+                    file.read_text().replace('80000004', '80000008'),
+                    file.read_text().replace('dlabel existing', 'dlabel another')):
+        file.write_text(altered)
+        found = {}
+        runtime_staging._stored_assembly(tmp_path, [row], image, found)
+        assert not found
+    file.write_text('dlabel existing\n/* 0000 80000000 03E00008 */ .word 0x03E00008\n'
+                    '/* 0004 80000004 00000000 */ .word 0x00000000\n')
+    found = {}
+    runtime_staging._stored_assembly(tmp_path, [row | {'status': 'open'}], image, found)
+    assert not found
+
+

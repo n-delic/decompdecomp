@@ -178,6 +178,44 @@ def _overlapping_entries(root, known, image, functions):
                 wanted.pop(row['name'], None)
 
 
+def _stored_assembly(root, known, image, functions):
+    """Verify existing assembly entries even when Splat emits them as labeled data or hasm."""
+    wanted = {row['name']: row for row in known if row.get('status') == 'asm' and row.get('name')
+              and type(row.get('size')) is int and row['size'] > 0 and row['size'] % 4 == 0
+              and (row['rom_offset'], row['vram']) not in functions}
+    if not wanted:
+        return
+    label = re.compile(r'^\s*(?:glabel|dlabel)\s+(\S+)\s*$')
+    for path in (root / 'asm').rglob('*.s'):
+        row, words = None, []
+        for line in path.read_text(encoding='utf-8').splitlines():
+            match = label.match(line)
+            if match:
+                row, words = wanted.get(match.group(1)), []
+                continue
+            if row is None:
+                continue
+            insn = split._INSN.match(line)
+            if insn is None:
+                if line.strip() and not re.match(r'^\s*(?:\.L\w+:|/\*.*\*/)?\s*$', line):
+                    row = None
+                continue
+            lo, address, word = (int(insn.group(i), 16) for i in (1, 2, 3))
+            directive = insn.group(4)
+            if (lo != row['rom_offset'] + len(words) * 4 or address != row['vram'] + len(words) * 4
+                    or directive.startswith('.') and directive != '.word'
+                    or directive == '.word' and insn.group(5).lower() != f'0x{word:08x}'):
+                row = None
+                continue
+            words.append(word)
+            if len(words) * 4 == row['size']:
+                data = b''.join(value.to_bytes(4, 'big') for value in words)
+                if data == image[row['rom_offset']:row['rom_offset'] + row['size']]:
+                    functions[(row['rom_offset'], row['vram'])] = (row['size'], data)
+                    wanted.pop(row['name'], None)
+                row = None
+
+
 def verify(config, image, proposed, candidates, log, *, prepare=None, quiet=False, on_failure=None, cache=None,
            on_conflict=None, on_error=None):
     """Check that Splat keeps existing entries and gives each proposed body its exact bytes.
@@ -221,6 +259,7 @@ def verify(config, image, proposed, candidates, log, *, prepare=None, quiet=Fals
                 if known:
                     _delay_slot_entries(root, known, image, result)
                     _overlapping_entries(root, known, image, result)
+                    _stored_assembly(root, known, image, result)
                 if name == 'before' and not result:
                     raise ValueError('the baseline split produced no functions')
                 if name == 'before' and cache is not None:
