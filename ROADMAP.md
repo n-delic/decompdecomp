@@ -132,7 +132,7 @@
   mappings and complete decoded images agree, including a program observed at two addresses;
   exports check the decoded bytes against the cartridge.
 - Done: N64 imports recover audited chunked bitstream boot programs and runtime-confirmed overlapping banks,
-  preserving data prefixes and checking decoded bytes when exporting. Later loader builds are checked against their own
+  preserving data prefixes and checking decoded bytes when exporting. Each supported loader build is checked against its own
   directory, decoded image and observed text. Other loader variants need separate evidence.
 - Done: N64 imports recover boot programs stored in loader-referenced ERZ pages, checking each
   page's RNC checksum and the loader's destination and call. Exports verify the linked program

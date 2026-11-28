@@ -695,7 +695,9 @@ def test_overlapping_banks_link_to_separate_rom_offsets(tmp_path):
     assert (tmp_path/'game.z64').read_bytes()==original
 
 
-def test_scoped_local_jump_table_can_be_referenced_from_another_object(tmp_path):
+@pytest.mark.parametrize('scope', ['code_80001000', 'program_80001000', 'program_80001000_2'])
+@pytest.mark.parametrize('kind', ['jtbl', 'D'])
+def test_scoped_local_jump_table_can_be_referenced_from_another_object(tmp_path, scope, kind):
     import runpy
 
     from decompnet.rom import export
@@ -710,16 +712,17 @@ def test_scoped_local_jump_table_can_be_referenced_from_another_object(tmp_path)
     (tmp_path/'base.z64').write_bytes(bytes(16))
     assembler = toolchains.binary('binutils-mips').parent/'mips-ps2-decompals-as'
     linker = toolchains.binary('binutils-mips').parent/'mips-ps2-decompals-ld'
-    (tmp_path/'first.s').write_text('.text\n.set noreorder\n.globl first\nfirst:\njtbl_80001000_code_80001000:\njr $31\nnop\n')
-    (tmp_path/'second.s').write_text('.text\n.set noreorder\n.globl second\nsecond:\nlui $2,%hi(jtbl_80001000_code_80001000)\n'
-                                    'addiu $2,$2,%lo(jtbl_80001000_code_80001000)\n')
+    label = f'{kind}_80001000_{scope}'
+    (tmp_path/'first.s').write_text(f'.text\n.set noreorder\n.globl first\nfirst:\n{label}:\njr $31\nnop\n')
+    (tmp_path/'second.s').write_text(f'.text\n.set noreorder\n.globl second\nsecond:\nlui $2,%hi({label})\n'
+                                    f'addiu $2,$2,%lo({label})\n')
     for name in ('first','second'):
         subprocess.run([str(assembler),'-EB','-mips2','-no-pad-sections','-o',f'{name}.o',f'{name}.s'],
                        cwd=tmp_path,check=True,capture_output=True)
     script = runpy.run_path(str(tmp_path/'build.py'))
     placed = [(base,0,'first.o'), (base+8,8,'second.o')]
     text = script['linker_script']({'first':'first.o','second':'second.o'},placed,[])
-    assert 'PROVIDE("jtbl_80001000_code_80001000" = 0x80001000);' in text
+    assert f'PROVIDE("{label}" = 0x80001000);' in text
     (tmp_path/'game.ld').write_text(text)
     subprocess.run([str(linker),'-EB','-T','game.ld','-o','game.elf','first.o','second.o'],
                    cwd=tmp_path,check=True,capture_output=True)

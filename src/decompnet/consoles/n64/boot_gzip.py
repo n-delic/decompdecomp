@@ -340,13 +340,18 @@ def add(config, workdir, image, rom, boot_ranges, log):
         for before, after in inline_tables(text):
             parts.extend([[start + before, 'rodata', f'{name}_table_{before:X}'],
                           [start + after, 'c', f'{name}_text_{after:X}']])
-        if data:
+        # Splat's MIPS data output writes whole words. Preserve a partial final
+        # word as raw bytes so an odd-sized decoded member can rebuild exactly.
+        tail = len(data) % 4
+        if len(data) > tail:
             parts.append([start + len(text), 'data', name])
         segment = dict(name=name, type='code', start=start, vram=vram, subsegments=parts)
         if overlapping or replacing:
             segment.update(exclusive_ram_id='replaced_boot' if replacing else f'gzip_slot_{vram:08X}', symbol_name_format=f'$VRAM_{name}',
                            symbol_name_format_no_rom=f'$VRAM_{name}')
         segments.append(segment)
+        if tail:
+            segments.append(dict(type='bin', start=start + len(text) + len(data) - tail))
         expanded.extend(text)
         expanded.extend(data)
     segments.append([len(expanded)])
