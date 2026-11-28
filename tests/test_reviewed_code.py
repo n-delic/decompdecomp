@@ -184,6 +184,23 @@ def test_export_rejoins_cut_scoped_bank_without_mutating_project():
     assert _export_segments(original, [row])['segments'] == restored['segments']
 
 
+def test_export_preserves_matches_in_rejoined_bank_tail():
+    bank = {'type': 'code', 'name': 'bank', 'start': 0x100, 'vram': 0x80001000,
+            'exclusive_ram_id': 'slot', 'subsegments': [[0x100, 'c', 'a'], [0x120, 'bin', 'gap'],
+                                                      [0x140, 'c', 'b'], [0x160, 'data', 'data']]}
+    fragment = {'type': 'code', 'name': 'part', 'start': 0x120, 'vram': 0x80001020,
+                'subsegments': [[0x120, 'c', 'part']]}
+    original = {'segments': [bank, fragment, {'type': 'bin', 'start': 0x180}, [0x200]]}
+    rows = [{'name': 'saved1', 'vram': 0x80001020, 'rom_offset': 0x120, 'size': 8, 'status': 'matched'},
+            {'name': 'saved2', 'vram': 0x80001044, 'rom_offset': 0x144, 'size': 8, 'status': 'matched'},
+            {'name': 'open', 'vram': 0x80001050, 'rom_offset': 0x150, 'size': 8, 'status': 'open'}]
+    result = _export_segments(original, rows)
+    subs = result['segments'][0]['subsegments']
+    assert [(s[0], s[1]) for s in subs] == [(0x100, 'c'), (0x120, 'c'), (0x128, 'bin'),
+                                              (0x140, 'c'), (0x144, 'c'), (0x14c, 'c'), (0x160, 'data')]
+    assert original['segments'][0]['subsegments'][1] == [0x120, 'bin', 'gap']
+
+
 @pytest.mark.parametrize('change', [
     {'vram': 0x80002020},
     {'exclusive_ram_id': 'other'},

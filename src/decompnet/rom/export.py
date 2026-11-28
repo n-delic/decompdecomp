@@ -326,8 +326,10 @@ def _export_segments(config: dict, functions) -> dict:
     already recovered that word in the function; exporting the old boundary
     would put it in both the compiled function and a data object.
     """
-    from .reviewed import extend_config, restore_cut_banks
-    config = extend_config(restore_cut_banks(config), functions)
+    from .reviewed import extend_config, restore_cut_banks, restore_matched_entries
+    restored = []
+    config = extend_config(restore_cut_banks(config, restored=restored), functions)
+    restore_matched_entries(config, functions, restored)
     starts = {(f['vram'], dict(f).get('rom_offset')) for f in functions}
     for segment in config.get('segments', []):
         if not isinstance(segment, dict) or segment.get('type') != 'code' or 'vram' not in segment:
