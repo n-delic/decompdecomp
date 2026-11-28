@@ -90,7 +90,12 @@ def called_extent(image, start, end, vram, *, big_endian=True, cpu='', asm_check
         ins=rabbitizer.Instruction(w,0,rabbitizer_category(cpu))
         before_return=(at+4<start+size and word(at+4)==JR_RA and at>=start+4
                        and not rabbitizer.Instruction(word(at-4),0,rabbitizer_category(cpu)).hasDelaySlot())
-        valid_pop=w==pop and (at>=start+4 and word(at-4)==JR_RA or before_return)
+        # GCC may set the return value between the stack restore and JR. Only
+        # a register move is admitted here, and no branch may skip the restore.
+        before_value=(at+8<start+size and word(at+8)==JR_RA and at>=start+4
+                      and _return_value_move(word(at+4))
+                      and not rabbitizer.Instruction(word(at-4),0,rabbitizer_category(cpu)).hasDelaySlot())
+        valid_pop=w==pop and (at>=start+4 and word(at-4)==JR_RA or before_return or before_value)
         if ins.modifiesRt() and ins.rt.value==29 and not valid_pop:
             if at!=start:return None
         if ins.modifiesRs() and ins.rs.value==29:
@@ -108,10 +113,13 @@ def called_extent(image, start, end, vram, *, big_endian=True, cpu='', asm_check
         if w==JR_RA:
             if at+8>start+size:return None
             if word(at+4)==pop:
-                if at>start and word(at-4)==pop:return None
+                if (at>start and word(at-4)==pop or at>start+4 and word(at-8)==pop
+                        and _return_value_move(word(at-4))):return None
                 pops.add(at+4)
             elif at>start and word(at-4)==pop:
                 protected_returns.update((at,at+4))
+            elif at>start+4 and word(at-8)==pop and _return_value_move(word(at-4)):
+                protected_returns.update((at-4,at,at+4))
             else:return None
             returns+=1
     if fp_pair and (returns != 1 or destinations & ({*range(entry+4, fp_pair[0]+4, 4)}
@@ -120,6 +128,12 @@ def called_extent(image, start, end, vram, *, big_endian=True, cpu='', asm_check
     if destinations & {*range(entry,start+4,4)} or (pops|protected_returns) & destinations:
         return None  # no loop can allocate the entry frame again or enter a return delay slot
     return size+lead if returns else None
+
+
+def _return_value_move(word):
+    """An ordinary register move into v0, with no dependence on the restored stack."""
+    return (word & 0xfc1fffff in (0x00001021, 0x00001025)
+            and (word >> 21) & 31 != 29)
 
 
 def _loop_epilogue(word, frame, finish, limit, amount):

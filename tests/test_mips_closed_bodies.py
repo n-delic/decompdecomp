@@ -58,6 +58,26 @@ def test_branch_to_the_pre_return_pop_executes_the_full_epilogue():
     assert called_extent(data,0,len(data),BASE)==len(data)
 
 
+@pytest.mark.parametrize('platform',['n64','psx','ps2','psp'])
+@pytest.mark.parametrize('move',[0x00601021,0x00001025])  # v0 = v1 or zero
+def test_return_value_can_be_scheduled_after_stack_restore(platform, move):
+    console=consoles.get(platform)
+    data=image([FRAME,0xafbf0014,0x24030001,0x8fbf0014,POP,move,RETURN,0],console.big_endian)
+    assert called_extent(data,0,len(data),BASE,big_endian=console.big_endian,cpu=console.cpu_variant)==len(data)
+
+
+@pytest.mark.parametrize('words',[
+    [FRAME,0xafbf0014,0x10800003,0,POP,0x00601021,RETURN,0],  # skip restore
+    [FRAME,0xafbf0014,0x10000001,POP,0x00601021,RETURN,0],  # restore in a delay slot
+    [FRAME,0xafbf0014,0x8fbf0014,POP,0x00601021,RETURN,POP],  # double restore
+    [FRAME,0xafbf0014,0x8fbf0014,POP,0x03a01021,RETURN,0],  # read restored sp
+    [FRAME,0xafbf0014,0x8fbf0014,POP,0x8fa20000,RETURN,0],  # load after restore
+])
+def test_separated_stack_restore_rejects_unsafe_epilogues(words):
+    data=image(words[:1]+[0x24030001]+words[1:])
+    assert called_extent(data,0,len(data),BASE) is None
+
+
 def test_a_leaf_cannot_have_a_transfer_inside_its_return_delay_slot():
     data=image([0x24020001,RETURN,0x10000000])
     assert leaf_extent(data,0,len(data),BASE) is None
