@@ -49,6 +49,9 @@ KNOWN = {
         ('osWritebackDCache', 116, 'data cache writeback, `move` form', 'os/writebackdcache.s'),
     '394d3bf1ec1a51ef7eff9113ae1103280d0f09b29035cfd8630a0843d890c4f5':
         ('osWritebackDCacheAll', 40, 'whole data cache writeback', 'os/writebackdcacheall.s'),
+    # The whole body matches the known build above; the compare and branch use t3 instead of at.
+    '8c546e9178ba1c7dfc3e11a3e68155cf3a93263b74c0efab4f29f5ccc00b2575':
+        ('osWritebackDCacheAll', 40, 'whole data cache writeback, t3 comparison', 'os/writebackdcacheall.s'),
     # Found by a later reading: bcopy and the RCP monitor's stubs (bodies that end in a branch, not a return), and
     # the 2.0H archives (LIBGULTRA.A, whose upper-case names the first reading skipped).
     '3ae142d98dccf82c67c4e1c414dd733ec61e39967df75dfb68d686009654d870':
