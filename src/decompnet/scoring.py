@@ -611,6 +611,85 @@ def score_evidence(target: FunctionObj, candidate: FunctionObj) -> ScoreEvidence
     return _diff(target, candidate, details=False, evidence=True)
 
 
+def _diff_rust(
+    t_ins: list[Insn],
+    c_ins: list[Insn],
+    target: FunctionObj,
+    candidate: FunctionObj,
+    bytes_match: bool,
+    *,
+    details: bool = True,
+    evidence: bool = False,
+) -> DiffResult | ScoreEvidence | None:
+    """Run `decomp-mcp-gateway scoring-diff` when available; return None on missing binary or error."""
+    import json
+    import subprocess
+
+    from .app import mcp_gateway
+
+    exe = mcp_gateway.program()
+    if exe is None:
+        return None
+    payload = {
+        "arch": target.arch,
+        "target_name": target.name,
+        "candidate_name": candidate.name,
+        "target": [
+            {
+                "offset": i.offset,
+                "mnemonic": i.mnemonic,
+                "operands": i.operands,
+                "text": i.text,
+                "encoding_hex": i.encoding.hex(),
+            }
+            for i in t_ins
+        ],
+        "candidate": [
+            {
+                "offset": i.offset,
+                "mnemonic": i.mnemonic,
+                "operands": i.operands,
+                "text": i.text,
+                "encoding_hex": i.encoding.hex(),
+            }
+            for i in c_ins
+        ],
+        "bytes_match": bool(bytes_match),
+        "align_branches": bool(ALIGN_BRANCH_TARGETS),
+        "details": bool(details),
+        "evidence": bool(evidence),
+    }
+    try:
+        proc = subprocess.run(
+            [str(exe), "scoring-diff"],
+            input=json.dumps(payload),
+            text=True,
+            capture_output=True,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        raw = json.loads(proc.stdout)
+    except ValueError:
+        return None
+    if evidence:
+        return ScoreEvidence(
+            operand_penalty=int(raw["operand_penalty"]),
+            missing={str(k): int(v) for k, v in raw["missing"].items()},
+            extra={str(k): int(v) for k, v in raw["extra"].items()},
+            bytes_match=bool(raw["bytes_match"]),
+        )
+    return DiffResult(
+        score=int(raw["score"]),
+        max_score=int(raw["max_score"]),
+        rows=[(str(m), str(t), str(c)) for m, t, c in raw["rows"]],
+        bytes_match=bool(raw["bytes_match"]),
+    )
+
+
 def _diff(target: FunctionObj, candidate: FunctionObj, *, details=True, evidence=False):
     """Compare a candidate with the target instruction by instruction: a score (0 is a match, lower is closer), the
     rows to show, and what's missing or extra. Equal bytes are a match whatever the score."""
@@ -618,6 +697,9 @@ def _diff(target: FunctionObj, candidate: FunctionObj, *, details=True, evidence
     c_ins = disassemble(candidate, target.cpu)  # a candidate is the target's processor
     max_score = max(1, len(t_ins)) * PENALTY_INSERTION
     bytes_match = target_fingerprint == candidate.fingerprint()
+    rust = _diff_rust(t_ins, c_ins, target, candidate, bytes_match, details=details, evidence=evidence)
+    if rust is not None:
+        return rust
 
     alignment = instruction_alignment.opcodes([i.mnemonic for i in t_ins], [i.mnemonic for i in c_ins])
     rows: list[tuple[str, str, str]] = []
