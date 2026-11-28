@@ -106,7 +106,7 @@ def _data_variant(fn, source, header, candidate, target):
     return '\n'.join(declarations) + '\n#ifdef PORT\n' + port + '\n#else\n' + rom + '\n#endif\n' + source
 
 
-def _direct_variant(fn, source, header, candidate, target, extra):
+def _direct_variant(fn, source, header, candidate, target, extra, *, prefer_decl=True):
     """Separate direct placeholder calls only when every call has one relocation."""
     span = csource.find(source, fn['name'])
     if span is None:
@@ -136,7 +136,7 @@ def _direct_variant(fn, source, header, candidate, target, extra):
         pattern = (r'(?m)^[ \t]*(?!(?:return|if|while|for|switch)\b)'
                    r'[A-Za-z_]\w*(?:[ \t*]+[A-Za-z_]\w*)*[ \t*]+' + re.escape(symbol)
                    + r'[ \t]*\([^;{}#\n]*\)[ \t]*;')
-        declaration = re.search(pattern, clean_combined)
+        declaration = re.search(pattern, clean_combined) if prefer_decl else None
         prototype = combined[declaration.start():declaration.end()] if declaration else f'extern int {symbol}();'
         bindings[symbol] = iter(r.symbol for r in wanted)
         declarations.extend(rename_identifiers(prototype, {symbol: r.symbol}) for r in wanted)
@@ -225,9 +225,10 @@ def retry(net, project, fn, source):
         macro = _macro_variant(fn, source, header, candidate, info, extra)
         if macro:
             variants.append(macro)
-        direct = _direct_variant(fn, source, header, candidate, target, extra)
-        if direct:
-            variants.append(direct)
+        for prefer_decl in (True, False):
+            direct = _direct_variant(fn, source, header, candidate, target, extra, prefer_decl=prefer_decl)
+            if direct and direct not in variants:
+                variants.append(direct)
         data = _data_variant(fn, source, header, candidate, target)
         if data:
             variants.append(data + '\n' + extra)
@@ -253,9 +254,10 @@ def retry(net, project, fn, source):
             macro = _macro_variant(fn, split, header, separated, info, extra)
             if macro:
                 variants.append(macro)
-            direct = _direct_variant(fn, split, header, separated, target, extra)
-            if direct:
-                variants.append(direct)
+            for prefer_decl in (True, False):
+                direct = _direct_variant(fn, split, header, separated, target, extra, prefer_decl=prefer_decl)
+                if direct and direct not in variants:
+                    variants.append(direct)
             for variant in variants:
                 built = net._compile(project, header, variant, fn)
                 if built.ok and net._evaluate(fn, project, built.obj)[1] is True:
