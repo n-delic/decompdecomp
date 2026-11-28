@@ -72,3 +72,42 @@ def test_high_inferred_code_does_not_expand_global_range_across_overlays(tmp_pat
     assert 'exclusive_ram_id' not in main
     assert extra['vram'] == 0x80300000 and extra['exclusive_ram_id'] == 'sectioned_extra_80300000'
     assert [s['vram'] for s in segments if isinstance(s, dict) and s.get('name', '').startswith('sectioned_overlay_')] == [0x80200000]*4
+
+
+def test_runtime_observation_keeps_resident_code_with_sectioned_banks(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import code, loaded_code
+    from decompnet.rom.split import Segment
+
+    taken = [(0x100, 0x200, 0x80001000)]
+    existing = [(0x600, 0x680, 0x80200000)]
+    observed = (0x300, 0x380, 0x80100000)
+    known = [Segment('main', 0x100, 0x200, 0x80001000)]
+    seen = []
+    def find(path, image, taken_arg, found_arg, *, log):
+        seen.append((path, taken_arg, found_arg))
+        return {'segments': [observed]}
+    monkeypatch.setattr(loaded_code, 'find', find)
+    monkeypatch.setattr(code, 'complete_gaps', lambda rom, taken, found, declared, entries, log: found)
+    found, result = code._with_runtime_code(tmp_path, 'rom.z64', bytes(0x1000), taken, existing, known, [], lambda _: None)
+    assert seen == [(tmp_path/'rom.z64', taken, existing)]
+    assert found == [observed, existing[0]]
+    assert result['segments'] == [observed]
+
+
+def test_sectioned_import_runs_runtime_observation_before_returning(tmp_path, monkeypatch):
+    from decompnet.consoles.n64 import code, loaded_code
+
+    image = directory_image()
+    (tmp_path/'rom.z64').write_bytes(image)
+    config = tmp_path/'game.yaml'
+    config.write_text(yaml.safe_dump({'segments': [
+        {'name': 'main', 'type': 'code', 'start': 0, 'vram': 0x80000400,
+         'subsegments': [[0, 'c', 'main']]}, {'type': 'bin', 'start': 0x200}, [len(image)]]}))
+    monkeypatch.setattr(code, 'unpack_code', lambda _: [])
+    monkeypatch.setattr(code, 'find_segments', lambda *a, **k: [])
+    monkeypatch.setattr(code, 'complete_gaps', lambda rom, taken, found, declared, entries, log: found)
+    monkeypatch.setattr(loaded_code, 'find', lambda *a, **k: {'segments': [(0x300, 0x380, 0x80100000)]})
+    assert code.add_segments(config, tmp_path, 'rom.z64', log=lambda _: None) == 'rom.z64'
+    segments = yaml.safe_load(config.read_text())['segments']
+    assert any(isinstance(s, dict) and s.get('start') == 0x300 and s.get('vram') == 0x80100000 for s in segments)
+    assert sum(isinstance(s, dict) and s.get('name', '').startswith('sectioned_overlay_') for s in segments) == 4
