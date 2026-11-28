@@ -84,7 +84,7 @@ def observe(image, rom, expected_sha1, *, log=lambda _: None, progress=lambda _:
                         if layout == 'runtime-zip-model':
                             return item['vertex_offset'], item['commands']
                         if layout == 'runtime-chunked-model':
-                            return item['command'], item['vertex']
+                            return item['vertex'], item.get('captured', (item['command'], item.get('command_size'))) 
                         return item['offset'], item['size']
                     known = {identity(item) for item in previous}
                     for item in asset['meshes']:
