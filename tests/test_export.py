@@ -324,17 +324,30 @@ def test_export_moves_data_boundary_past_known_function_tail():
     assert _export_segments(config, [{'vram': 0x80000010, 'size': 8}])['segments'] == config['segments']
 
 
-def test_export_removes_source_cuts_inside_a_matched_function():
+@pytest.mark.parametrize('status', ['matched', 'open', 'asm', None])
+def test_export_removes_source_cuts_inside_a_known_function(status):
     from decompnet.rom.export import _export_segments
 
     config = {'segments':[{'type':'code','start':0x100,'vram':0x80000000,
                            'subsegments':[[0x100,'c','first'],[0x104,'c','inside'],[0x120,'c','next']]}, [0x140]]}
-    matched = {'name':'first','vram':0x80000000,'rom_offset':0x100,'size':0x20,'status':'matched'}
-    result = _export_segments(config, [matched])
+    first = {'name':'first','vram':0x80000000,'rom_offset':0x100,'size':0x20,'status':status}
+    result = _export_segments(config, [first])
     assert result['segments'][0]['subsegments'] == [[0x100,'c','first'],[0x120,'c','next']]
     assert len(config['segments'][0]['subsegments']) == 3
     other = {'name':'inside','vram':0x80000004,'rom_offset':0x104,'size':4,'status':'open'}
-    assert _export_segments(config, [matched, other])['segments'][0]['subsegments'] == config['segments'][0]['subsegments']
+    assert _export_segments(config, [first, other])['segments'][0]['subsegments'] == config['segments'][0]['subsegments']
+
+
+def test_export_anchors_both_entries_sharing_a_return():
+    from decompnet.rom.export import _export_segments
+
+    config = {'segments': [{'type': 'code', 'start': 0x100, 'vram': 0x80000000,
+                            'subsegments': [[0x100, 'c', 'code'], [0x108, 'c', 'delay']]}, [0x140]]}
+    rows = [{'name': 'first', 'rom_offset': 0x100, 'vram': 0x80000000, 'size': 8, 'status': 'open'},
+            {'name': 'shared', 'rom_offset': 0x104, 'vram': 0x80000004, 'size': 8, 'status': 'open'}]
+    subs = _export_segments(config, rows)['segments'][0]['subsegments']
+    assert [(part[0], part[1]) for part in subs] == [(0x100, 'c'), (0x104, 'c'), (0x10c, 'c')]
+    assert config['segments'][0]['subsegments'][1][0] == 0x108
 
 
 def test_export_split_uses_its_generated_symbol_file():

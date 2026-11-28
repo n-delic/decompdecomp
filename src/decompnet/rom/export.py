@@ -330,6 +330,23 @@ def _export_segments(config: dict, functions) -> dict:
     restored = []
     config = extend_config(restore_cut_banks(config, restored=restored), functions)
     restore_matched_entries(config, functions, restored)
+    # Two recorded entries can share a return. Anchor the later entry before
+    # removing interior cuts so both remain visible to the staged split.
+    for bank in _segments(config):
+        if bank.get('type') != 'code' or type(bank.get('vram')) is not int or bank.get('end') is None:
+            continue
+        rows = sorted((dict(f) for f in functions if type(dict(f).get('rom_offset')) is int
+                       and type(dict(f).get('vram')) is int and type(dict(f).get('size')) is int
+                       and bank['start'] <= f['rom_offset'] < f['rom_offset']+f['size'] <= bank['end']
+                       and bank['vram'] + f['rom_offset']-bank['start'] == f['vram']),
+                      key=lambda row: row['rom_offset'])
+        shared, end = [], bank['start']
+        for row in rows:
+            if row['rom_offset'] < end:
+                shared.append(row)
+            end = max(end, row['rom_offset']+row['size'])
+        if shared:
+            restore_matched_entries(config, shared, [(bank['start'], bank['start'], bank['end'])], only_matched=False)
     starts = {(f['vram'], dict(f).get('rom_offset')) for f in functions}
     for segment in config.get('segments', []):
         if not isinstance(segment, dict) or segment.get('type') != 'code' or 'vram' not in segment:
@@ -340,12 +357,11 @@ def _export_segments(config: dict, functions) -> dict:
             at = sub[0] if isinstance(sub, list) and sub else sub.get('start') if isinstance(sub, dict) else None
             kind = sub[1] if isinstance(sub, list) and len(sub) > 1 else sub.get('type') if isinstance(sub, dict) else None
             address = segment['vram']+at-segment['start'] if isinstance(at, int) else None
-            inside_match = (kind == 'c' and address is not None and (address, at) not in starts
-                            and any(dict(f).get('status') == 'matched' and f['vram'] is not None
-                                    and type(dict(f).get('rom_offset')) is int
-                                    and f['vram'] < address < f['vram']+f['size']
-                                    and f['rom_offset']+address-f['vram'] == at for f in functions))
-            if not inside_match:
+            inside_function = (kind == 'c' and address is not None and (address, at) not in starts
+                               and any(f['vram'] is not None and type(dict(f).get('rom_offset')) is int
+                                       and f['vram'] < address < f['vram']+f['size']
+                                       and f['rom_offset']+address-f['vram'] == at for f in functions))
+            if not inside_function:
                 kept.append(sub)
         segment['subsegments'] = kept
     # The export writes its own complete symbol table; project-specific paths are not copied there.
