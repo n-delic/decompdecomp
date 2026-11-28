@@ -275,6 +275,28 @@ def safe_scopes(found, scoped, taken):
     return all_inferred if scopes_fit(found, all_inferred, taken) else None
 
 
+def resident_children(config, found, scoped, taken):
+    """Keep a recovered child in its resident scope when its mapping permits it."""
+    rows = config['segments']
+    top = {row['start'] for row in rows if isinstance(row, dict) and row.get('type') == 'code'}
+    children = set()
+    for lo, hi, address in found:
+        if lo not in scoped or lo in top:
+            continue
+        for index, row in enumerate(rows[:-1]):
+            if not isinstance(row, dict) or row.get('type') != 'code' or row.get('exclusive_ram_id'):
+                continue
+            following = rows[index+1]
+            end = following[0] if isinstance(following, list) else following.get('start')
+            if (isinstance(end, int) and isinstance(row.get('vram'), int)
+                    and row['start'] <= lo < hi <= end
+                    and row['vram'] + lo - row['start'] == address):
+                children.add(lo)
+                break
+    reduced = scoped - children
+    return reduced if children and scopes_fit(found, reduced, taken) else scoped
+
+
 def scope(config, found, scoped):
     """Put each overlapping connected set into one exclusive address space."""
     if not scoped:
