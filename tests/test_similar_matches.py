@@ -225,6 +225,7 @@ def test_manual_search_reserves_another_compilers_donor_and_tries_its_profile(pa
         return 'miss', 'score 30', 1
 
     monkeypatch.setattr(lookalike_profiles, 'trial', trial)
+    monkeypatch.setattr(sm, 'donor_repairs', lambda *args: [])  # (its repair children: test_lookalike_profiles)
     monkeypatch.setattr(pair.twins, '_attempt_twin', lambda *args, **kw: ('miss', 'not close'))
     assert sm.run(pair.twins, 'destination', Job()) == 0
     assert not [t for t in tested if t[0]]
@@ -426,6 +427,7 @@ def test_another_games_donor_profile_is_a_scoped_trial_not_a_configuration_chang
             seen.append((settings['toolchain'], settings['flags']))
         return 'miss', 'score 5', 1
     monkeypatch.setattr(lookalike_profiles, 'trial', trial)
+    monkeypatch.setattr(sm, 'donor_repairs', lambda *args: [])  # (its repair children: test_lookalike_profiles)
     job = Job()
     assert sm.run(pair.twins, 'destination', job) == 0
     assert seen == [('gcc-2.7.2-kmc', ['-O2'])]
