@@ -24,6 +24,7 @@ mod desktop_judge;
 mod entry_fixes;
 mod scoring;
 mod twins_prints;
+mod automatic_boundaries;
 mod mips_link;
 mod mips_elf;
 mod mips_ecoff;
@@ -1092,6 +1093,9 @@ fn main() {
     }
     if args.as_slice() == ["scoring-diff"] {
         std::process::exit(scoring::serve());
+    }
+    if args.as_slice() == ["automatic-boundaries"] {
+        std::process::exit(automatic_boundaries::serve());
     }
     gateway_main(args);
 }
