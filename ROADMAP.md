@@ -126,6 +126,8 @@
   decoded text match their full fingerprints, retaining separately loaded raw banks. Exports
   verify the decoded programs before keeping the original compressed cartridge; other loader
   variants still need their own evidence.
+- Done: N64 imports recover an audited CRC-checked RNX boot page chain and keep its data prefix
+  separate from executable text. Exports verify the decoded image against the cartridge pages.
 - Done: N64 imports recover boot programs stored in loader-referenced ERZ pages, checking each
   page's RNC checksum and the loader's destination and call. Exports verify the linked program
   against the decoded pages before retaining the original cartridge encoding.
