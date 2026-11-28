@@ -134,6 +134,34 @@ def test_packed_title_assets_do_not_skip_gameplay_and_merge_banks(tmp_path, monk
     assert [t['preview_settings']['offset'] for t in assets[0]['textures']] == [1, 2]
 
 
+def test_archive_mesh_batches_merge_between_runtime_captures(tmp_path, monkeypatch):
+    from decompassets.n64 import runtime_packed_graphics
+
+    rom = tmp_path / 'game.z64'
+    rom.write_bytes(bytes.fromhex('80371240') + b'original')
+    monkeypatch.setattr(runtime_textures.emulator, 'installed', lambda: tmp_path)
+
+    def run(path, vis, *, dumps, **kwargs):
+        for dump in dumps.values():
+            dump.write_bytes(b'game' if kwargs.get('inputs') else b'title')
+        return runtime_textures.emulator.Run(vis=vis)
+
+    def packed(image, snapshots, *, progress):
+        first = dict(name='Mesh 1', vertex_offset=32, commands='a', vertices=4, triangles=3)
+        second = dict(name='Mesh 2', vertex_offset=96, commands='b', vertices=5, triangles=4)
+        meshes = [first, second] if b'game' in snapshots else [first]
+        return [dict(offset=100, layout='runtime-zip-model', meshes=meshes,
+                     vertices=sum(m['vertices'] for m in meshes), triangles=sum(m['triangles'] for m in meshes))]
+
+    monkeypatch.setattr(runtime_textures.emulator, 'run', run)
+    monkeypatch.setattr(detector, 'regions', lambda image, snapshots: [dict(offset=1, size=1, layout='texture')])
+    monkeypatch.setattr(runtime_packed_graphics, 'regions', packed)
+    assets = runtime_textures.observe(b'image', rom, sha1(rom.read_bytes()).hexdigest())
+    model = next(asset for asset in assets if asset['layout'] == 'runtime-zip-model')
+    assert [mesh['vertex_offset'] for mesh in model['meshes']] == [32, 96]
+    assert (model['vertices'], model['triangles']) == (9, 7)
+
+
 def test_idle_textures_do_not_prevent_scripted_gameplay_capture(tmp_path, monkeypatch):
     rom = tmp_path / 'game.z64'
     rom.write_bytes(bytes.fromhex('80371240') + b'original')
