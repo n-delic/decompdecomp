@@ -13,7 +13,7 @@ import tempfile
 import threading
 import time
 from collections import Counter
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 from ... import consoles, scoring, seeds, toolchains
@@ -54,6 +54,10 @@ def _same_or_extended_analysis(project, image, digest):
     return bool(old) and hashlib.sha1(old).hexdigest() == expected.lower() and image.startswith(old)
 
 
+class _ReimportClaimBusy(NetworkError):
+    """A saved-source check must wait for the current claimant."""
+
+
 @contextmanager
 def _reimport_claim(net, slug, name, agent):
     """Release only the temporary claim made for this saved-source check."""
@@ -69,7 +73,7 @@ def _reimport_claim(net, slug, name, agent):
             # retains attribution without taking or releasing that other claim.
             held = db.execute('SELECT 1 FROM claims WHERE function_id=?', (fn['id'],)).fetchone()
             if held:
-                raise NetworkError(f'{name} is already claimed; its saved C is kept for a later check.')
+                raise _ReimportClaimBusy(f'{name} is already claimed.')
             if current is not None and current['status'] == 'open':
                 claimed = time.time()
                 net._open_claim(db, current, agent, claimed, net._project(slug))
@@ -86,6 +90,24 @@ def _reimport_claim(net, slug, name, agent):
                                          (fn['id'], agent.id, claimed)).rowcount
                     if deleted:
                         net._event(db, fn['project_id'], agent.id, 'release', fn['name'])
+
+
+@contextmanager
+def _queued_reimport_claim(net, slug, name, agent, log, check_cancel):
+    """Wait without holding the claimant's locks, and let the reimport be stopped."""
+    waiting = False
+    with ExitStack() as stack:
+        while True:
+            check_cancel()
+            try:
+                stack.enter_context(_reimport_claim(net, slug, name, agent))
+                break
+            except _ReimportClaimBusy:
+                if not waiting:
+                    log(f'{name}: waiting for its current claim before checking saved C.')
+                    waiting = True
+                time.sleep(0.2)
+        yield
 
 
 def pair_old_functions(rows, functions) -> dict:
@@ -797,7 +819,16 @@ class ImportMixin:
             row = self.store.one("SELECT name FROM agents WHERE id=?", agent_id) if agent_id else None
             agent = self.attribution_agent(row["name"] if row else "you")
             try:
-                with _reimport_claim(self, slug, name, agent):
+                with _queued_reimport_claim(self, slug, name, agent, log, check_cancel):
+                    current = self.project_store(pid).one(
+                        'SELECT id,status,matched_source FROM functions WHERE project_id=? AND name=?', pid, name)
+                    if current is not None and current['status'] == 'matched':
+                        if current['matched_source'] != source:
+                            with self.project_store(pid).tx() as db:
+                                db.execute('INSERT INTO notes(project_id,function_id,text,created_at) VALUES(?,?,?,?)',
+                                           (pid, current['id'], f"[{name} before reimport: saved C]\n{source}", time.time()))
+                        matched += 1
+                        continue
                     result = self.attempt(agent, name, source, slug)
                     if not result['matched']:
                         proj = self.project_row(slug)

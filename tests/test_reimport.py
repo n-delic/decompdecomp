@@ -62,7 +62,8 @@ def test_simultaneous_reimports_recheck_only_their_own_saved_sources(monkeypatch
     assert seen == {'one': [('one', 'one source', None)], 'two': [('two', 'two source', None)]}
 
 
-def test_reimport_rejudge_releases_only_its_own_claims(tmp_path):
+def test_reimport_rejudge_releases_only_its_own_claims(tmp_path, monkeypatch):
+    from decompnet.app.engine import importing
     net = RomNetwork(tmp_path/'app.db', tmp_path)
     with net.store.tx() as db:
         pid = db.execute('INSERT INTO projects(slug,name,root,arch,config) VALUES(?,?,?,?,?)',
@@ -91,13 +92,18 @@ def test_reimport_rejudge_releases_only_its_own_claims(tmp_path):
     net._judge_kept_matches('game', [('first', 'int x;', agent.id)], lambda _: None)
     assert seen[-1] == 'first'
     assert store.one('SELECT COUNT(*) AS n FROM claims')['n'] == 1
-    before = list(seen)
-    net._judge_kept_matches('game', [('user_claim', 'int z;', agent.id)], lambda _: None)
-    assert seen == before
-    assert store.one('SELECT claimed_at FROM claims WHERE function_id=?', existing['id'])['claimed_at'] == 1.0
-
-    with store.tx() as db:
-        db.execute('DELETE FROM claims WHERE function_id=?', (existing['id'],))
+    waited = []
+    def release(_):
+        assert store.one('SELECT claimed_at FROM claims WHERE function_id=?', existing['id'])['claimed_at'] == 1.0
+        waited.append(True)
+        with store.tx() as db:
+            db.execute('DELETE FROM claims WHERE function_id=?', (existing['id'],))
+    monkeypatch.setattr(importing, 'time', SimpleNamespace(time=importing.time.time, sleep=release))
+    messages = []
+    net._judge_kept_matches('game', [('user_claim', 'int z;', agent.id)], messages.append)
+    assert waited == [True] and seen[-1] == 'user_claim'
+    assert any('waiting for its current claim' in message for message in messages)
+    assert store.one('SELECT COUNT(*) AS n FROM claims')['n'] == 0
     def interrupted(*args):
         raise RuntimeError('interrupted')
     net.attempt = interrupted
@@ -137,6 +143,54 @@ def test_reimport_rejudge_records_proven_retry_and_keeps_original(tmp_path, monk
     assert 'original' in store.one('SELECT text FROM notes WHERE function_id=?', fid)['text']
     assert store.one('SELECT status FROM functions WHERE id=?', fid)['status'] == 'matched'
     assert store.one('SELECT COUNT(*) AS n FROM claims')['n'] == 0
+
+
+def test_reimport_wait_can_be_stopped_without_releasing_another_claim(tmp_path, monkeypatch):
+    from decompnet.app.engine import importing
+
+    net = RomNetwork(tmp_path/'app.db', tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute('INSERT INTO projects(slug,name,root,arch,config) VALUES(?,?,?,?,?)',
+                         ('game', 'Game', str(tmp_path), 'mips', '{}')).lastrowid
+        fid = db.execute('INSERT INTO functions(project_id,name,size,n_insns,target,relocs,status,vram) '
+                         'VALUES(?,?,?,?,?,?,?,?)', (pid, 'work', 4, 1, b'\0'*4, '[]', 'open', 0x80000000)).lastrowid
+    store = net.project_store(pid)
+    agent = net.attribution_agent('author')
+    with store.tx() as db:
+        db.execute('INSERT INTO claims VALUES(?,?,?,?)', (fid, agent.id, 1.0, 9999999999.0))
+    waited = []
+    monkeypatch.setattr(importing, 'time', SimpleNamespace(time=importing.time.time, sleep=lambda _: waited.append(True)))
+    class Log:
+        def __call__(self, message): pass
+        def check_cancel(self):
+            if waited: raise RuntimeError('stopped')
+    with pytest.raises(RuntimeError, match='stopped'):
+        net._judge_kept_matches('game', [('work', 'saved source', agent.id)], Log())
+    assert store.one('SELECT claimed_at FROM claims WHERE function_id=?', fid)['claimed_at'] == 1.0
+
+
+def test_reimport_wait_keeps_another_workers_match_and_saves_old_source(tmp_path, monkeypatch):
+    from decompnet.app.engine import importing
+
+    net = RomNetwork(tmp_path/'app.db', tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute('INSERT INTO projects(slug,name,root,arch,config) VALUES(?,?,?,?,?)',
+                         ('game', 'Game', str(tmp_path), 'mips', '{}')).lastrowid
+        fid = db.execute('INSERT INTO functions(project_id,name,size,n_insns,target,relocs,status,vram) '
+                         'VALUES(?,?,?,?,?,?,?,?)', (pid, 'work', 4, 1, b'\0'*4, '[]', 'open', 0x80000000)).lastrowid
+    store = net.project_store(pid)
+    agent = net.attribution_agent('author')
+    with store.tx() as db:
+        db.execute('INSERT INTO claims VALUES(?,?,?,?)', (fid, agent.id, 1.0, 9999999999.0))
+    def finish(_):
+        with store.tx() as db:
+            db.execute("UPDATE functions SET status='matched',matched_source=? WHERE id=?", ('new match', fid))
+            db.execute('DELETE FROM claims WHERE function_id=?', (fid,))
+    monkeypatch.setattr(importing, 'time', SimpleNamespace(time=importing.time.time, sleep=finish))
+    monkeypatch.setattr(net, 'attempt', lambda *a, **k: pytest.fail('must not replace another match'))
+    net._judge_kept_matches('game', [('work', 'old source', agent.id)], lambda _: None)
+    assert store.one('SELECT matched_source FROM functions WHERE id=?', fid)['matched_source'] == 'new match'
+    assert 'old source' in store.one('SELECT text FROM notes WHERE function_id=?', fid)['text']
 
 
 def test_reimport_does_not_wait_on_its_own_autopilot_claim(tmp_path, monkeypatch):
