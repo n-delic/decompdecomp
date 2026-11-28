@@ -180,7 +180,7 @@ def _direct_variant(fn, source, header, candidate, target, extra, *, prefer_decl
     return '\n'.join(sorted(set(declarations))) + '\n#ifdef PORT\n' + port + '\n#else\n' + rom + '\n#endif\n' + source + '\n' + extra
 
 
-def _split_direct_data(fn, source, header, candidate):
+def _split_direct_data(fn, source, header, candidate, *, group_casts=False, relaxed=False):
     """Give individual placeholder data uses separate relocations for a private probe."""
     span = csource.find(source, fn['name'])
     if span is None:
@@ -193,7 +193,8 @@ def _split_direct_data(fn, source, header, candidate):
     sites = list(re.finditer(r'\bD_00000000\b', body))
     sites = [(span[0] + m.start(), span[0] + m.end()) for m in sites]
     low = [r for r in candidate.relocs if r.type == 6 and r.symbol == 'D_00000000']
-    if not sites or len(sites) != len(low):
+    if (not sites or not low or (group_casts or relaxed) and len(sites) > 32
+            or not group_casts and not relaxed and len(sites) != len(low)):
         return None
     macros = set(re.findall(r'(?m)^\s*#\s*define\s+([A-Za-z_]\w*)\s*\(', csource._blank(header + '\n' + source)))
     for start, _ in sites:
@@ -216,14 +217,65 @@ def _split_direct_data(fn, source, header, candidate):
         return None
     prototype = header[declaration.start():declaration.end()]
     names = [f'decomp_overlay_data_ref_{index}' for index in range(1, len(sites) + 1)]
+    if group_casts:
+        # Repeated casts of the same placeholder can compile to fewer loads
+        # than source occurrences. Keep each cast type together for the probe;
+        # the complete byte and relocation judge decides whether it is valid.
+        pattern = r'\(\s*((?:struct\s+)?[A-Za-z_]\w*)\s*\*\s*\)\s*\(\s*&\s*(D_00000000)\s*\)'
+        groups = {}
+        positions = {start: index for index, (start, _) in enumerate(sites)}
+        for match in re.finditer(pattern, body):
+            index = positions.get(span[0] + match.start(2))
+            if index is not None:
+                kind = ' '.join(match.group(1).split())
+                names[index] = groups.setdefault(kind, names[index])
+        if len(set(names)) == len(names):
+            return None
     clean_all = csource._blank(header + '\n' + source)
     if any(re.search(r'\b' + re.escape(name) + r'\b', clean_all) for name in names):
         return None
     for (start, end), name in reversed(list(zip(sites, names))):
         source = source[:start] + name + source[end:]
-    port = '\n'.join(f'#define {name} D_00000000' for name in names)
-    rom = '\n'.join(rename_identifiers(prototype, {'D_00000000': name}) for name in names)
+    port = '\n'.join(f'#define {name} D_00000000' for name in dict.fromkeys(names))
+    rom = '\n'.join(rename_identifiers(prototype, {'D_00000000': name}) for name in dict.fromkeys(names))
     return '#ifdef PORT\n' + port + '\n#else\n' + rom + '\n#endif\n' + source
+
+
+def _split_local_pointer(fn, source, header):
+    """Probe an indexed use of a local pointer initialized from the placeholder."""
+    span = csource.find(source, fn['name'])
+    if span is None:
+        return None
+    clean = csource._blank(source)
+    body = clean[span[0]:span[1]]
+    assignments = list(re.finditer(r'\b([A-Za-z_]\w*)\s*=\s*&\s*D_00000000\s*;', body))
+    if len(assignments) != 1:
+        return None
+    variable = assignments[0].group(1)
+    uses = list(re.finditer(r'\(\s*\(\s*int\s*\*\s*\)\s*(' + re.escape(variable)
+                            + r')\s*\)\s*\[', body))
+    if len(uses) != 1:
+        return None
+    macros = set(re.findall(r'(?m)^\s*#\s*define\s+([A-Za-z_]\w*)\s*\(', csource._blank(header + '\n' + source)))
+    start = span[0] + uses[0].start(1)
+    depth = 0
+    for at in range(start - 1, span[0] - 1, -1):
+        if clean[at] == ')':
+            depth += 1
+        elif clean[at] == '(':
+            if depth:
+                depth -= 1
+                continue
+            caller = re.search(r'([A-Za-z_]\w*)\s*$', clean[span[0]:at])
+            if caller and (caller.group(1) in macros or caller.group(1).isupper()):
+                return None
+    name, ref = 'decomp_overlay_local_site', 'decomp_overlay_local_ref'
+    if re.search(r'\b(?:' + name + '|' + ref + r')\b', csource._blank(header + '\n' + source)):
+        return None
+    end = span[0] + uses[0].end(1)
+    source = source[:start] + name + source[end:]
+    return (f'#ifdef PORT\n#define {name} {variable}\n#else\n'
+            f'extern int {ref};\n#define {name} (&{ref})\n#endif\n' + source)
 
 
 def _grouped_data(fn, source, header, candidate):
@@ -479,16 +531,26 @@ def retry(net, project, fn, source):
         objects = _probe_objects(net, project, fn, source, header, candidate, target, info)
         if objects:
             return objects
-        split = _split_direct_data(fn, source, header, candidate)
-        if split:
+        splits = [_split_direct_data(fn, source, header, candidate, group_casts=True),
+                  _split_direct_data(fn, source, header, candidate)]
+        local = _split_local_pointer(fn, source, header)
+        if local:
+            built = net._compile(project, header, local, fn)
+            if built.ok:
+                local_candidate, _, _ = net._evaluate(fn, project, built.obj)
+                if local_candidate:
+                    splits.append(_split_direct_data(fn, local, header, local_candidate, relaxed=True))
+        for split in splits:
+            if not split:
+                continue
             built = net._compile(project, header, split, fn)
             if not built.ok:
-                return None
+                continue
             separated, _, _ = net._evaluate(fn, project, built.obj)
             bound = overlay_donor_aliases.explicit_symbol_bindings(
                 split, header, separated, target, net.console(project).separate_overlay_reference)
             if not bound or not bound[1].startswith(header):
-                return None
+                continue
             extra = '\n#ifndef PORT\n' + bound[1][len(header):] + '\n#endif\n'
             variants = [split + '\n' + extra]
             macro = _macro_variant(fn, split, header, separated, info, extra)
