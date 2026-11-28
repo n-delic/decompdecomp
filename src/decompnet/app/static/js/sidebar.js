@@ -45,24 +45,38 @@ function colourOf(slug) {
   }
   return navColours.map.get(slug) ?? 0;
 }
-/* Past NAV_FILTER_FROM projects a filter box shows above the list; the list is only rebuilt when its HTML changed
-   (with hundreds of projects a rebuild every 5 s cost the page more than the ask). */
-const NAV_FILTER_FROM = 12;
+/* With hundreds of projects a rebuild every 5 s cost the page more than the ask. */
+const navTitleOrder = new Intl.Collator(undefined, { sensitivity: "base", numeric: true });
 let navDrawn = "";
 function navShown() {
-  const words = ($("navFilter")?.value || "").trim().toLowerCase();
-  if (!words || S.projects.length < NAV_FILTER_FROM) return S.projects;
-  return S.projects.filter((p) => `${p.title} ${p.slug} ${p.platform_short || ""} ${p.platform_name || ""}`.toLowerCase().includes(words));
-}
-function renderNav() {
-  const box = $("navProjects"), filter = $("navFilter");
-  if (filter) filter.hidden = S.projects.length < NAV_FILTER_FROM;
-  if (!S.projects.length) { navDrawn = ""; box.innerHTML = `<p class="nav-empty">None yet: drop in a game.</p>`; return; }
-  const shown = navShown();
-  const html = !shown.length ? `<p class="nav-empty">No project matches.</p>` : shown.map((project) => {
+  const words = String($("navFilter").value).trim().toLowerCase();
+  const projects = words
+    ? S.projects.filter((p) => `${p.title} ${p.slug} ${p.platform_short || ""} ${p.platform_name || ""}`.toLowerCase().includes(words))
+    : S.projects;
+  const shown = projects.map((project) => {
     const selected = project.variants?.find(v => v.project === S.slug);
     const p = selected ? {...project, ...selected.summary, slug:project.slug, title:project.title, working:project.working} : project;
-    const pct = codePct(p);
+    return {p, pct: codePct(p), showPct: !p.missing && !p.broken && !(p.kind === "fork" && !p.ready)};
+  });
+  const order = $("navSort").value;
+  if (order === "oldest") return shown.reverse();
+  if (order === "newest") return shown;
+  const byTitle = (a, b) => navTitleOrder.compare(a.p.title, b.p.title);
+  if (order === "progress-desc" || order === "progress-asc") {
+    const direction = order === "progress-desc" ? -1 : 1;
+    return shown.sort((a, b) => Number(b.showPct) - Number(a.showPct)
+      || (a.showPct ? direction * (a.pct - b.pct) : 0) || byTitle(a, b));
+  }
+  return shown.sort(order === "za" ? (a, b) => byTitle(b, a) : byTitle);
+}
+function renderNav() {
+  const box = $("navProjects"), count = $("navCount");
+  const shown = navShown(), total = S.projects.length;
+  $("navControls").hidden = !total;
+  const label = shown.length === total ? ` (${total})` : ` (${shown.length} of ${total})`;
+  if (count.textContent !== label) count.textContent = label;
+  if (!total) { navDrawn = ""; box.innerHTML = `<p class="nav-empty">None yet: drop in a game.</p>`; return; }
+  const html = !shown.length ? `<p class="nav-empty">No project matches.</p>` : shown.map(({p, pct, showPct}) => {
     const short = p.platform_short || p.platform_name || "?";
     const deep = p.deep_permuter ? `<span class="np-deep" title="Deep permuter running">deep</span>` : "";
     const state = p.working ? `<span class="dot on" title="${p.working} agent${p.working === 1 ? "" : "s"} working"></span>`
@@ -75,13 +89,14 @@ function renderNav() {
       <span class="np-meta"><span>can't be opened: hover for why</span></span></a>`;
     return `<a class="nav-proj" href="#/p/${esc(p.slug)}" data-slug="${esc(p.slug)}" title="${esc(p.progress_error || p.title)}">
       <span class="np-top"><span class="swatch pc-${colourOf(p.slug)}" aria-hidden="true"></span><span class="np-name">${esc(p.title)}</span>${state}${deep}${p.room ? `<span class="np-room" title="${p.room === "host" ? "you share this project" : "in a team room"}">●●</span>` : ""}</span>
-      <span class="np-meta"><span>${p.progress_error ? "progress needs attention" : esc(short)}</span><span class="grow"></span><span>${p.kind === "fork" && !p.ready ? "set up" : pctNum(pct) + "%"}</span></span>
+      <span class="np-meta"><span>${p.progress_error ? "progress needs attention" : esc(short)}</span><span class="grow"></span><span>${showPct ? pctNum(pct) + "%" : "set up"}</span></span>
       <span class="np-bar"><i data-w="${pct.toFixed(2)}"></i></span></a>`;
   }).join("");
   if (html !== navDrawn) { box.innerHTML = navDrawn = html; setWidths(box); }
   markNav();
 }
-$("navFilter")?.addEventListener("input", renderNav);
+$("navFilter").addEventListener("input", renderNav);
+$("navSort").addEventListener("change", renderNav);
 /* The list every NAV_MS (not while the window is hidden), less often after errors or slow answers. */
 const NAV_MS = 5000, NAV_MAX_MS = 30000;
 let navDelay = NAV_MS;

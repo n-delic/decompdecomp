@@ -39,7 +39,10 @@ function canvas(name) {
 const page = canvas("map");
 const document = stub();
 document.createElement = (tag) => (tag === "canvas" ? canvas("base") : stub());
-const elements = new Map([["map", page]]);
+const navEvents = {};
+const navControl = (value) => ({ value, addEventListener(event, handler) { navEvents[event] = handler; } });
+const filterBox = navControl(""), sortBox = navControl("az");
+const elements = new Map([["map", page], ["navFilter", filterBox], ["navSort", sortBox]]);
 document.getElementById = (id) => { if (!elements.has(id)) elements.set(id, stub()); return elements.get(id); };
 
 const keys = ["name", "vram", "size", "insns", "unit", "status", "best", "attempts", "agent", "matched_at", "matched_by", "not_c", "polished"];
@@ -153,10 +156,9 @@ const reset = () => { drawn.base.length = 0; drawn.map.length = 0; };
   const nav = document.getElementById("navProjects");
   let drawnNav = 0, navHtml = "";
   elements.set("navProjects", new Proxy(nav, { set(t, k, v) { if (k === "innerHTML") { drawnNav++; navHtml = v; } t[k] = v; return true; } }));
-  const filterBox = { value: "", hidden: true, addEventListener() {} };
-  elements.set("navFilter", filterBox);
   const many = Array.from({ length: 300 }, (_, i) => ({ slug: `g${i}`, title: `Game ${i}`, functions: 10, matched: i % 10,
     bytes: 10, matched_bytes: i % 10, platform_short: "PS2" }));
+  many[12].title = "alpha";
   answers["/api/projects"] = (url) => (url.includes("since=s1") ? { sig: "s1", same: true } : { sig: "s1", projects: many });
   asked.length = 0;
   await ctx.loadNav();
@@ -166,19 +168,66 @@ const reset = () => { drawn.base.length = 0; drawn.map.length = 0; };
     ["/api/projects?since=", "/api/projects?since=s1", "/api/projects?since=s1"]);
   assert.equal(drawnNav, 1);
   assert.equal(vm.runInContext("S.projects.length", ctx), 300);
-  assert.equal(filterBox.hidden, false);  // past a dozen projects the filter box shows
+  const count = document.getElementById("navCount");
+  const slugs = () => [...navHtml.matchAll(/data-slug="([^"]+)"/g)].map((m) => m[1]);
+  assert.equal(document.getElementById("navControls").hidden, false);
+  assert.equal(count.textContent, " (300)");
+  assert.deepEqual(slugs().slice(0, 13), ["g12", ...many.slice(0, 12).map((p) => p.slug)]);
   assert.equal(vm.runInContext("colourOf('g299')", ctx), 0);  // the oldest keeps the first colour
   vm.runInContext("renderNav()", ctx);  // the same list again (another page asked for it) isn't rebuilt either
   assert.equal(drawnNav, 1);
   filterBox.value = "game 29";  // the filter box: only the projects whose name has what's typed
-  vm.runInContext("renderNav()", ctx);
+  navEvents.input();
   assert.equal(drawnNav, 2);
-  assert.equal((navHtml.match(/class="nav-proj"/g) || []).length, 11);  // Game 29, 290-299
+  assert.equal(slugs().length, 11);  // Game 29, 290-299
+  assert.equal(count.textContent, " (11 of 300)");
+  sortBox.value = "za";
+  navEvents.change();
+  assert.equal(slugs()[0], "g299");
+  assert.equal(count.textContent, " (11 of 300)");
+  filterBox.value = "nothing matches";
+  navEvents.input();
+  assert.equal(count.textContent, " (0 of 300)");
+  assert.match(navHtml, /No project matches/);
   // an older server answers with the plain list
   answers["/api/projects"] = () => many.slice(0, 2);
   filterBox.value = "";
   await ctx.loadNav();
   assert.equal(vm.runInContext("S.projects.length", ctx), 2);
+
+  assert.deepEqual(slugs(), ["g1", "g0"]);  // the selected order survives a refresh
+  assert.equal(count.textContent, " (2)");
+  assert.equal(document.getElementById("navControls").hidden, false);
+  filterBox.value = "game 0";
+  navEvents.input();
+  assert.equal(count.textContent, " (1 of 2)");
+  filterBox.value = "";
+  sortBox.value = "oldest";
+  navEvents.change();
+  assert.deepEqual(slugs(), ["g1", "g0"]);
+  sortBox.value = "newest";
+  navEvents.change();
+  assert.deepEqual(slugs(), ["g0", "g1"]);
+
+  const variants = [{ project: "active-release", summary: { matched_bytes: 9 } }];
+  answers["/api/projects"] = () => [
+    {...many[0], variants},
+    {...many[1], matched_bytes: 5},
+    {...many[2], kind: "fork", ready: false},
+  ];
+  vm.runInContext('S.slug = "active-release"', ctx);
+  await ctx.loadNav();
+  sortBox.value = "progress-desc";
+  navEvents.change();
+  assert.deepEqual(slugs(), ["g0", "g1", "g2"]);
+  assert.match(navHtml, /90\.0%/);
+  sortBox.value = "progress-asc";
+  navEvents.change();
+  assert.deepEqual(slugs(), ["g1", "g0", "g2"]);
+  filterBox.value = "game 1";
+  navEvents.input();
+  assert.deepEqual(slugs(), ["g1"]);
+  assert.equal(count.textContent, " (1 of 3)");
 
   // the stats: one ask at a time
   asked.length = 0;

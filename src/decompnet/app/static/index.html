@@ -40,8 +40,18 @@
     </div>
   </div>
   <div class="nav-scroll">
-    <p class="nav-label">Projects</p>
-    <input class="nav-filter" id="navFilter" type="search" placeholder="Filter projects" aria-label="Filter projects" autocomplete="off" hidden>
+    <p class="nav-label">Projects<span id="navCount" role="status"></span></p>
+    <div class="nav-controls" id="navControls" hidden>
+      <input class="nav-filter" id="navFilter" type="search" placeholder="Filter projects" aria-label="Filter projects" autocomplete="off">
+      <select id="navSort" aria-label="Sort projects">
+        <option value="az">A–Z</option>
+        <option value="za">Z–A</option>
+        <option value="newest">Newest</option>
+        <option value="oldest">Oldest</option>
+        <option value="progress-desc">Progress ↓</option>
+        <option value="progress-asc">Progress ↑</option>
+      </select>
+    </div>
     <div class="nav-projects" id="navProjects"><p class="nav-empty">None yet: drop in a game.</p></div>
   </div>
   <div class="nav-foot">
