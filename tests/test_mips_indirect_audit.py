@@ -376,3 +376,20 @@ def test_guard_can_schedule_stack_spills_and_an_unrelated_move():
 
     image[0x1008:0x100c] = struct.pack('>I', 0x00801825)  # Clobbers the checked index.
     assert jump_table(image, 0x1000, end, 0x80001000, 0x1024, 'big', ranges) is None
+
+
+def test_scoped_dma_table_replaces_boot_mapping_only_for_its_own_code():
+    image = bytearray(0x1200)
+    words = [0x2c620002,0x1040000a,0x00031080,0x3c018000,0x00220821,0x8c221100,0x00400008,0,
+             0x03e00008,0,0x03e00008,0,0x03e00008,0]
+    image[0x1000:0x1038] = struct.pack('>14I',*words)
+    image[0x1100:0x1108] = struct.pack('>2I',0x80001020,0x80001028)
+    boot = dict(rom_start=0x1120,rom_end=0x1128,vram=0x80001100,target_prefix=0x80000000,boot_copy=True)
+    scoped = dict(rom_start=0x1100,rom_end=0x1108,vram=0x80001100,target_prefix=0x80000000,
+                  scoped_copy=True,code_delta=0x80000000)
+    result = jump_table(image,0x1000,0x1038,0x80001000,0x1018,'big',[boot,scoped])
+    assert result['state'] == 'validated' and result['rom_offset'] == 0x1100
+    wrong = dict(scoped,code_delta=0x80000004)
+    assert jump_table(image,0x1000,0x1038,0x80001000,0x1018,'big',[boot,wrong])['state'] == 'unresolved'
+    competing = dict(scoped,rom_start=0x1130,rom_end=0x1138)
+    assert jump_table(image,0x1000,0x1038,0x80001000,0x1018,'big',[boot,scoped,competing])['state'] == 'unresolved'

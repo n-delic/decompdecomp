@@ -1321,3 +1321,17 @@ def test_code_table_names_only_contiguous_distinct_starts_outside_code():
     assert not _code_table_entries(functions, image + packed[:8], 'big', segments)
     assert not _code_table_entries(functions, image + packed[:4]*3, 'big', segments)
     assert not _code_table_entries(functions, image + packed, 'big', [Segment('all', 0, len(image)+12, BASE)])
+
+
+@pytest.mark.parametrize('case', ['invalid delay', 'valid delay', 'independent caller'])
+def test_undefined_branch_in_link_delay_does_not_cut_another_body(case):
+    # A conditional link with another branch in its delay slot cannot establish a defined call target.
+    target = BASE+28
+    bad_link = 0x04f10000 | (((target-(BASE+4))//4) & 0xffff)
+    words = [bad_link, 0x1000ffff if case != 'valid delay' else 0, 0x1000ffff, 0, *BODY]
+    if case == 'independent caller':
+        words += [0x0c000000 | ((target >> 2) & 0x3ffffff),0,0x03e00008,0]
+    image, functions, segments = fixture(words, cuts=(0,12,16,28,48,len(words)*4) if len(words)*4>48 else (0,12,16,28,48))
+    result = repair(functions, [], image, consoles.get('n64'), segments)
+    head = next(fn for fn in result if fn.rom == 16)
+    assert head.size == (32 if case == 'invalid delay' else 12)

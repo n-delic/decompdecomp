@@ -15,6 +15,11 @@ from ..arch.mips import JR_RA, is_frame
 from ..arch.mips_code_recovery import called_extent, leaf_extent
 
 
+def _has_delay_slot(word):
+    import rabbitizer
+    return rabbitizer.Instruction(word).hasDelaySlot()
+
+
 def repair(functions, data, image, console, segments, *, symbols=(), log=print, inline_data=()):
     """Keep all original instructions while joining/splitting strictly validated bodies."""
     if console.arch!='mips':return functions
@@ -48,8 +53,14 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print, 
     lines_by_rom={line.rom:line for fn in functions for line in fn.lines}
     reference_bodies={}
     for fn in functions:
-        for line in fn.lines:
+        for index,line in enumerate(fn.lines):
             op=line.word>>26
+            # A conditional link with a transfer in its delay slot has no defined MIPS execution. In particular,
+            # instruction-shaped data can look like a call into the middle of a real framed function. Do not
+            # treat that impossible link as an independent entry, while retaining all ordinary calls and pointers.
+            if (op == 1 and (line.word >> 16) & 31 in (16, 17, 18, 19) and index+1 < len(fn.lines)
+                    and _has_delay_slot(fn.lines[index+1].word)):
+                continue
             if op in (2,3):
                 dest=((line.vram+4)&0xf0000000)|((line.word&0x3ffffff)<<2)
                 references[dest].add((line.rom,fn.segment))
