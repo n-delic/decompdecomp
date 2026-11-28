@@ -708,7 +708,8 @@ def test_overlapping_banks_link_to_separate_rom_offsets(tmp_path):
     assert (tmp_path/'game.z64').read_bytes()==original
 
 
-@pytest.mark.parametrize('scope', ['code_80001000', 'program_80001000', 'program_80001000_2'])
+@pytest.mark.parametrize('scope', ['code_80001000', 'program_80001000', 'program_80001000_2',
+                                   'code_80001000_A15F0'])
 @pytest.mark.parametrize('kind', ['jtbl', 'D'])
 def test_scoped_local_jump_table_can_be_referenced_from_another_object(tmp_path, scope, kind):
     import runpy
