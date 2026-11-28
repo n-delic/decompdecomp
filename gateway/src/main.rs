@@ -26,6 +26,7 @@ mod elf_extract;
 mod scoring;
 mod twins_prints;
 mod automatic_boundaries;
+mod candidate_runner;
 mod mips_link;
 mod mips_elf;
 mod mips_ecoff;
@@ -1104,6 +1105,9 @@ fn main() {
     }
     if args.as_slice() == ["automatic-boundaries"] {
         std::process::exit(automatic_boundaries::serve());
+    }
+    if args.as_slice() == ["candidate-runner"] {
+        std::process::exit(candidate_runner::serve());
     }
     gateway_main(args);
 }
