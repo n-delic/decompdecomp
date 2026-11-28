@@ -864,6 +864,7 @@ def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_rep
             split._add_symbols(workdir / 'symbol_addrs.txt', symbols)
     if scoped:
         cfg = yaml.safe_load(config.read_text(encoding='utf-8'))
+        scoped = inferred_overlays.resident_children(cfg, found, scoped, taken)
         if not inferred_overlays.apply_scopes(cfg, found, scoped):
             log('Kept the original code mappings: the observed overlays conflict with resident code scopes.')
             insert_segments(config, unscoped_cfg, before_mapping, len(rom))

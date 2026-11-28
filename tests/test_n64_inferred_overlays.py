@@ -365,3 +365,23 @@ def test_child_range_cannot_scope_its_entire_resident_parent():
                                                         (0x2000, 0x2400, 0x80000c00)],
                                                 {0x1800, 0x2000})
     assert all('exclusive_ram_id' not in segment for segment in config['segments'] if isinstance(segment, dict))
+
+
+def test_scoped_recovery_keeps_a_resident_child_in_its_parent():
+    config = {'segments': [
+        {'name': 'main', 'type': 'code', 'start': 0x100, 'vram': 0x80000100,
+         'subsegments': [[0x100, 'c'], [0x280, 'c']]},
+        {'name': 'bank', 'type': 'code', 'start': 0x400, 'vram': 0x80100000,
+         'subsegments': [[0x400, 'c']]},
+        [0x500],
+    ]}
+    found = [(0x280, 0x300, 0x80000280), (0x400, 0x500, 0x80100000)]
+    taken = [(0x100, 0x200, 0x80000100)]
+    scoped = inferred_overlays.resident_children(config, found, {0x280, 0x400}, taken)
+    assert scoped == {0x400}
+    assert inferred_overlays.apply_scopes(config, found, scoped)
+    assert 'exclusive_ram_id' not in config['segments'][0]
+    assert config['segments'][1]['exclusive_ram_id']
+    # If the remaining scope intersects the global range, do not guess.
+    conflict = [(0x280, 0x300, 0x80000280), (0x400, 0x500, 0x80000290)]
+    assert inferred_overlays.resident_children(config, conflict, {0x280, 0x400}, taken) == {0x280, 0x400}
