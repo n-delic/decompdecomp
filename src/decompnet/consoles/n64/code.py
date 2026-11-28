@@ -607,6 +607,7 @@ def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_rep
         overlays,
         raw_slots,
         resident_deflate,
+        sectioned_overlays,
         shared_dma,
     )
 
@@ -700,6 +701,9 @@ def add_segments(config: Path, workdir: Path, image: str, log=print, *, skip_rep
             return original
     if not packed and taken and (banks := dma_overlays.banks(original_rom)):
         dma_overlays.add(config,workdir,original_rom,found,banks,log)
+        return original
+    if not packed and taken and (banks := sectioned_overlays.read(original_rom, taken)):
+        sectioned_overlays.add(config, workdir, original_rom, found, banks, log)
         return original
     if packed and found:
         from . import rare_overlays
